@@ -1242,7 +1242,7 @@ MiniTest.new_child_neovim = function()
   --stylua: ignore start
   local supported_vim_tables = {
     -- Collections
-    'diagnostic', 'fn', 'highlight', 'json', 'loop', 'lsp', 'mpack', 'spell', 'treesitter', 'ui',
+    'diagnostic', 'fn', 'highlight', 'json', 'loop', 'lsp', 'mpack', 'spell', 'treesitter', 'ui', "uv",
     -- Variables
     'g', 'b', 'w', 't', 'v', 'env',
     -- Options (no 'opt' because not really useful due to use of metatables)
@@ -1485,6 +1485,7 @@ MiniTest.new_child_neovim = function()
     child.spell = vim.spell
     child.treesitter = vim.treesitter
     child.ui = vim.ui
+    child.uv = vim.uv
   end
 
   return child
@@ -1573,6 +1574,7 @@ end
 ---@field ui table Redirection table for `vim.ui` (|lua-ui|). Currently of no
 ---   use because it requires sending function through RPC, which is impossible
 ---   at the moment.
+---@field uv table Redirection table for |vim.uv|.
 ---
 ---@field g table Redirection table for |vim.g|.
 ---@field b table Redirection table for |vim.b|.
