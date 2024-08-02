@@ -554,6 +554,37 @@ Parameters ~
 {...} `(any)` Extra arguments with which `f` will be called.
 
 ------------------------------------------------------------------------------
+                                                    *MiniTest.expect.matching()*
+        `MiniTest.expect.matching`({string}, {pattern}, {init}, {plain})
+Expect string to match pattern.
+
+Parameters ~
+{string} `(string)` String to be tested for pattern matching.
+{pattern} `(string)` Pattern which string should match.
+{init} `(optional)` `(integer)` Where to start the match. Default is 1.
+{plain} `(optional)` `(boolean)` Whether to match pattern literally.
+
+------------------------------------------------------------------------------
+                                                 *MiniTest.expect.no_matching()*
+      `MiniTest.expect.no_matching`({string}, {pattern}, {init}, {plain})
+Expect string to not match pattern.
+
+Parameters ~
+{string} `(string)` String to be tested for pattern matching.
+{pattern} `(string)` Pattern which string should not match.
+{init} `(optional)` `(integer)` Where to start the match. Default is 1.
+{plain} `(optional)` `(boolean)` Whether to match pattern literally.
+
+------------------------------------------------------------------------------
+                                                   *MiniTest.expect.assertion()*
+                `MiniTest.expect.assertion`({value}, {message})
+Expect value to be truthy. Similar to `assert()`.
+
+Parameters ~
+{value} `(any)` Value to be asserted.
+{message} `(optional)` `(string)` Assertion message.
+
+------------------------------------------------------------------------------
                                         *MiniTest.expect.reference_screenshot()*
       `MiniTest.expect.reference_screenshot`({screenshot}, {path}, {opts})
 Expect equality to reference screenshot

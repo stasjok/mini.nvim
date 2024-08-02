@@ -724,6 +724,50 @@ MiniTest.expect.no_error = function(f, ...)
   H.error_expect('*no* error', 'Observed error: ' .. err)
 end
 
+-- Error context for match expectations
+local function match_fail_context(string, pattern, init, plain)
+  if plain ~= nil then
+    init = init or 'nil'
+    pattern = string.format('%s, %s, %s', pattern, init, plain)
+  elseif init then
+    pattern = string.format('%s, %s', pattern, init)
+  end
+  return string.format('Pattern: %s\nObserved string: %s', pattern, string)
+end
+
+--- Expect string to match pattern.
+---
+---@param string string String to be tested for pattern matching.
+---@param pattern string Pattern which string should match.
+---@param init? integer Where to start the match. Default is 1.
+---@param plain? boolean Whether to match pattern literally.
+function MiniTest.expect.matching(string, pattern, init, plain)
+  if string:find(pattern, init, plain) ~= nil then return true end
+  H.error_expect('string matching', match_fail_context(string, pattern, init, plain))
+end
+
+--- Expect string to not match pattern.
+---
+---@param string string String to be tested for pattern matching.
+---@param pattern string Pattern which string should not match.
+---@param init? integer Where to start the match. Default is 1.
+---@param plain? boolean Whether to match pattern literally.
+function MiniTest.expect.no_matching(string, pattern, init, plain)
+  if string:find(pattern, init, plain) == nil then return true end
+  H.error_expect('*no* string matching', match_fail_context(string, pattern, init, plain))
+end
+
+--- Expect value to be truthy. Similar to `assert()`.
+---
+---@param value any Value to be asserted.
+---@param message? string Assertion message.
+function MiniTest.expect.assertion(value, message)
+  if value then return true end
+  local assertion_message = message and string.format('Message: %s\n', message) or ''
+  local context = assertion_message .. 'Observed value: ' .. vim.inspect(value)
+  H.error_expect('an assertion', context)
+end
+
 --- Expect equality to reference screenshot
 ---
 ---@param screenshot table|nil Array with screenshot information. Usually an output

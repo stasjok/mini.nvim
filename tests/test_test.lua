@@ -698,6 +698,71 @@ T['expect']['no_error()']['returns `true` on success'] = function()
   eq(MiniTest.expect.no_error(function() end), true)
 end
 
+T['expect']['matching()'] = function()
+  -- Works
+  eq(MiniTest.expect.matching('test', 'test'), true)
+  expect.error(MiniTest.expect.matching, 'Pattern: no_match', 'test', 'no_match')
+  -- Works with plain pattern
+  expect.error(MiniTest.expect.matching, 'Pattern: test%-test', 'test-test', 'test-test')
+  eq(MiniTest.expect.matching('test-test', 'test-test', 1, true), true)
+  -- Pattern text
+  expect.error(MiniTest.expect.matching, 'Pattern: test, 2', 'test', 'test', 2)
+  expect.error(MiniTest.expect.matching, 'Pattern: test, 2, true', 'test', 'test', 2, true)
+  expect.error(MiniTest.expect.matching, 'Pattern: test, 2, false', 'test', 'test', 2, false)
+  expect.error(MiniTest.expect.matching, 'Pattern: no_match, nil, true', 'test', 'no_match', nil, true)
+  expect.error(MiniTest.expect.matching, 'Pattern: no_match', 'test', 'no_match', nil, nil)
+  -- Message
+  expect.error(
+    MiniTest.expect.matching,
+    'string matching.*\nPattern: test\nObserved string: no_match',
+    'no_match',
+    'test'
+  )
+end
+
+T['expect']['no_matching()'] = function()
+  -- Works
+  eq(MiniTest.expect.no_matching('test', 'no_match'), true)
+  expect.error(MiniTest.expect.no_matching, 'Pattern: test', 'test', 'test')
+  -- Works with plain pattern
+  eq(MiniTest.expect.no_matching('test-test', 'test%-test', nil, true), true)
+  -- Pattern text
+  expect.error(MiniTest.expect.no_matching, 'Pattern: st, 2', 'test', 'st', 2)
+  expect.error(MiniTest.expect.no_matching, 'Pattern: st, 2, true', 'test', 'st', 2, true)
+  expect.error(MiniTest.expect.no_matching, 'Pattern: st, 2, false', 'test', 'st', 2, false)
+  expect.error(MiniTest.expect.no_matching, 'Pattern: test, nil, true', 'test', 'test', nil, true)
+  expect.error(MiniTest.expect.no_matching, 'Pattern: test', 'test', 'test', nil, nil)
+  -- Message
+  expect.error(
+    MiniTest.expect.no_matching,
+    '%*no%* string matching.*\nPattern: test\nObserved string: some_test_string',
+    'some_test_string',
+    'test'
+  )
+end
+
+T['expect']['assertion()'] = function()
+  -- Truthy
+  eq(MiniTest.expect.assertion(true), true)
+  eq(MiniTest.expect.assertion(0), true)
+  eq(MiniTest.expect.assertion(''), true)
+  eq(MiniTest.expect.assertion({}), true)
+  eq(MiniTest.expect.assertion(function() end), true)
+  -- Falsy
+  expect.error(MiniTest.expect.assertion, 'Observed value: false', false)
+  expect.error(MiniTest.expect.assertion, 'Observed value: nil', nil)
+  -- Assertion message
+  expect.error(MiniTest.expect.assertion, 'an assertion.*\nObserved value: false', 2 < 1)
+  expect.error(MiniTest.expect.assertion, 'an assertion.*\nMessage: 2 < 1\nObserved value: false', 2 < 1, '2 < 1')
+  -- No message if not provided
+  local ok, err = pcall(MiniTest.expect.assertion, nil)
+  eq(ok, false)
+  ---@diagnostic disable-next-line: cast-type-mismatch
+  ---@cast err string
+  expect.match(err, 'Observed value: nil')
+  expect.no_match(err, 'Message:')
+end
+
 T['expect']['reference_screenshot()'] = new_set()
 
 T['expect']['reference_screenshot()']['works'] = function()
