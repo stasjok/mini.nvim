@@ -1162,6 +1162,16 @@ T['child']['cmd()'] = function()
   method()
   eq(child.cmd_capture('1messages'), 'Hello world')
 
+  -- Supports other variations like `vim.cmd()`
+  eq(child.cmd({ cmd = 'echomsg', args = { '"msg1"' } }), '')
+  eq(child.cmd_capture('1messages'), 'msg1')
+
+  eq(child.cmd.echomsg('"msg2"'), '')
+  eq(child.cmd_capture('1messages'), 'msg2')
+
+  eq(child.cmd.echomsg({ args = { '"msg3"' } }), '')
+  eq(child.cmd_capture('1messages'), 'msg3')
+
   validate_child_method(method, { name = 'cmd' })
 end
 

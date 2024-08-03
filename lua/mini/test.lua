@@ -1402,7 +1402,7 @@ MiniTest.new_child_neovim = function()
   --stylua: ignore start
   local supported_vim_tables = {
     -- Collections
-    'diagnostic', 'fn', 'highlight', 'json', 'loop', 'lsp', 'mpack', 'spell', 'treesitter', 'ui', "uv",
+   'cmd', 'diagnostic', 'fn', 'highlight', 'json', 'loop', 'lsp', 'mpack', 'spell', 'treesitter', 'ui', "uv",
     -- Variables
     'g', 'b', 'w', 't', 'v', 'env',
     -- Options (no 'opt' because not really useful due to use of metatables)
@@ -1411,6 +1411,13 @@ MiniTest.new_child_neovim = function()
   --stylua: ignore end
   for _, v in ipairs(supported_vim_tables) do
     child[v] = redirect_to_child(v)
+  end
+
+  -- Make redirected child.cmd() itself callable
+  getmetatable(child.cmd).__call = function(_, ...)
+    ensure_running()
+    prevent_hanging('cmd')
+    return child.lua_get('vim.cmd(...)', { ... })
   end
 
   -- Convenience wrappers
@@ -1464,16 +1471,6 @@ MiniTest.new_child_neovim = function()
         vim.loop.sleep(wait)
       end
     end
-  end
-
-  --- Execute Vimscript code from a string.
-  --- A wrapper for `nvim_exec()` without capturing output.
-  ---@param str string Vimscript code to execute
-  ---@return ""
-  child.cmd = function(str)
-    ensure_running()
-    prevent_hanging('cmd')
-    return child.api.nvim_exec(str, false)
   end
 
   --- Execute Vimscript code from a string and capture output.
@@ -1635,6 +1632,7 @@ MiniTest.new_child_neovim = function()
     child.bo = vim.bo
     child.wo = vim.wo
     -- Collections
+    child.cmd = vim.cmd
     child.diagnostic = vim.diagnostic
     child.fn = vim.fn
     child.highlight = vim.highlight
