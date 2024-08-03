@@ -139,9 +139,41 @@
 local MiniTest = {}
 local H = {}
 
+do
+  --- MiniTest config.
+  ---@class MiniTest.config
+  ---@field collect? MiniTest.config.collect Options for collection of test cases.
+  ---@field execute? MiniTest.config.execute Options for execution of test cases.
+  --- Path (relative to current directory) to script which handles project
+  --- specific test running
+  ---@field script_path? string
+  ---@field silent? boolean Whether to disable showing non-error feedback.
+
+  --- Options for collection of test cases.
+  ---@class MiniTest.config.collect
+  ---@field emulate_busted? boolean Temporarily emulate functions from 'busted' testing framework.
+  --- Function returning array of file paths to be collected.
+  --- Default: all Lua files in 'tests' directory starting with 'test_'.
+  ---@field find_files? fun(): string[]
+  --- Predicate function indicating if test case should be executed.
+  ---@field filter_cases? fun(case: MiniTest.case): boolean
+
+  --- Options for execution of test cases.
+  ---@class MiniTest.config.execute
+  --- Table with callable fields `start()`, `update()`, and `finish()`
+  ---@field reporter? MiniTest.config.execute.reporter
+  ---@field stop_on_error? boolean Whether to stop execution after first error.
+
+  --- Custom reporters.
+  ---@class MiniTest.config.execute.reporter
+  ---@field start? fun(cases: MiniTest.case[])
+  ---@field update? fun(case_num: integer)
+  ---@field finish? function
+end
+
 --- Module setup
 ---
----@param config table|nil Module config table. See |MiniTest.config|.
+---@param config? MiniTest.config Module config table. See |MiniTest.config|.
 ---
 ---@usage >lua
 ---   require('mini.test').setup() -- use default config
@@ -206,6 +238,17 @@ MiniTest.config = {
 --minidoc_afterlines_end
 --stylua: ignore end
 
+do
+  --- Table with information about current state of test execution
+  ---@class MiniTest.current
+  --- Array with all cases being currently executed. Basically,
+  --- an input of `MiniTest.execute()`.
+  ---@field all_cases? MiniTest.case[]
+  --- Currently executed test case. Use it to customize
+  --- execution output (like adding custom notes, etc).
+  ---@field case? MiniTest.case
+end
+
 -- Module data ================================================================
 --- Table with information about current state of test execution
 ---
@@ -217,7 +260,24 @@ MiniTest.config = {
 ---   an input of `MiniTest.execute()`.
 --- - <case> - currently executed test case. See |MiniTest-test-case|. Use it
 ---   to customize execution output (like adding custom notes, etc).
-MiniTest.current = { all_cases = nil, case = nil }
+MiniTest.current = { all_cases = nil, case = nil } --[[@as MiniTest.current]]
+
+do
+  --- `new_set()` options.
+  ---@class MiniTest.new_set.opts
+  --- A table with elements that will be called without arguments at predefined stages of test execution.
+  ---@field hooks? MiniTest.new_set.opts.hooks
+  --- An array defining different arguments with which main test actions will be called.
+  ---@field parametrize? any[][]
+  ---@field data? table A table with user data that will be forwarded to cases.
+
+  --- `new_set()` hooks
+  ---@class MiniTest.new_set.opts.hooks
+  ---@field pre_once? function A function executed before first filtered node.
+  ---@field pre_case? function A function executed before each case (even nested).
+  ---@field post_case? function A function executed after each case (even nested).
+  ---@field post_once? function A function executed after last filtered node.
+end
 
 -- Module functionality =======================================================
 --- Create test set
@@ -256,7 +316,7 @@ MiniTest.current = { all_cases = nil, case = nil }
 --- - Supplied options `opts` are stored in `opts` field of metatable
 ---   (`getmetatable(set).opts`).
 ---
----@param opts table|nil Allowed options:
+---@param opts? MiniTest.new_set.opts Allowed options:
 ---   - <hooks> - table with fields:
 ---       - <pre_once> - executed before first filtered node.
 ---       - <pre_case> - executed before each case (even nested).
@@ -304,6 +364,45 @@ MiniTest.new_set = function(opts, tbl)
   end
 
   return setmetatable(tbl, metatbl)
+end
+
+do
+  --- Test case
+  ---@class MiniTest.case
+  ---@field args any[] Array of arguments with which `test` will be called.
+  ---@field data table User data: all fields of `opts.data` from nested test sets.
+  ---@field desc string[] Description: array of fields from nested test sets.
+  ---@field exec? table|nil Information about test case execution. Value of `nil` means
+  ---   that this particular case was not (yet) executed. Has following fields:
+  ---     - <fails> - array of strings with failing information.
+  ---     - <notes> - array of strings with non-failing information.
+  ---     - <state> - state of test execution. One of:
+  ---         - 'Executing <name of what is being executed>' (during execution).
+  ---         - 'Pass' (no fails, no notes).
+  ---         - 'Pass with notes' (no fails, some notes).
+  ---         - 'Fail' (some fails, no notes).
+  ---         - 'Fail with notes' (some fails, some notes).
+  ---@field hooks MiniTest.case.hooks Hooks to be executed as part of test case. Has fields
+  ---   <pre> and <post> with arrays to be consecutively executed before and
+  ---   after execution of `test`.
+  ---@field test function|table Main callable object representing test action.
+
+  --- Information about test case execution.
+  ---@class MiniTest.test.exec
+  ---@field fails string[] Array of strings with failing information.
+  ---@field notes string[] Array of strings with non-failing information.
+  --- State of test execution. One of:
+  --- - 'Executing <name of what is being executed>' (during execution).
+  --- - 'Pass' (no fails, no notes).
+  --- - 'Pass with notes' (no fails, some notes).
+  --- - 'Fail' (some fails, no notes).
+  --- - 'Fail with notes' (some fails, some notes).
+  ---@field state "Pass"|"Pass with notes"|"Fail"|"Fail with notes"|"Executing test"|string
+
+  --- Hooks to be executed as part of test case.
+  ---@class MiniTest.case.hooks
+  ---@field pre function[] Hooks to be executed before execution of the test.
+  ---@field post function[] Hooks to be executed after execution of the test.
 end
 
 --- Test case
@@ -381,7 +480,7 @@ MiniTest.finally = function(f) H.cache.finally = f end
 --- - Collect cases with |MiniTest.collect()| and `opts.collect`.
 --- - Execute collected cases with |MiniTest.execute()| and `opts.execute`.
 ---
----@param opts table|nil Options with structure similar to |MiniTest.config|.
+---@param opts? MiniTest.config Options with structure similar to |MiniTest.config|.
 ---   Absent values are inferred from there.
 MiniTest.run = function(opts)
   if H.is_disabled() then return end
@@ -401,7 +500,7 @@ end
 --- Basically a |MiniTest.run()| wrapper with custom `collect.find_files` option.
 ---
 ---@param file string|nil Path to test file. By default a path of current buffer.
----@param opts table|nil Options for |MiniTest.run()|.
+---@param opts? MiniTest.config Options for |MiniTest.run()|.
 MiniTest.run_file = function(file, opts)
   file = vim.fn.fnamemodify(file or vim.api.nvim_buf_get_name(0), ':p:.')
 
@@ -421,7 +520,7 @@ end
 ---
 --- Basically a |MiniTest.run()| wrapper with custom `collect.find_files` option.
 ---
----@param location table|nil Table with fields <file> (path to file) and <line>
+---@param location? MiniTest.config Table with fields <file> (path to file) and <line>
 ---   (line number in that file). Default is taken from current cursor position.
 MiniTest.run_at_location = function(location, opts)
   if location == nil then
@@ -478,7 +577,7 @@ end
 ---   all hooks, as `*_once` hooks will be added after filtration.
 --- - Add `*_once` hooks to appropriate cases.
 ---
----@param opts table|nil Options controlling case collection. Possible fields:
+---@param opts? MiniTest.config.collect Options controlling case collection. Possible fields:
 ---   - <emulate_busted> - whether to emulate 'Olivine-Labs/busted' interface.
 ---     It emulates these global functions: `describe`, `it`, `setup`, `teardown`,
 ---     `before_each`, `after_each`. Use |MiniTest.skip()| instead of `pending()`
@@ -490,7 +589,7 @@ end
 ---     (see |MiniTest-test-case|) returns `false` if this case should be filtered
 ---     out; `true` otherwise.
 ---
----@return table Array of test cases ready to be used by |MiniTest.execute()|.
+---@return MiniTest.case[] Array of test cases ready to be used by |MiniTest.execute()|.
 MiniTest.collect = function(opts)
   opts = vim.tbl_deep_extend('force', H.get_config().collect, opts or {})
 
@@ -567,8 +666,8 @@ end
 ---   place with proper `exec` field. Use `all_cases` at |MiniTest.current| to
 ---   look at execution result.
 ---
----@param cases table Array of test cases (see |MiniTest-test-case|).
----@param opts table|nil Options controlling case collection. Possible fields:
+---@param cases MiniTest.case[] Array of test cases (see |MiniTest-test-case|).
+---@param opts? MiniTest.config.execute Options controlling case collection. Possible fields:
 ---   - <reporter> - table with possible callable fields `start`, `update`,
 ---     `finish`. Default: |MiniTest.gen_reporter.buffer()| in interactive
 ---     usage and |MiniTest.gen_reporter.stdout()| in headless usage.
@@ -622,6 +721,12 @@ MiniTest.execute = function(cases, opts)
   vim.schedule(function() H.exec_callable(reporter.finish) end)
   -- Use separate call to ensure that `reporter.finish` error won't interfere
   vim.schedule(function() H.cache.is_executing = false end)
+end
+
+do
+  --- Stop options
+  ---@class MiniTest.stop.opts
+  ---@field close_all_child_neovim? boolean Whether to close all child neovim processes. Default: true.
 end
 
 --- Stop test execution
@@ -768,6 +873,17 @@ function MiniTest.expect.assertion(value, message)
   H.error_expect('an assertion', context)
 end
 
+do
+  --- `expect.reference_screenshot()` options
+  ---@class MiniTest.expect.reference_screenshot.opts
+  --- Whether to forcefully create reference screenshot.
+  --- Temporary useful during test writing. Default: `false`.
+  ---@field force? boolean
+  --- Array of line numbers to ignore during compare.
+  --- Default: `nil` to check all lines.
+  ---@field ignore_lines? integer[]
+end
+
 --- Expect equality to reference screenshot
 ---
 ---@param screenshot table|nil Array with screenshot information. Usually an output
@@ -777,7 +893,7 @@ end
 ---   automatically in directory 'tests/screenshots' from current case info and
 ---   total number of times it was called inside current case. If there is no
 ---   file at `path`, it is created with content of `screenshot`.
----@param opts table|nil Options:
+---@param opts MiniTest.expect.reference_screenshot.opts Options:
 ---   - <force> `(boolean)` - whether to forcefully create reference screenshot.
 ---     Temporary useful during test writing. Default: `false`.
 ---   - <ignore_lines> `(table)` - array of line numbers to ignore during compare.

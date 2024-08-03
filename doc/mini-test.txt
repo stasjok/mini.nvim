@@ -141,7 +141,7 @@ recipes.
 Module setup
 
 Parameters ~
-{config} `(table|nil)` Module config table. See |MiniTest.config|.
+{config} `(optional)` MiniTest.config Module config `(table.)` See |MiniTest.config|.
 
 Usage ~
 >lua
@@ -244,7 +244,7 @@ Notes:
   (`getmetatable(set).opts`).
 
 Parameters ~
-{opts} `(table|nil)` Allowed options:
+{opts} `(optional)` MiniTest.new_set.opts Allowed options:
   - <hooks> - table with fields:
       - <pre_once> - executed before first filtered node.
       - <pre_case> - executed before each case (even nested).
@@ -364,7 +364,7 @@ Run tests
 - Execute collected cases with |MiniTest.execute()| and `opts.execute`.
 
 Parameters ~
-{opts} `(table|nil)` Options with structure similar to |MiniTest.config|.
+{opts} `(optional)` MiniTest.config Options with structure similar to |MiniTest.config|.
   Absent values are inferred from there.
 
 ------------------------------------------------------------------------------
@@ -376,7 +376,7 @@ Basically a |MiniTest.run()| wrapper with custom `collect.find_files` option.
 
 Parameters ~
 {file} `(string|nil)` Path to test file. By default a path of current buffer.
-{opts} `(table|nil)` Options for |MiniTest.run()|.
+{opts} `(optional)` MiniTest.config Options for |MiniTest.run()|.
 
 ------------------------------------------------------------------------------
                                                     *MiniTest.run_at_location()*
@@ -392,7 +392,7 @@ option in |MiniTest.new_set()|).
 Basically a |MiniTest.run()| wrapper with custom `collect.find_files` option.
 
 Parameters ~
-{location} `(table|nil)` Table with fields <file> (path to file) and <line>
+{location} `(optional)` MiniTest.config Table with fields <file> (path to file) and <line>
   (line number in that file). Default is taken from current cursor position.
 
 ------------------------------------------------------------------------------
@@ -430,7 +430,7 @@ Overview of collection process:
 - Add `*_once` hooks to appropriate cases.
 
 Parameters ~
-{opts} `(table|nil)` Options controlling case collection. Possible fields:
+{opts} `(optional)` MiniTest.config.collect Options controlling case collection. Possible fields:
   - <emulate_busted> - whether to emulate 'Olivine-Labs/busted' interface.
     It emulates these global functions: `describe`, `it`, `setup`, `teardown`,
     `before_each`, `after_each`. Use |MiniTest.skip()| instead of `pending()`
@@ -443,7 +443,7 @@ Parameters ~
     out; `true` otherwise.
 
 Return ~
-`(table)` Array of test cases ready to be used by |MiniTest.execute()|.
+MiniTest.case[] Array of test cases ready to be used by |MiniTest.execute()|.
 
 ------------------------------------------------------------------------------
                                                             *MiniTest.execute()*
@@ -468,8 +468,8 @@ Notes:
   look at execution result.
 
 Parameters ~
-{cases} `(table)` Array of test cases (see |MiniTest-test-case|).
-{opts} `(table|nil)` Options controlling case collection. Possible fields:
+{cases} MiniTest.case[] Array of test cases (see |MiniTest-test-case|).
+{opts} `(optional)` MiniTest.config.execute Options controlling case collection. Possible fields:
   - <reporter> - table with possible callable fields `start`, `update`,
     `finish`. Default: |MiniTest.gen_reporter.buffer()| in interactive
     usage and |MiniTest.gen_reporter.stdout()| in headless usage.
@@ -597,7 +597,7 @@ Parameters ~
   automatically in directory 'tests/screenshots' from current case info and
   total number of times it was called inside current case. If there is no
   file at `path`, it is created with content of `screenshot`.
-{opts} `(table|nil)` Options:
+{opts} MiniTest.expect.reference_screenshot.opts Options:
   - <force> `(boolean)` - whether to forcefully create reference screenshot.
     Temporary useful during test writing. Default: `false`.
   - <ignore_lines> `(table)` - array of line numbers to ignore during compare.
