@@ -1196,7 +1196,7 @@ end
 ---
 --- For more information see |MiniTest-child-neovim|.
 ---
----@return MiniTest.child.obj Object of |MiniTest-child-neovim|.
+---@return MiniTest.child Object of |MiniTest-child-neovim|.
 ---
 ---@usage >lua
 ---   -- Initiate
@@ -1221,7 +1221,7 @@ end
 ---   child.stop()
 --- <
 MiniTest.new_child_neovim = function()
-  ---@class MiniTest.child.obj
+  ---@class MiniTest.child
   local child = {}
   local start_args, start_opts
 
@@ -1688,7 +1688,7 @@ end
 ---   then return value). See for `*_notify` variant to use |vim.rpcnotify()|.
 --- - All fields and methods should be called with `.`, not `:`.
 ---
----@class MiniTest.child
+---@class MiniTest.child-neovim
 ---
 ---@field start function Start child process. See |MiniTest-child-neovim.start()|.
 ---@field stop function Stop current child process.
