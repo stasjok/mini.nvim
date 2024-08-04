@@ -1230,6 +1230,8 @@ MiniTest.new_child_neovim = function()
     H.error('Child process is not running. Did you call `child.start()`?')
   end
 
+  --- Ensures that child neovim is not blocked, otherwise errors.
+  ---@param method string Method name for error message.
   local prevent_hanging = function(method)
     if not child.is_blocked() then return end
 
@@ -1543,6 +1545,9 @@ MiniTest.new_child_neovim = function()
   ---@return boolean
   child.is_running = function() return child.job ~= nil end
 
+  -- Expose prevent_hanging utility function
+  child.prevent_hanging = prevent_hanging
+
   -- Various wrappers
 
   --- Ensure normal mode.
@@ -1709,6 +1714,7 @@ end
 ---
 ---@field is_blocked function Check whether child process is blocked.
 ---@field is_running function Check whether child process is currently running.
+---@field prevent_hanging function Ensures that child isn't blocked, otherwise errors.
 ---
 ---@field ensure_normal_mode function Ensure normal mode.
 ---@field get_screenshot function Returns table with two "2d arrays" of single

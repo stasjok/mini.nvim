@@ -802,6 +802,7 @@ Fields ~
 
 {is_blocked} `(function)` Check whether child process is blocked.
 {is_running} `(function)` Check whether child process is currently running.
+{prevent_hanging} `(function)` Ensures that child isn't blocked, otherwise errors.
 
 {ensure_normal_mode} `(function)` Ensure normal mode.
 {get_screenshot} `(function)` Returns table with two "2d arrays" of single
