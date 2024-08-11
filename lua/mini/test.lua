@@ -893,7 +893,7 @@ end
 ---   automatically in directory 'tests/screenshots' from current case info and
 ---   total number of times it was called inside current case. If there is no
 ---   file at `path`, it is created with content of `screenshot`.
----@param opts MiniTest.expect.reference_screenshot.opts Options:
+---@param opts? MiniTest.expect.reference_screenshot.opts Options:
 ---   - <force> `(boolean)` - whether to forcefully create reference screenshot.
 ---     Temporary useful during test writing. Default: `false`.
 ---   - <ignore_lines> `(table)` - array of line numbers to ignore during compare.
