@@ -10,7 +10,6 @@ local load_module = function(config) child.mini_load('tabline', config) end
 local unload_module = function() child.mini_unload('tabline') end
 local reload_module = function(config) unload_module(); load_module(config) end
 local set_lines = function(...) return child.set_lines(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
 --stylua: ignore end
 
 -- Make helpers
@@ -20,8 +19,13 @@ local edit = function(name) child.cmd('edit ' .. name) end
 
 local edit_path = function(rel_path) child.cmd('edit tests/dir-tabline/' .. rel_path) end
 
+local path_sep = package.config:sub(1, 1)
+
 local eval_tabline = function(show_hl, show_action)
   local res = child.lua_get('MiniTabline.make_tabline_string()')
+
+  -- Unify path separator for more robust testing
+  res = res:gsub(path_sep, '/')
 
   if not show_hl then res = res:gsub('%%#%w+#', '') end
 
@@ -42,6 +46,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(1),
 })
 
 -- Unit tests =================================================================
@@ -50,6 +55,9 @@ T['setup()'] = new_set()
 T['setup()']['creates side effects'] = function()
   -- Global variable
   eq(child.lua_get('type(_G.MiniTabline)'), 'table')
+
+  -- Autocommand group
+  eq(child.fn.exists('#MiniTabline'), 1)
 
   -- Highlight groups
   child.cmd('hi clear')
@@ -95,6 +103,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ format = 'a' }, 'format', 'function')
   expect_config_error({ set_vim_settings = 'a' }, 'set_vim_settings', 'boolean')
   expect_config_error({ tabpage_section = 1 }, 'tabpage_section', 'string')
+end
+
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniTablineCurrent'), 'links to TabLineSel')
 end
 
 T['setup()']["sets proper 'tabline' option"] = function()
@@ -189,7 +202,7 @@ T['make_tabline_string()']['respects `config.tabpage_section`'] = function()
 
   -- Should also use buffer local config
   child.b.minitabline_config = { tabpage_section = 'right' }
-  poke_eventloop()
+  child.poke_eventloop()
   eq(
     eval_tabline(true),
     '%#MiniTablineHidden# aaa %#MiniTablineCurrent# bbb %#MiniTablineFill#%=%#MiniTablineTabpagesection# Tab 2/2 '
@@ -257,7 +270,7 @@ T['make_tabline_string()']['respects `config.show_icons`'] = function()
 
   -- Should also use buffer local config
   child.b.minitabline_config = { show_icons = true }
-  poke_eventloop()
+  child.poke_eventloop()
   eq(eval_tabline(true), '%#MiniTablineCurrent#  LICENSE %#MiniTablineHidden#  init.lua %#MiniTablineFill#')
 
   -- Should prefer 'mini.icons' even if 'nvim-web-devicons' is present
@@ -287,7 +300,7 @@ T['make_tabline_string()']['respects `config.format`'] = function()
     '%#MiniTablineHidden#[1] |dir1/aaa| %#MiniTablineCurrent#[2] |dir2/aaa| %#MiniTablineHidden#[3] |!(2)| %#MiniTablineFill#'
   )
   local log = child.lua_get('_G.log')
-  eq({ log[1], log[2], log[3] }, { 'dir1/aaa', 'dir2/aaa', '!(2)' })
+  eq({ log[1], log[2], log[3] }, { 'dir1' .. path_sep .. 'aaa', 'dir2' .. path_sep .. 'aaa', '!(2)' })
 
   -- Should also use buffer local config
   child.lua([[vim.b.minitabline_config = {

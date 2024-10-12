@@ -13,7 +13,7 @@
 ---
 --- - Configurable:
 ---     - Number of hues used for non-base colors (from 0 to 8).
----     - Saturation level ('low', 'medium', 'high').
+---     - Saturation level ("low", "lowmedium", "medium", "mediumhigh", "high").
 ---     - Accent color used for some selected UI elements.
 ---     - Plugin integration (can be selectively enabled for faster startup).
 ---
@@ -49,6 +49,7 @@
 ---     - 'HiPhish/rainbow-delimiters.nvim'
 ---     - 'hrsh7th/nvim-cmp'
 ---     - 'justinmk/vim-sneak'
+---     - 'kevinhwang91/nvim-bqf'
 ---     - 'kevinhwang91/nvim-ufo'
 ---     - 'lewis6991/gitsigns.nvim'
 ---     - 'lukas-reineke/indent-blankline.nvim'
@@ -202,7 +203,9 @@ end
 ---
 ---   -- Choose saturation of colored text
 ---   setup({ background = '#11262d', foreground = '#c0c8cc', saturation = 'low' })
+---   setup({ background = '#11262d', foreground = '#c0c8cc', saturation = 'lowmedium' })
 ---   setup({ background = '#11262d', foreground = '#c0c8cc', saturation = 'medium' })
+---   setup({ background = '#11262d', foreground = '#c0c8cc', saturation = 'mediumhigh' })
 ---   setup({ background = '#11262d', foreground = '#c0c8cc', saturation = 'high' })
 ---
 ---   -- Choose accent color
@@ -219,7 +222,7 @@ MiniHues.config = {
   -- Number of hues used for non-base colors
   n_hues = 8,
 
-  -- Saturation level. One of 'low', 'medium', 'high'.
+  -- Saturation. One of 'low', 'lowmedium', 'medium', 'mediumhigh', 'high'.
   saturation = 'medium',
 
   -- Accent color. One of: 'bg', 'fg', 'red', 'orange', 'yellow', 'green',
@@ -328,7 +331,7 @@ MiniHues.make_palette = function(config)
   local l_mid = 0.5 * (bg_l + fg_l)
 
   -- Configurable chroma level
-  local chroma = ({ low = 4, medium = 8, high = 16 })[saturation]
+  local chroma = ({ low = 4, lowmedium = 6, medium = 8, mediumhigh = 12, high = 16 })[saturation]
 
   -- Hues
   local hues = H.make_hues(bg_lch.h, fg_lch.h, n_hues)
@@ -460,7 +463,7 @@ MiniHues.apply_palette = function(palette, plugins)
   hi('EndOfBuffer',    { fg=p.bg_mid2, bg=nil })
   hi('ErrorMsg',       { fg=p.red,     bg=nil })
   hi('FloatBorder',    { fg=p.accent,  bg=p.bg_edge })
-  hi('FloatTitle',     { fg=p.accent,  bg=p.bg_edge, bold = true })
+  hi('FloatTitle',     { fg=p.accent,  bg=p.bg_edge, bold=true })
   hi('FoldColumn',     { fg=p.bg_mid2, bg=nil })
   hi('Folded',         { fg=p.fg_mid2, bg=p.bg_edge })
   hi('IncSearch',      { fg=p.bg,      bg=p.yellow })
@@ -477,14 +480,16 @@ MiniHues.apply_palette = function(palette, plugins)
   hi('Normal',         { fg=p.fg,      bg=p.bg })
   hi('NormalFloat',    { fg=p.fg,      bg=p.bg_edge })
   hi('NormalNC',       { link='Normal' })
-  hi('PMenu',          { fg=p.fg,      bg=p.bg_mid })
-  hi('PMenuExtra',     { link='PMenu' })
-  hi('PMenuExtraSel',  { link='PMenuSel' })
-  hi('PMenuKind',      { link='PMenu' })
-  hi('PMenuKindSel',   { link='PMenuSel' })
-  hi('PMenuSbar',      { link='PMenu' })
-  hi('PMenuSel',       { fg=p.bg,      bg=p.fg,      blend=0 })
-  hi('PMenuThumb',     { fg=nil,       bg=p.bg_mid2 })
+  hi('Pmenu',          { fg=p.fg,      bg=p.bg_mid })
+  hi('PmenuExtra',     { link='Pmenu' })
+  hi('PmenuExtraSel',  { link='PmenuSel' })
+  hi('PmenuKind',      { link='Pmenu' })
+  hi('PmenuKindSel',   { link='PmenuSel' })
+  hi('PmenuMatch',     { fg=p.fg,      bg=p.bg_mid,  bold=true })
+  hi('PmenuMatchSel',  { fg=nil,       bg=nil,       bold=true,   blend=0, reverse=true })
+  hi('PmenuSbar',      { link='Pmenu' })
+  hi('PmenuSel',       { fg=nil,       bg=nil,       blend=0,     reverse=true })
+  hi('PmenuThumb',     { fg=nil,       bg=p.bg_mid2 })
   hi('Question',       { fg=p.azure,   bg=nil })
   hi('QuickFixLine',   { fg=nil,       bg=nil,       bold=true })
   hi('Search',         { fg=p.bg,      bg=p.accent })
@@ -508,7 +513,7 @@ MiniHues.apply_palette = function(palette, plugins)
   hi('VisualNOS',      { fg=nil,       bg=p.bg_mid })
   hi('WarningMsg',     { fg=p.yellow,  bg=nil })
   hi('Whitespace',     { fg=p.bg_mid2, bg=nil })
-  hi('WildMenu',       { link='PMenuSel' })
+  hi('WildMenu',       { link='PmenuSel' })
   hi('WinBar',         { link='StatusLine' })
   hi('WinBarNC',       { link='StatusLineNC' })
   hi('WinSeparator',   { fg=p.accent,  bg=nil })
@@ -696,7 +701,7 @@ MiniHues.apply_palette = function(palette, plugins)
   hi('@tag',              { link='Tag' })
 
   hi('@symbol', { link='Keyword' })
-  hi('@none',   { link='Normal'})
+  hi('@none',   { link='Normal' })
 
   -- Semantic tokens
   if vim.fn.has('nvim-0.9') == 1 then
@@ -749,6 +754,7 @@ MiniHues.apply_palette = function(palette, plugins)
     hi('@string.special.symbol', { link='@constant' })
     hi('@string.special.path',   { link='Directory' })
     hi('@string.special.url',    { link='@markup.link.url' })
+    hi('@string.special.vimdoc', { link='@constant' })
 
     -- @character
     -- @character.special
@@ -807,7 +813,7 @@ MiniHues.apply_palette = function(palette, plugins)
 
     hi('@markup.strong',        { link='@text.strong' })
     hi('@markup.italic',        { link='@text.emphasis' })
-    hi('@markup.strikethrough', { link='@text.strikethrough' })
+    hi('@markup.strikethrough', { link='@text.strike' })
     hi('@markup.underline',     { link='@text.underline' })
 
     hi('@markup.heading', { link='@text.title' })
@@ -883,10 +889,10 @@ MiniHues.apply_palette = function(palette, plugins)
     hi('MiniFilesTitle',          { link='FloatTitle'  })
     hi('MiniFilesTitleFocused',   { fg=p.fg, bg=p.bg_edge, bold=true })
 
-    hi('MiniHipatternsFixme', { fg=p.bg, bg=p.red,    bold=true})
-    hi('MiniHipatternsHack',  { fg=p.bg, bg=p.yellow, bold=true})
-    hi('MiniHipatternsNote',  { fg=p.bg, bg=p.cyan,   bold=true})
-    hi('MiniHipatternsTodo',  { fg=p.bg, bg=p.blue,   bold=true})
+    hi('MiniHipatternsFixme', { fg=p.bg, bg=p.red,    bold=true })
+    hi('MiniHipatternsHack',  { fg=p.bg, bg=p.yellow, bold=true })
+    hi('MiniHipatternsNote',  { fg=p.bg, bg=p.cyan,   bold=true })
+    hi('MiniHipatternsTodo',  { fg=p.bg, bg=p.blue,   bold=true })
 
     hi('MiniIconsAzure',  { fg=p.azure,   bg=nil })
     hi('MiniIconsBlue',   { fg=p.blue,    bg=nil })
@@ -922,6 +928,7 @@ MiniHues.apply_palette = function(palette, plugins)
     hi('MiniPickBorder',        { link='FloatBorder' })
     hi('MiniPickBorderBusy',    { link='DiagnosticFloatingWarn' })
     hi('MiniPickBorderText',    { link='FloatTitle' })
+    hi('MiniPickCursor',        { blend=100, nocombine=true })
     hi('MiniPickIconDirectory', { link='Directory' })
     hi('MiniPickIconFile',      { link='MiniPickNormal' })
     hi('MiniPickHeader',        { link='DiagnosticFloatingHint' })
@@ -1146,6 +1153,13 @@ MiniHues.apply_palette = function(palette, plugins)
     hi('SneakLabel', { fg=p.bg, bg=p.orange, bold=true })
   end
 
+  -- 'kevinhwang91/nvim-bqf'
+  if has_integration('kevinhwang91/nvim-bqf') then
+    hi('BqfPreviewFloat', { link='NormalFloat' })
+    hi('BqfPreviewTitle', { link='FloatTitle' })
+    hi('BqfSign',         { fg=p.cyan })
+  end
+
   -- 'kevinhwang91/nvim-ufo'
   -- Everything works correctly out of the box
 
@@ -1201,8 +1215,8 @@ MiniHues.apply_palette = function(palette, plugins)
     hi('NeogitDiffDeleteHighlight', { link='DiffDelete' })
     hi('NeogitDiffDelete',          { link='DiffDelete' })
     hi('NeogitFold',                { link='FoldColumn' })
-    hi('NeogitHunkHeader',          { fg=p.accent, bg=nil})
-    hi('NeogitHunkHeaderHighlight', { fg=p.accent, bg=nil, bold = true})
+    hi('NeogitHunkHeader',          { fg=p.accent, bg=nil })
+    hi('NeogitHunkHeaderHighlight', { fg=p.accent, bg=nil, bold=true })
     hi('NeogitNotificationError',   { link='DiagnosticError' })
     hi('NeogitNotificationInfo',    { link='DiagnosticInfo' })
     hi('NeogitNotificationWarning', { link='DiagnosticWarn' })
@@ -1431,7 +1445,7 @@ H.default_config = vim.deepcopy(MiniHues.config)
 -- Color conversion constants
 H.tau = 2 * math.pi
 
-H.saturation_values = { 'low', 'medium', 'high' }
+H.saturation_values = { 'low', 'lowmedium', 'medium', 'mediumhigh', 'high' }
 
 H.accent_values = { 'bg', 'fg', 'red', 'orange', 'yellow', 'green', 'cyan', 'azure', 'blue', 'purple' }
 

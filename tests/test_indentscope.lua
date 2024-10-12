@@ -3,7 +3,6 @@ local helpers = dofile('tests/helpers.lua')
 local child = helpers.new_child_neovim()
 local expect, eq = helpers.expect, helpers.expect.equality
 local new_set = MiniTest.new_set
-local mark_flaky = helpers.mark_flaky
 
 -- Helpers with child processes
 --stylua: ignore start
@@ -15,8 +14,7 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child, true) end
 --stylua: ignore end
 
 -- Data =======================================================================
@@ -50,7 +48,11 @@ local example_lines = {
 -- aa
 local example_lines_nested = { 'aa', ' aa', '  aa', '   aa', '   aa', '   aa', '  aa', ' aa', 'aa' }
 
-local test_times = { delay = 100, animation_step = 20 }
+-- Time constants
+local default_draw_delay = 100
+local default_animation_step = 20
+local small_time = helpers.get_time_const(10)
+local micro_time = 1
 
 -- Output test set ============================================================
 local T = new_set({
@@ -61,6 +63,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -138,6 +141,11 @@ T['setup()']['properly handles `config.mappings`'] = function()
   -- Supplying empty string should mean "don't create keymap"
   load_module({ mappings = { goto_top = '' } })
   eq(has_map('[i', 'indent scope'), false)
+end
+
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniIndentscopeSymbol'), 'links to Delimiter')
 end
 
 T['get_scope()'] = new_set({
@@ -381,19 +389,17 @@ T['draw()'] = new_set({
 })
 
 T['draw()']['works'] = function()
-  mark_flaky()
-
   set_cursor(6, 1)
   child.lua('MiniIndentscope.draw()')
 
   -- Should be single symbol at cursor line
   child.expect_screenshot()
 
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   child.expect_screenshot()
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   child.expect_screenshot()
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   child.expect_screenshot()
 end
 
@@ -418,7 +424,7 @@ T['draw()']['uses correct highlight groups'] = new_set(
       set_cursor(2, 4)
 
       child.lua('MiniIndentscope.draw()')
-      sleep(test_times.animation_step)
+      sleep(default_animation_step)
 
       validate_hl_group(hl_group)
     end,
@@ -426,53 +432,50 @@ T['draw()']['uses correct highlight groups'] = new_set(
 )
 
 T['draw()']['respects `config.draw.animation`'] = function()
-  mark_flaky()
-
   local validate = function(duration)
     set_cursor(5, 4)
     child.lua('MiniIndentscope.draw()')
 
-    sleep(duration - 10)
+    sleep(duration - small_time)
     -- Should still be one symbol
     child.expect_screenshot()
-    sleep(10 + 1)
+    sleep(small_time + small_time)
     -- Should be two symbols
     child.expect_screenshot()
   end
 
-  local duration = 2.5 * test_times.animation_step
+  local duration = 2 * small_time
   local command = string.format('MiniIndentscope.config.draw.animation = function() return %d end', duration)
   child.lua(command)
   validate(duration)
 
   -- Should also use buffer local config
   set_cursor(1, 0)
-  child.lua('vim.b.miniindentscope_config = { draw = { animation = function() return 30 end } }')
-  validate(30)
+  local other_duration = 3 * small_time
+  local other_command =
+    string.format('vim.b.miniindentscope_config = { draw = { animation = function() return %d end } }', other_duration)
+  child.lua(other_command)
+  validate(other_duration)
 end
 
 T['draw()']['respects `config.draw.priority`'] = function()
-  mark_flaky()
-
   local ns_id = child.api.nvim_create_namespace('indentscope-test')
   child.api.nvim_buf_set_extmark(0, ns_id, 4, 0, { virt_text_pos = 'overlay', virt_text = { { '+' } }, priority = 5 })
 
   set_cursor(5, 0)
   child.lua('MiniIndentscope.draw()')
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   child.expect_screenshot()
 
   child.lua('MiniIndentscope.undraw()')
 
   child.lua('MiniIndentscope.config.draw.priority = 6')
   child.lua('MiniIndentscope.draw()')
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   child.expect_screenshot()
 end
 
 T['draw()']['respects `config.symbol`'] = function()
-  mark_flaky()
-
   child.lua([[MiniIndentscope.config.symbol = '-']])
   set_cursor(5, 4)
   child.lua('MiniIndentscope.draw()')
@@ -487,8 +490,6 @@ T['draw()']['respects `config.symbol`'] = function()
 end
 
 T['draw()']["does not overshadow 'listchars'"] = function()
-  mark_flaky()
-
   child.o.list = true
   child.o.listchars = 'space:.'
 
@@ -499,13 +500,16 @@ T['draw()']["does not overshadow 'listchars'"] = function()
 end
 
 T['draw()']['does not round time of every animation step'] = function()
-  child.lua('MiniIndentscope.config.draw.animation = function() return 2.99 end')
+  helpers.skip_if_slow()
+
+  local fractional_step = 0.99 * default_animation_step
+  child.lua('_G.fractional_step = ' .. fractional_step)
+  child.lua('MiniIndentscope.config.draw.animation = function() return _G.fractional_step end')
 
   set_cursor(6, 0)
   child.lua('MiniIndentscope.draw()')
 
-  -- Should be single symbol at cursor line
-  sleep(2 * 3)
+  sleep(2 * fractional_step)
   child.expect_screenshot()
 end
 
@@ -531,6 +535,12 @@ T['draw()']['shows symbols on wrapped lines without overlapping'] = function()
   child.wo.breakindent = true
   child.wo.breakindentopt = 'min:0'
   validate()
+
+  -- Should try to not overlap 'showbreak'
+  child.wo.breakindent = true
+  child.wo.breakindentopt = 'sbr'
+  child.wo.showbreak = 'x'
+  validate()
 end
 
 T['undraw()'] = new_set({
@@ -545,8 +555,6 @@ T['undraw()'] = new_set({
 })
 
 T['undraw()']['works'] = function()
-  mark_flaky()
-
   set_cursor(5, 4)
   child.lua('MiniIndentscope.draw()')
   child.expect_screenshot()
@@ -565,19 +573,16 @@ T['Auto drawing'] = new_set({
 })
 
 T['Auto drawing']['works in Normal mode'] = function()
-  mark_flaky()
-
   set_cursor(5, 4)
-
-  sleep(test_times.delay - 10)
+  sleep(default_draw_delay - small_time)
   -- Nothing should yet be shown
   child.expect_screenshot()
 
-  sleep(10)
+  sleep(small_time)
   -- Symbol at cursor line should be drawn immediately
   child.expect_screenshot()
 
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   child.expect_screenshot()
 end
 
@@ -585,14 +590,12 @@ T['Auto drawing']['respects common events'] = new_set({
   parametrize = { { 'CursorMoved' }, { 'CursorMovedI' }, { 'TextChanged' }, { 'TextChangedI' }, { 'TextChangedP' } },
 }, {
   test = function(event_name)
-    mark_flaky()
-
     set_cursor(5, 4)
     child.lua('MiniIndentscope.undraw()')
-    sleep(10)
+    sleep(small_time)
 
     child.cmd('doautocmd ' .. event_name)
-    sleep(test_times.delay + test_times.animation_step * 1 + 1)
+    sleep(default_draw_delay + default_animation_step + small_time)
     child.expect_screenshot()
   end,
 })
@@ -612,42 +615,42 @@ T['Auto drawing']['respects ModeChanged event'] = function()
   child.lua([[require('mini.indentscope').setup({ draw = { delay = 0, animation = function() return 0 end } })]])
 
   set_cursor(5, 4)
-  sleep(10)
+  sleep(small_time)
   child.expect_screenshot()
 
   type_keys('i')
-  sleep(10)
+  sleep(small_time)
   child.expect_screenshot()
 
   type_keys('<Esc>')
-  sleep(10)
+  sleep(small_time)
   child.expect_screenshot()
 end
 
 T['Auto drawing']['respects `config.draw.delay`'] = function()
-  child.lua('MiniIndentscope.config.draw.delay = ' .. 0.5 * test_times.delay)
+  child.lua('MiniIndentscope.config.draw.delay = ' .. (0.5 * default_draw_delay))
   set_cursor(5, 4)
 
-  sleep(0.5 * test_times.delay)
+  sleep(0.5 * default_draw_delay)
   child.expect_screenshot()
 
   -- Should also use buffer local config
   set_cursor(1, 0)
-  child.b.miniindentscope_config = { draw = { delay = 30 } }
+  child.b.miniindentscope_config = { draw = { delay = 2 * default_draw_delay } }
   set_cursor(5, 4)
-  sleep(30)
+  sleep(2 * default_draw_delay)
   child.expect_screenshot()
 end
 
 T['Auto drawing']['implements debounce-style delay'] = function()
   set_cursor(5, 4)
-  sleep(test_times.delay - 10)
+  sleep(default_draw_delay - small_time)
   set_cursor(2, 0)
-  sleep(test_times.delay - 10)
+  sleep(default_draw_delay - small_time)
 
   -- Should draw nothing
   child.expect_screenshot()
-  sleep(10)
+  sleep(small_time)
   -- Should start drawing
   child.expect_screenshot()
 end
@@ -675,15 +678,15 @@ T['Auto drawing']['works in Insert mode'] = function()
   set_cursor(5, 4)
   type_keys('i')
 
-  sleep(test_times.delay - 10)
+  sleep(default_draw_delay - small_time)
   -- Nothing yet should be shown
   child.expect_screenshot()
 
-  sleep(10)
+  sleep(small_time)
   -- Show only on cursor line
   child.expect_screenshot()
 
-  sleep(test_times.animation_step)
+  sleep(default_animation_step)
   -- One new step should be drawn
   child.expect_screenshot()
 end
@@ -692,7 +695,7 @@ T['Auto drawing']['updates immediately when scopes intersect'] = function()
   child.set_size(15, 15)
 
   set_cursor(5, 4)
-  sleep(test_times.delay + test_times.animation_step + 10)
+  sleep(default_draw_delay + default_animation_step + small_time)
   -- Full scope should be shown
   child.expect_screenshot()
 

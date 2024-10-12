@@ -35,6 +35,13 @@ https://user-images.githubusercontent.com/24854248/173044355-90bfc230-70c4-4932-
 - Automatic display in floating window of completion item info (via 'completionItem/resolve' request) and signature help (with highlighting of active parameter if LSP server provides such information).
 - Automatic actions are done after some configurable amount of delay. This reduces computational load and allows fast typing (completion and signature help) and item selection (item info)
 - User can force two-stage completion via or fallback completion.
+- Highlighting of LSP kind (like "Function", "Keyword", etc.). Requires enabled ['mini.icons'](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-icons.md) (uses its "lsp" category) and Neovim>=0.11.
+
+## Dependencies
+
+For full experience needs (still works without any of suggestions):
+
+- Enabled ['mini.icons'](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-icons.md) module to highlight LSP kind (requires Neovim>=0.11). Otherwise `MiniCompletion.default_process_items()` does not add highlighting. Also take a look at `MiniIcons.tweak_lsp_kind()`.
 
 ## Installation
 
@@ -163,12 +170,10 @@ Here are code snippets for some common installation methods (use only one):
     -- on every `BufEnter` event.
     auto_setup = true,
 
-    -- `process_items` should be a function which takes LSP
-    -- 'textDocument/completion' response items and word to complete. Its
-    -- output should be a table of the same nature as input items. The most
-    -- common use-cases are custom filtering and sorting. You can use
-    -- default `process_items` as `MiniCompletion.default_process_items()`.
-    process_items = --<function: filters out snippets; sorts by LSP specs>,
+    -- A function which takes LSP 'textDocument/completion' response items
+    -- and word to complete. Output should be a table of the same nature as
+    -- input items. Common use case is custom filter/sort.
+    process_items = --<function: MiniCompletion.default_process_items>,
   },
 
   -- Fallback action. It will always be run in Insert mode. To use Neovim's

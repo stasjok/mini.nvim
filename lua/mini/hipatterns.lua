@@ -300,12 +300,6 @@ end
 ---   as callable <group> (`data` will also contain `hl_group` key with <group>
 ---   value) and should return a table with all options for extmark (including
 ---   `end_row`, `end_col`, `hl_group`, and `priority`).
----   Note: if <extmark_opts> is supplied, <priority> is ignored.
----
---- - <priority> `(number|nil)` - SOFT DEPRECATED in favor
----   of `extmark_opts = { priority = <value> }`.
----   Optional highlighting priority (as in |nvim_buf_set_extmark()|).
----   Default: 200. See also |vim.highlight.priorities|.
 ---
 --- See "Common use cases" section for the examples.
 ---
@@ -699,13 +693,14 @@ end
 H.apply_config = function(config) MiniHipatterns.config = config end
 
 H.create_autocommands = function()
-  local augroup = vim.api.nvim_create_augroup('MiniHipatterns', {})
+  local gr = vim.api.nvim_create_augroup('MiniHipatterns', {})
 
   local au = function(event, pattern, callback, desc)
-    vim.api.nvim_create_autocmd(event, { group = augroup, pattern = pattern, callback = callback, desc = desc })
+    vim.api.nvim_create_autocmd(event, { group = gr, pattern = pattern, callback = callback, desc = desc })
   end
 
   au('BufEnter', '*', H.auto_enable, 'Enable highlighting')
+  au('ColorScheme', '*', H.create_default_hl, 'Ensure colors')
   au('ColorScheme', '*', H.on_colorscheme, 'Reload all enabled pattern highlighters')
 end
 
@@ -819,15 +814,7 @@ H.normalize_highlighters = function(highlighters)
 
     local group = type(hi.group) == 'string' and function() return hi.group end or hi.group
 
-    -- TODO: Remove after Neovim 0.11 is released
-    local has_raw_priority = type(hi.priority) == 'number'
-    if has_raw_priority then
-      local msg = '`priority` field of highlighter is soft deprecated.'
-        .. ' Use `extmark_opts = { priority = <value> }`.'
-        .. ' This works for now but will be removed after the next stable release.'
-      vim.notify_once(msg, vim.log.levels.WARN)
-    end
-    local extmark_opts = hi.extmark_opts or { priority = has_raw_priority and hi.priority or 200 }
+    local extmark_opts = hi.extmark_opts or { priority = 200 }
     if type(extmark_opts) == 'table' then
       local t = extmark_opts
       ---@diagnostic disable:cast-local-type

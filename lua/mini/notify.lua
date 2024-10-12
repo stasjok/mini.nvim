@@ -105,7 +105,7 @@ MiniNotify.setup = function(config)
   H.apply_config(config)
 
   -- Define behavior
-  H.create_autocommands(config)
+  H.create_autocommands()
 
   -- Create default highlighting
   H.create_default_hl()
@@ -193,6 +193,15 @@ end
 --- Should be a number between 0 (not included) and 1.
 --- Default: 0.382.
 ---
+--- Example for showing notifications in bottom right corner: >lua
+---
+---   local win_config = function()
+---     local has_statusline = vim.o.laststatus > 0
+---     local pad = vim.o.cmdheight + (has_statusline and 1 or 0)
+---     return { anchor = 'SE', col = vim.o.columns, row = vim.o.lines - pad }
+---   end
+---   require('mini.notify').setup({ window = { config = win_config } })
+--- <
 --- `window.winblend` defines 'winblend' value for notification window.
 --- Default: 25.
 MiniNotify.config = {
@@ -596,14 +605,15 @@ H.apply_config = function(config)
   end
 end
 
-H.create_autocommands = function(config)
-  local augroup = vim.api.nvim_create_augroup('MiniNotify', {})
+H.create_autocommands = function()
+  local gr = vim.api.nvim_create_augroup('MiniNotify', {})
 
   local au = function(event, pattern, callback, desc)
-    vim.api.nvim_create_autocmd(event, { group = augroup, pattern = pattern, callback = callback, desc = desc })
+    vim.api.nvim_create_autocmd(event, { group = gr, pattern = pattern, callback = callback, desc = desc })
   end
 
   au({ 'TabEnter', 'VimResized' }, '*', function() MiniNotify.refresh() end, 'Refresh notifications')
+  au('ColorScheme', '*', H.create_default_hl, 'Ensure colors')
 end
 
 --stylua: ignore
@@ -741,9 +751,10 @@ H.window_open = function(buf_id)
   local win_id = vim.api.nvim_open_win(buf_id, false, config)
 
   vim.wo[win_id].foldenable = false
-  vim.wo[win_id].wrap = true
+  vim.wo[win_id].foldmethod = 'manual'
   vim.wo[win_id].winblend = H.get_config().window.winblend
   vim.wo[win_id].winhighlight = 'NormalFloat:MiniNotifyNormal,FloatBorder:MiniNotifyBorder,FloatTitle:MiniNotifyTitle'
+  vim.wo[win_id].wrap = true
 
   return win_id
 end

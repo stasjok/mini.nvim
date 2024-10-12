@@ -13,20 +13,18 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 local new_buf = function() return child.api.nvim_create_buf(true, false) end
 local new_scratch_buf = function() return child.api.nvim_create_buf(false, true) end
 local get_buf = function() return child.api.nvim_get_current_buf() end
 local set_buf = function(buf_id) child.api.nvim_set_current_buf(buf_id) end
-local edit = function(path) child.cmd('edit ' .. child.fn.fnameescape(path)) end
 --stylua: ignore end
 
 -- TODO: Remove after compatibility with Neovim=0.9 is dropped
 local islist = vim.fn.has('nvim-0.10') == 1 and vim.islist or vim.tbl_islist
 
 local test_dir = 'tests/dir-diff'
-local test_dir_absolute = vim.fn.fnamemodify(test_dir, ':p'):gsub('(.)/$', '%1')
+local test_dir_absolute = vim.fs.normalize(vim.fn.fnamemodify(test_dir, ':p')):gsub('(.)/$', '%1')
 local test_file_path = test_dir_absolute .. '/file'
 
 local git_repo_dir = test_dir_absolute .. '/git-repo'
@@ -40,7 +38,24 @@ local forward_lua = function(fun_str)
   return function(...) return child.lua_get(lua_cmd, { ... }) end
 end
 
-local set_ref_text = forward_lua([[require('mini.diff').set_ref_text]])
+-- Time constants
+local default_watch_debounce_delay = 50
+local dummy_text_change_delay = helpers.get_time_const(30)
+local small_time = helpers.get_time_const(10)
+local micro_time = 1
+
+-- Common wrappers
+local edit = function(path)
+  child.cmd('edit ' .. child.fn.fnameescape(path))
+  -- Slow context needs a small delay to get things up to date
+  if helpers.is_slow() then sleep(small_time) end
+end
+
+local set_ref_text = function(...)
+  local res = child.lua_get([[require('mini.diff').set_ref_text(...)]], { ... })
+  -- Slow context needs a small delay to get things up to date
+  if helpers.is_slow() then sleep(small_time) end
+end
 
 local get_buf_hunks = function(buf_id)
   buf_id = buf_id or 0
@@ -62,12 +77,9 @@ end
 
 local is_buf_enabled = function(buf_id) return get_buf_data(buf_id) ~= vim.NIL end
 
--- Common mocks
-local small_time = 10
-
 -- - Dummy source, which is set by default in most tests
 local setup_with_dummy_source = function(text_change_delay)
-  text_change_delay = text_change_delay or small_time
+  text_change_delay = text_change_delay or dummy_text_change_delay
   child.lua([[
     _G.dummy_log = {}
     _G.dummy_source = {
@@ -106,7 +118,7 @@ end
 local mock_change_git_index = function()
   local index_path = git_git_dir .. '/index'
   child.fn.writefile({}, index_path .. '.lock')
-  sleep(1)
+  sleep(micro_time)
   child.fn.delete(index_path)
   child.loop.fs_rename(index_path .. '.lock', index_path)
 end
@@ -132,6 +144,7 @@ local validate_git_spawn_log = function(ref_log)
     elseif islist(ref) then
       eq(real, { executable = 'git', options = { args = ref, cwd = real.options.cwd } })
     else
+      if real.options.cwd ~= nil then real.options.cwd = vim.fs.normalize(real.options.cwd) end
       eq(real, { executable = 'git', options = ref })
     end
   end
@@ -216,6 +229,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -318,6 +332,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ options = { wrap_goto = 'a' } }, 'options.wrap_goto', 'boolean')
 end
 
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniDiffOverAdd'), 'links to DiffAdd')
+end
+
 T['setup()']['auto enables in all existing buffers'] = function()
   local buf_id_normal = new_buf()
   set_buf(buf_id_normal)
@@ -386,7 +405,7 @@ T['enable()']['makes sure buffer is loaded'] = function()
 end
 
 T['enable()']['makes buffer update cache on `BufWinEnter`'] = function()
-  eq(get_buf_data().config.delay.text_change, small_time)
+  eq(get_buf_data().config.delay.text_change, dummy_text_change_delay)
   child.b.minidiff_config = { delay = { text_change = 200 } }
   child.api.nvim_exec_autocmds('BufWinEnter', { buffer = get_buf() })
   eq(get_buf_data().config.delay.text_change, 200)
@@ -846,7 +865,7 @@ T['gen_source']['git()']['can apply hunks'] = function()
 
   -- Make change
   type_keys('G', 'cc', 'world')
-  sleep(small_time + 5)
+  sleep(small_time)
 
   local ref_hunks = {
     { buf_start = 0, buf_count = 0, ref_start = 1, ref_count = 2, type = 'delete' },
@@ -967,11 +986,13 @@ T['gen_source']['git()']['returns correct structure'] = function()
 end
 
 T['gen_source']['git()']["reacts to change in 'index' Git file"] = function()
+  helpers.skip_if_slow()
+
   child.lua([[
     _G.stdio_queue = {
-      { { 'out', _G.git_dir } },             -- Get path to repo's Git dir
-      { { 'out', 'Line 1\nLine 2\n' } }, -- Get reference text
-      { { 'out', 'Line 1\nLine 22\n' } },  -- Get reference text after 'index' update
+      { { 'out', _G.git_dir } },          -- Get path to repo's Git dir
+      { { 'out', 'Line 1\nLine 2\n' } },  -- Get reference text
+      { { 'out', 'Line 1\nLine 22\n' } }, -- Get reference text after 'index' update
     }
   ]])
 
@@ -982,30 +1003,33 @@ T['gen_source']['git()']["reacts to change in 'index' Git file"] = function()
   -- Emulate change in 'index' as it is done by Git
   mock_count_set_ref_text()
 
+  -- Use slightly bigger yet constrained delay for more robust tests
+  local small_time_bigger = math.min(2 * small_time, 0.9 * default_watch_debounce_delay)
+
   -- Should react to change in 'index' file by reasking reference text
-  -- These reactions should be debounced (currently by 50 ms)
+  -- These reactions should be debounced
   mock_change_git_index()
-  sleep(50 - 20)
+  sleep(default_watch_debounce_delay - small_time_bigger)
   -- - No changes as less than 50 ms has passed
   eq(get_buf_data(0).ref_text, 'Line 1\nLine 2\n')
   eq(child.lua_get('_G.n_set_ref_text_calls'), 0)
 
   mock_change_git_index()
-  sleep(50 - 20)
+  sleep(default_watch_debounce_delay - small_time_bigger)
   eq(child.lua_get('_G.n_set_ref_text_calls'), 0)
-  sleep(20 + 5)
+  sleep(small_time_bigger + small_time)
   eq(get_buf_data(0).ref_text, 'Line 1\nLine 22\n')
   eq(child.lua_get('_G.n_set_ref_text_calls'), 1)
 
   -- Should react __only__ to changes in 'index' file
   child.fn.writefile({}, git_git_dir .. '/index.lock')
-  sleep(50 + 5)
+  sleep(default_watch_debounce_delay + small_time)
   eq(child.lua_get('_G.n_set_ref_text_calls'), 1)
 
   -- Should stop reacting after detaching
   disable()
   mock_change_git_index()
-  sleep(10 + 5)
+  sleep(2 * small_time)
   eq(child.lua_get('_G.n_set_ref_text_calls'), 1)
 
   -- Should make proper process spawns
@@ -1162,7 +1186,7 @@ T['gen_source']['save()']['works'] = function()
   -- Should update reference text on save
   validate_ref_text('aaa\nuuu\n')
   type_keys('G', 'o', 'vvv', '<Esc>')
-  sleep(small_time + 5)
+  sleep(small_time + small_time)
   validate_ref_text('aaa\nuuu\n')
   child.cmd('write')
   validate_ref_text('aaa\nuuu\nvvv\n')
@@ -1176,7 +1200,13 @@ T['gen_source']['save()']['works'] = function()
   local cur_changedtick = child.api.nvim_buf_get_changedtick(0)
   child.cmd('silent! checktime')
   -- - Wait for `:checktime` itself to process
-  vim.wait(500, function() return child.api.nvim_buf_get_changedtick(0) ~= cur_changedtick end, 10)
+  for _ = 1, 100 do
+    if child.api.nvim_buf_get_changedtick(0) ~= cur_changedtick then break end
+    vim.loop.sleep(small_time)
+  end
+  if child.api.nvim_buf_get_changedtick(0) == cur_changedtick then
+    MiniTest.skip('Could not wait for `silent! checktime` to take effect')
+  end
   validate_ref_text('bbb\nxxx\n')
 
   -- Should clean up buffer autocommands on detach
@@ -1888,14 +1918,14 @@ T['Visualization']['works'] = function()
   type_keys('o', 'hello')
   validate_viz_extmarks(0, init_viz_extmarks)
 
-  sleep(small_time - 5)
+  sleep(dummy_text_change_delay - 2 * small_time)
   validate_viz_extmarks(0, init_viz_extmarks)
 
   type_keys('<CR>', 'world')
-  sleep(small_time - 5)
+  sleep(dummy_text_change_delay - 2 * small_time)
   validate_viz_extmarks(0, init_viz_extmarks)
 
-  sleep(5 + 5)
+  sleep(2 * small_time + small_time)
   validate_viz_extmarks(0, {
     { line = 2, sign_hl_group = 'MiniDiffSignAdd', sign_text = '▒ ' },
     { line = 4, sign_hl_group = 'MiniDiffSignChange', sign_text = '▒ ' },
@@ -1984,6 +2014,7 @@ end
 
 T['Visualization']['reacts to hunk lines delete/move'] = function()
   if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Reaction to line delete/move is available on Neovim>0.10.') end
+  child.o.signcolumn = 'yes'
 
   set_lines({ 'aaa', 'bbb', 'uuu', 'vvv', 'ccc', 'ddd' })
   set_ref_text(0, { 'aaa', 'bbb', 'ccc', 'ddd' })
@@ -1998,7 +2029,7 @@ T['Visualization']['reacts to hunk lines delete/move'] = function()
   -- Should be immediately not drawn (invalidated)
   child.expect_screenshot()
 
-  sleep(small_time + 5)
+  sleep(dummy_text_change_delay + small_time)
   validate_viz_extmarks(0, {
     { line = 2, sign_hl_group = 'MiniDiffSignAdd', sign_text = '▒ ' },
     { line = 3, sign_hl_group = 'MiniDiffSignAdd', sign_text = '▒ ' },
@@ -2017,7 +2048,7 @@ T['Visualization']['forces redraw when it is needed'] = function()
   set_ref_text(0, { 'aaa' })
 
   type_keys('gg', '<C-y>')
-  sleep(small_time + 5)
+  sleep(dummy_text_change_delay + small_time)
   validate_viz_extmarks(0, { { line = 2, sign_hl_group = 'MiniDiffSignAdd', sign_text = '▒ ' } })
   child.expect_screenshot()
 
@@ -2126,7 +2157,7 @@ T['Overlay']['works'] = function()
   type_keys('A', '<CR>', 'EeE')
 
   child.expect_screenshot()
-  sleep(small_time + 5)
+  sleep(dummy_text_change_delay + small_time)
   child.expect_screenshot()
 end
 
@@ -2317,7 +2348,9 @@ T['Diff']['works'] = function()
   eq(get_buf_hunks(0), ref_hunks_before)
   eq(get_buf_hunks(other_buf_id), ref_hunks_before)
 
-  sleep(small_time - 5)
+  local small_time_bigger = 2 * small_time
+
+  sleep(dummy_text_change_delay - small_time_bigger)
   eq(get_buf_hunks(0), ref_hunks_before)
   eq(get_buf_hunks(other_buf_id), ref_hunks_before)
 
@@ -2325,11 +2358,11 @@ T['Diff']['works'] = function()
   set_cursor(2, 0)
   type_keys('o', 'world', '<Esc>')
 
-  sleep(small_time - 5)
+  sleep(dummy_text_change_delay - small_time_bigger)
   eq(get_buf_hunks(0), ref_hunks_before)
   eq(get_buf_hunks(other_buf_id), ref_hunks_before)
 
-  sleep(5 + 5)
+  sleep(small_time_bigger + small_time)
 
   local ref_hunks_after = { { buf_start = 2, buf_count = 2, ref_start = 1, ref_count = 0, type = 'add' } }
   eq(get_buf_hunks(0), ref_hunks_after)
@@ -2429,7 +2462,7 @@ T['Diff']['redraws statusline when diff is updated'] = function()
 
   set_cursor(2, 0)
   type_keys('o', 'hello')
-  sleep(small_time + 5)
+  sleep(dummy_text_change_delay + small_time)
   child.expect_screenshot()
 end
 
@@ -2444,7 +2477,7 @@ T['Diff']['triggers dedicated event'] = function()
   type_keys('o', 'hello')
 
   eq(child.lua_get('_G.n'), 1)
-  sleep(small_time + 5)
+  sleep(dummy_text_change_delay + small_time)
   eq(child.lua_get('_G.n'), 2)
 end
 

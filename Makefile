@@ -1,24 +1,27 @@
-GROUP_DEPTH ?= 1
 NVIM_EXEC ?= nvim
 
 all: test documentation
 
+# Use `make test` to run tests for all modules
 test:
 	for nvim_exec in $(NVIM_EXEC); do \
 		printf "\n======\n\n" ; \
 		$$nvim_exec --version | head -n 1 && echo '' ; \
 		$$nvim_exec --headless --noplugin -u ./scripts/minimal_init.lua \
 			-c "lua require('mini.test').setup()" \
-			-c "lua MiniTest.run({ execute = { reporter = MiniTest.gen_reporter.stdout({ group_depth = $(GROUP_DEPTH) }) } })" ; \
+			-c "lua MiniTest.run()" ; \
 	done
 
-test_file:
+# Use `make test_xxx` to run tests for module 'mini.xxx'
+TEST_MODULES = $(basename $(notdir $(wildcard tests/test_*.lua)))
+
+$(TEST_MODULES):
 	for nvim_exec in $(NVIM_EXEC); do \
 		printf "\n======\n\n" ; \
 		$$nvim_exec --version | head -n 1 && echo '' ; \
 		$$nvim_exec --headless --noplugin -u ./scripts/minimal_init.lua \
 			-c "lua require('mini.test').setup()" \
-			-c "lua MiniTest.run_file('$(FILE)', { execute = { reporter = MiniTest.gen_reporter.stdout({ group_depth = $(GROUP_DEPTH) }) } })" ; \
+			-c "lua MiniTest.run_file('tests/$@.lua')" ; \
 	done
 
 documentation:
@@ -26,9 +29,6 @@ documentation:
 
 lintcommit-ci:
 	export LINTCOMMIT_STRICT=true && chmod u+x scripts/lintcommit-ci.sh && scripts/lintcommit-ci.sh
-
-basic_setup:
-	$(NVIM_EXEC) --headless --noplugin -u ./scripts/basic-setup_init.lua
 
 dual_sync:
 	chmod u+x scripts/dual_sync.sh && scripts/dual_sync.sh

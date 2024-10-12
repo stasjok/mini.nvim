@@ -12,8 +12,7 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
 -- TODO: Remove after compatibility with Neovim=0.9 is dropped
@@ -28,15 +27,12 @@ child.expect_screenshot = function(opts)
 end
 
 -- Test paths helpers
-local join_path = function(...) return table.concat({ ... }, '/') end
-
-local full_path = function(x)
-  local res = child.fn.fnamemodify(x, ':p'):gsub('(.)/$', '%1')
-  return res
-end
+local path_sep = package.config:sub(1, 1)
+local join_path = function(...) return (table.concat({ ... }, path_sep):gsub('([\\/])[\\/]*', '%1')) end
+local full_path = function(x) return (child.fn.fnamemodify(x, ':p'):gsub('(.)[\\/]$', '%1')) end
 
 local test_dir = 'tests/dir-extra'
-local test_dir_absolute = vim.fn.fnamemodify(test_dir, ':p'):gsub('(.)/$', '%1')
+local test_dir_absolute = vim.fn.fnamemodify(test_dir, ':p'):gsub('(.)[\\/]$', '%1')
 local real_files_dir = 'tests/dir-extra/real-files'
 
 local make_testpath = function(...) return join_path(test_dir, ...) end
@@ -63,7 +59,6 @@ local is_picker_active = forward_lua('MiniPick.is_picker_active')
 local validate_buf_name = function(buf_id, name)
   buf_id = buf_id or child.api.nvim_get_current_buf()
   name = name ~= '' and full_path(name) or ''
-  name = name:gsub('/+$', '')
   eq(child.api.nvim_buf_get_name(buf_id), name)
 end
 
@@ -191,6 +186,31 @@ local get_process_log = function() return child.lua_get('_G.process_log') end
 
 local clear_process_log = function() child.lua('_G.process_log = {}') end
 
+-- Mock consistent paths for more robust screenshot testing
+local mock_slash_path_sep = function()
+  if path_sep == '/' then return end
+  child.lua([[
+    _G.fnamemodify_orig = vim.fn.fnamemodify
+    vim.fn.fnamemodify = function(...)
+      return (_G.fnamemodify_orig(...):gsub('\\', '/'))
+    end
+
+    _G.getcwd_orig = vim.fn.getcwd
+    vim.fn.getcwd = function() return (getcwd_orig():gsub('\\', '/')) end
+  ]])
+end
+
+local unmock_slash_path_sep = function()
+  if path_sep == '/' then return end
+  child.lua([[
+    package.config = _G.package_config_orig
+    vim.fn.fnamemodify, vim.fn.getcwd = _G.fnamemodify_orig, _G.getcwd_orig
+  ]])
+end
+
+-- Time constants
+local small_time = helpers.get_time_const(10)
+
 -- Output test set ============================================================
 local T = new_set({
   hooks = {
@@ -198,12 +218,13 @@ local T = new_set({
       child.setup()
 
       -- Make more comfortable screenshots
-      child.set_size(15, 40)
       child.o.laststatus = 0
       child.o.ruler = false
+      child.set_size(15, 40)
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -310,7 +331,7 @@ T['gen_ai_spec']['diagnostic()'] = new_set({
   hooks = {
     pre_case = function()
       local mock_path = make_testpath('mocks', 'diagnostic.lua')
-      child.lua(string.format('dofile("%s")', mock_path))
+      child.lua(string.format('dofile(%s)', vim.inspect(mock_path)))
     end,
   },
 })
@@ -782,6 +803,78 @@ T['pickers']['buf_lines()']['respects `local_opts.scope`'] = function()
   child.expect_screenshot()
 end
 
+T['pickers']['buf_lines()']['respects `local_opts.preserve_order`'] = function()
+  set_lines({ 'axay', 'b', 'aaxy', 'ccc', 'xaa' })
+  pick_buf_lines({ scope = 'current', preserve_order = true })
+
+  type_keys('x')
+  eq(get_picker_matches().all_inds, { 1, 3, 5 })
+  type_keys('y')
+  eq(get_picker_matches().all_inds, { 1, 3 })
+end
+
+T['pickers']['buf_lines()']['pads line numbers'] = function()
+  local set_n_lines = function(buf_id, prefix, n)
+    local lines = {}
+    for i = 1, n do
+      lines[i] = prefix .. '-' .. i
+    end
+    child.api.nvim_buf_set_lines(buf_id, 0, -1, false, lines)
+  end
+
+  local buf_id_1 = child.api.nvim_create_buf(true, false)
+  set_n_lines(buf_id_1, 'buf-1', 9)
+
+  local buf_id_2 = child.api.nvim_create_buf(true, false)
+  set_n_lines(buf_id_2, 'buf-2', 10)
+
+  local buf_id_3 = child.api.nvim_create_buf(true, false)
+  set_n_lines(buf_id_3, 'buf-3', 99)
+
+  local buf_id_4 = child.api.nvim_create_buf(true, false)
+  set_n_lines(buf_id_4, 'buf-4', 100)
+
+  -- Should pad line numbers to achieve more aligned look
+  child.lua_notify('MiniExtra.pickers.buf_lines()')
+  sleep(small_time)
+  local items = get_picker_items()
+
+  local validate_has_item_with_text = function(text)
+    local res = false
+    for _, item in ipairs(items) do
+      if item.text == text then res = true end
+    end
+    eq(res, true)
+  end
+
+  validate_has_item_with_text('\0001\000buf-1-1')
+  validate_has_item_with_text('\0009\000buf-1-9')
+
+  validate_has_item_with_text('\000 1\000buf-2-1')
+  validate_has_item_with_text('\000 9\000buf-2-9')
+  validate_has_item_with_text('\00010\000buf-2-10')
+
+  validate_has_item_with_text('\000 1\000buf-3-1')
+  validate_has_item_with_text('\00099\000buf-3-99')
+
+  validate_has_item_with_text('\000  1\000buf-4-1')
+  validate_has_item_with_text('\000 99\000buf-4-99')
+  validate_has_item_with_text('\000100\000buf-4-100')
+
+  type_keys('<C-c>')
+
+  -- Should work with `scope='current'`
+  child.api.nvim_set_current_buf(buf_id_4)
+  child.lua_notify('MiniExtra.pickers.buf_lines({ scope = "current" })')
+  sleep(small_time)
+  items = get_picker_items()
+
+  validate_has_item_with_text('  1\000buf-4-1')
+  validate_has_item_with_text(' 99\000buf-4-99')
+  validate_has_item_with_text('100\000buf-4-100')
+  type_keys('<C-c>')
+end
+
 T['pickers']['buf_lines()']['can not show icons'] = function()
   setup_buffers()
   child.lua('MiniPick.config.source.show = MiniPick.default_show')
@@ -859,7 +952,7 @@ T['pickers']['diagnostic()'] = new_set({
   hooks = {
     pre_case = function()
       local mock_path = make_testpath('mocks', 'diagnostic.lua')
-      child.lua(string.format('dofile("%s")', mock_path))
+      child.lua(string.format('dofile(%s)', vim.inspect(mock_path)))
     end,
   },
 })
@@ -870,6 +963,7 @@ T['pickers']['diagnostic()']['works'] = function()
   child.set_size(25, 100)
   child.cmd('enew')
 
+  mock_slash_path_sep()
   child.lua_notify('_G.return_item = MiniExtra.pickers.diagnostic()')
   validate_picker_name('Diagnostic (all)')
   child.expect_screenshot()
@@ -894,6 +988,7 @@ T['pickers']['diagnostic()']['works'] = function()
   type_keys('<C-n>')
   type_keys('<Tab>')
   child.expect_screenshot()
+  unmock_slash_path_sep()
 
   -- Should properly choose
   type_keys('<CR>')
@@ -940,6 +1035,9 @@ T['pickers']['diagnostic()']['respects `local_opts.sort_by`'] = function()
 
   local path_1 = make_testpath('mocks', 'diagnostic-file-1')
   local path_2 = make_testpath('mocks', 'diagnostic-file-2')
+  if path_sep == '\\' then
+    path_1, path_2 = (path_1:gsub('/', '\\')), (path_2:gsub('/', '\\'))
+  end
 
   pick_diagnostic({ sort_by = 'severity' })
   --stylua: ignore
@@ -998,7 +1096,7 @@ end
 
 T['pickers']['diagnostic()']["forces 'buflisted' on opened buffer"] = function()
   -- This matters for project wide diagnostic done inside unlisted buffers
-  child.api.nvim_buf_set_option(child.lua_get('_G.buf_id_2'), 'buflisted', false)
+  child.lua('vim.bo[_G.buf_id_2].buflisted = false')
 
   pick_diagnostic()
   type_keys('<C-p>', '<CR>')
@@ -1031,7 +1129,7 @@ T['pickers']['explorer()']['works'] = function()
   type_keys('<C-n>', '<CR>')
   child.expect_screenshot()
   validate_picker_name('File explorer')
-  validate_picker_cwd(join_path(init_dir, 'dir1'))
+  validate_picker_cwd(init_dir .. '/dir1')
 
   -- - Should actually change items
   eq(vim.deep_equal(init_items, get_picker_items()), false)
@@ -1055,7 +1153,7 @@ T['pickers']['explorer()']['works'] = function()
   eq(get_lines(), { 'File 3' })
 
   -- Should return chosen value
-  eq(child.lua_get('_G.return_item'), { fs_type = 'file', path = join_path(init_dir, 'file3'), text = 'file3' })
+  eq(child.lua_get('_G.return_item'), { fs_type = 'file', path = init_dir .. '/file3', text = 'file3' })
 end
 
 T['pickers']['explorer()']['works with query'] = function()
@@ -1064,12 +1162,12 @@ T['pickers']['explorer()']['works with query'] = function()
 
   pick_explorer()
   type_keys('^D')
-  eq(get_picker_matches().all, { { fs_type = 'directory', path = join_path(init_dir, 'Dir2'), text = 'Dir2/' } })
+  eq(get_picker_matches().all, { { fs_type = 'directory', path = init_dir .. '/Dir2', text = 'Dir2/' } })
 
   type_keys('<CR>')
   eq(get_picker_matches().all, {
     { fs_type = 'directory', path = init_dir, text = '..' },
-    { fs_type = 'file', path = join_path(init_dir, 'Dir2', 'file2-1'), text = 'file2-1' },
+    { fs_type = 'file', path = init_dir .. '/Dir2/file2-1', text = 'file2-1' },
   })
   -- - Should reset the query
   eq(child.lua_get('MiniPick.get_picker_query()'), {})
@@ -1084,7 +1182,7 @@ T['pickers']['explorer()']['can be resumed'] = function()
   stop_picker()
 
   child.lua_notify('MiniPick.builtin.resume()')
-  validate_picker_cwd(join_path(init_dir, 'dir1'))
+  validate_picker_cwd(init_dir .. '/dir1')
   child.expect_screenshot()
 end
 
@@ -1627,7 +1725,7 @@ T['pickers']['git_hunks()']['works'] = function()
   local return_item_keys = vim.tbl_keys(return_item)
   table.sort(return_item_keys)
   eq(return_item_keys, { 'header', 'hunk', 'lnum', 'path', 'text' })
-  eq(return_item.path, target_path)
+  eq(return_item.path, 'git-files/git-file-2')
   eq(return_item.lnum, 12)
 end
 
@@ -1779,12 +1877,13 @@ T['pickers']['hipatterns()'] = new_set()
 local pick_hipatterns = forward_lua_notify('MiniExtra.pickers.hipatterns')
 
 local setup_hipatterns = function()
+  child.lua('_G.delay = ' .. (2 * small_time))
   child.lua([[require('mini.hipatterns').setup({
     highlighters = {
       minmax = { pattern = { 'min', 'max' }, group = 'Error' },
       ['local'] = { pattern = 'local', group = 'Comment' },
     },
-    delay = { text_change = 20 },
+    delay = { text_change = _G.delay },
   })]])
   child.cmd('edit ' .. real_file('a.lua'))
   local buf_id_1 = child.api.nvim_create_buf(true, false)
@@ -1792,7 +1891,7 @@ local setup_hipatterns = function()
   local buf_id_2 = child.api.nvim_create_buf(true, false)
   child.api.nvim_set_current_buf(buf_id_2)
   child.api.nvim_buf_set_lines(buf_id_2, 0, -1, false, { '', 'min', 'max', 'local' })
-  sleep(20 + 5)
+  sleep(2 * small_time + small_time)
 
   -- Should not be present in results
   local buf_id_not_enabled = child.api.nvim_create_buf(true, false)
@@ -1805,6 +1904,7 @@ T['pickers']['hipatterns()']['works'] = function()
   child.set_size(15, 120)
   local _, buf_id_2 = setup_hipatterns()
 
+  mock_slash_path_sep()
   child.lua_notify('_G.return_item = MiniExtra.pickers.hipatterns()')
   validate_picker_name('Mini.hipatterns matches (all)')
   child.expect_screenshot()
@@ -1863,6 +1963,7 @@ T['pickers']['hipatterns()']['respects `local_opts.highlighters`'] = function()
   child.set_size(15, 120)
   setup_hipatterns()
 
+  mock_slash_path_sep()
   pick_hipatterns({ highlighters = { 'minmax' } })
   child.expect_screenshot()
   stop_picker()
@@ -2251,6 +2352,7 @@ local validate_qf_loc = function(scope)
   child.set_size(20, 70)
 
   -- Setup quickfix/location list
+  mock_slash_path_sep()
   local path = real_file('a.lua')
   child.cmd('edit ' .. path)
   child.cmd('enew')
@@ -2307,6 +2409,7 @@ T['pickers']['list()']['works for `jump`'] = function()
   type_keys('G', 'gg')
 
   -- Start picker
+  mock_slash_path_sep()
   child.lua_notify([[_G.return_item = MiniExtra.pickers.list({ scope = 'jump' })]])
   validate_picker_name('List (jump)')
   child.expect_screenshot()
@@ -2331,7 +2434,7 @@ T['pickers']['list()']['works for `change`'] = function()
   child.set_size(20, 70)
 
   -- Setup jump list
-  local path = real_file('a.lua')
+  local path = real_file('a.lua'):gsub('\\', '/')
   child.cmd('edit ' .. path)
   set_cursor(1, 1)
   type_keys('i', ' Change 1 ', '<Esc>')
@@ -2340,6 +2443,7 @@ T['pickers']['list()']['works for `change`'] = function()
   type_keys('i', ' Change 2 ', '<Esc>')
 
   -- Start picker
+  mock_slash_path_sep()
   child.lua_notify([[_G.return_item = MiniExtra.pickers.list({ scope = 'change' })]])
   validate_picker_name('List (change)')
   child.expect_screenshot()
@@ -2408,6 +2512,7 @@ end
 local validate_location_scope = function(scope)
   local file_path, file_path_full = setup_lsp()
 
+  mock_slash_path_sep()
   pick_lsp({ scope = scope })
   eq(child.lua_get('_G.lsp_buf_calls'), { scope })
   validate_picker_name('LSP (' .. scope .. ')')
@@ -2416,6 +2521,7 @@ local validate_location_scope = function(scope)
   -- Should preview position
   type_keys('<Tab>')
   child.expect_screenshot()
+  unmock_slash_path_sep()
 
   -- Should have proper items
   local ref_item = {
@@ -2423,7 +2529,7 @@ local validate_location_scope = function(scope)
     path = file_path_full,
     lnum = 3,
     col = 16,
-    text = file_path .. '│3│16│   x = math.max(a, 2),',
+    text = file_path:gsub('\\', '/') .. '│3│16│   x = math.max(a, 2),',
   }
   eq(get_picker_items()[1], ref_item)
 
@@ -2433,9 +2539,10 @@ local validate_location_scope = function(scope)
   eq(get_cursor(), { 3, 15 })
 end
 
-local validate_symbol_scope = function(scope)
+local validate_symbol_scope = function(scope, skip_preview)
   local file_path, file_path_full = setup_lsp()
 
+  mock_slash_path_sep()
   pick_lsp({ scope = scope })
   validate_picker_name('LSP (' .. scope .. ')')
   eq(child.lua_get('_G.lsp_buf_calls'), { scope })
@@ -2459,19 +2566,25 @@ local validate_symbol_scope = function(scope)
   eq(get_extra_picker_extmarks(0, -1), ref_extmark_data)
 
   -- Should preview position
-  type_keys('<Tab>')
-  child.expect_screenshot()
+  if not skip_preview then
+    type_keys('<Tab>')
+    child.expect_screenshot()
+  end
+  unmock_slash_path_sep()
 
   -- Should have proper items
-  local text_prefix = scope == 'workspace_symbol' and (file_path .. '│1│7│ ') or ''
-  if has_mini_icons then text_prefix = ' ' .. text_prefix end
+  local text_prefix = scope == 'workspace_symbol' and (file_path:gsub('\\', '/') .. '│1│7│ ') or ''
+  local kind_name = child.lua_get('vim.lsp.protocol.SymbolKind[16]')
+  -- - Icon should be added only if it is not already assumed to be inside
+  --   `SymbolKind` map (as after `MiniIcons.tweak_lsp_kind()`).
+  if has_mini_icons and kind_name == 'Number' then text_prefix = ' ' .. text_prefix end
   local ref_item = {
     filename = file_path_full,
     path = file_path_full,
     lnum = 1,
     col = 7,
     kind = 'Number',
-    text = text_prefix .. '[Number] a',
+    text = text_prefix .. '[' .. kind_name .. '] a',
     hl = ref_extmark_data[1].hl_group,
   }
   eq(get_picker_items()[1], ref_item)
@@ -2480,6 +2593,16 @@ local validate_symbol_scope = function(scope)
   type_keys('<CR>')
   validate_buf_name(0, file_path)
   eq(get_cursor(), { 1, 6 })
+end
+
+local validate_symbol_scope_with_tweaked_kind = function(scope, tweak_lsp_kind_mode)
+  child.lua('_G.symbol_kind_orig = vim.deepcopy(vim.lsp.protocol.SymbolKind)')
+  child.lua("require('mini.icons').setup()")
+  child.lua('MiniIcons.tweak_lsp_kind(...)', { tweak_lsp_kind_mode })
+
+  validate_symbol_scope(scope, true)
+
+  child.lua('vim.lsp.protocol.SymbolKind = _G.symbol_kind_orig')
 end
 
 T['pickers']['lsp()']['works for `declaration`'] = function() validate_location_scope('declaration') end
@@ -2493,11 +2616,18 @@ T['pickers']['lsp()']["works for `document_symbol` with 'mini.icons' set up"] = 
   validate_symbol_scope('document_symbol')
 end
 
+T['pickers']['lsp()']['works for `document_symbol` after `MiniIcons.tweak_lsp_kind()`'] = function()
+  validate_symbol_scope_with_tweaked_kind('document_symbol', 'prepend')
+  validate_symbol_scope_with_tweaked_kind('document_symbol', 'append')
+  validate_symbol_scope_with_tweaked_kind('document_symbol', 'replace')
+end
+
 T['pickers']['lsp()']['works for `implementation`'] = function() validate_location_scope('implementation') end
 
 T['pickers']['lsp()']['works for `references`'] = function()
   local file_path, file_path_full = setup_lsp()
 
+  mock_slash_path_sep()
   pick_lsp({ scope = 'references' })
   validate_picker_name('LSP (references)')
   eq(child.lua_get('_G.lsp_buf_calls'), { 'references' })
@@ -2506,6 +2636,7 @@ T['pickers']['lsp()']['works for `references`'] = function()
   -- Should preview position
   type_keys('<C-n>', '<Tab>')
   child.expect_screenshot()
+  unmock_slash_path_sep()
 
   -- Should have proper items
   local ref_item = {
@@ -2513,7 +2644,7 @@ T['pickers']['lsp()']['works for `references`'] = function()
     path = file_path_full,
     lnum = 3,
     col = 16,
-    text = file_path .. '│3│16│   x = math.max(a, 2),',
+    text = file_path:gsub('\\', '/') .. '│3│16│   x = math.max(a, 2),',
   }
   eq(get_picker_items()[2], ref_item)
 
@@ -2530,6 +2661,12 @@ T['pickers']['lsp()']['works for `workspace_symbol`'] = function() validate_symb
 T['pickers']['lsp()']["works for `workspace_symbol` with 'mini.icons' set up"] = function()
   child.lua("require('mini.icons').setup()")
   validate_symbol_scope('workspace_symbol')
+end
+
+T['pickers']['lsp()']['works for `workspace_symbol` after `MiniIcons.tweak_lsp_kind()`'] = function()
+  validate_symbol_scope_with_tweaked_kind('workspace_symbol', 'prepend')
+  validate_symbol_scope_with_tweaked_kind('workspace_symbol', 'append')
+  validate_symbol_scope_with_tweaked_kind('workspace_symbol', 'replace')
 end
 
 T['pickers']['lsp()']['respects `local_opts.symbol_query`'] = function()
@@ -2590,6 +2727,7 @@ T['pickers']['marks()']['works'] = function()
   child.set_size(20, 70)
   setup_marks()
 
+  mock_slash_path_sep()
   child.lua_notify('_G.return_item = MiniExtra.pickers.marks()')
   validate_picker_name('Marks (all)')
   child.expect_screenshot()
@@ -2601,6 +2739,7 @@ T['pickers']['marks()']['works'] = function()
   child.expect_screenshot()
   type_keys('<C-n>', '<C-n>', '<C-n>', '<C-n>')
   child.expect_screenshot()
+  unmock_slash_path_sep()
 
   -- Should properly choose by positioning on mark
   local path = real_file('a.lua')
@@ -2609,13 +2748,16 @@ T['pickers']['marks()']['works'] = function()
   eq(get_cursor(), { 1, 5 })
 
   -- Should return chosen value
-  eq(child.lua_get('_G.return_item'), { col = 6, lnum = 1, path = path, text = 'A │ ' .. path .. '│1│6' })
+  local path_slash = path:gsub('\\', '/')
+  local ref_item = { col = 6, lnum = 1, path = path_slash, text = 'A │ ' .. path_slash .. '│1│6' }
+  eq(child.lua_get('_G.return_item'), ref_item)
 end
 
 T['pickers']['marks()']['respects `local_opts.scope`'] = function()
   local buffers = setup_marks()
   child.set_size(15, 40)
 
+  mock_slash_path_sep()
   pick_marks({ scope = 'global' })
   child.expect_screenshot()
   stop_picker()
@@ -2644,12 +2786,18 @@ T['pickers']['marks()']['validates arguments'] = function()
   validate({ scope = '1' }, '`pickers%.marks`.*"scope".*"1".*one of')
 end
 
-T['pickers']['oldfiles()'] = new_set()
+T['pickers']['oldfiles()'] = new_set({
+  hooks = {
+    pre_case = function()
+      child.set_size(10, 70)
+      mock_slash_path_sep()
+    end,
+  },
+})
 
 local pick_oldfiles = forward_lua_notify('MiniExtra.pickers.oldfiles')
 
 T['pickers']['oldfiles()']['works'] = function()
-  child.set_size(10, 70)
   local path_1, path_2 = real_file('LICENSE'), make_testpath('mocks', 'diagnostic.lua')
   local ref_oldfiles = { full_path(path_1), full_path(path_2), 'not-existing' }
   child.v.oldfiles = ref_oldfiles
@@ -2657,9 +2805,11 @@ T['pickers']['oldfiles()']['works'] = function()
   child.lua_notify('_G.return_item = MiniExtra.pickers.oldfiles()')
   validate_picker_name('Old files')
   child.expect_screenshot()
+  unmock_slash_path_sep()
 
   -- Should have proper items (only readable files with short paths)
-  eq(get_picker_items(), { path_1, path_2 })
+  local path_1_slash, path_2_slash = (path_1:gsub('\\', '/')), (path_2:gsub('\\', '/'))
+  eq(get_picker_items(), { path_1_slash, path_2_slash })
 
   -- Should properly choose
   type_keys('<CR>')
@@ -2668,7 +2818,7 @@ T['pickers']['oldfiles()']['works'] = function()
 
   --stylua: ignore
   -- Should return chosen value with proper structure
-  eq(child.lua_get('_G.return_item'), path_1)
+  eq(child.lua_get('_G.return_item'), path_1_slash)
 end
 
 T['pickers']['oldfiles()']['works with empty `v:oldfiles`'] = function()
@@ -2698,6 +2848,17 @@ T['pickers']['oldfiles()']['respects `local_opts.current_dir'] = function()
   -- - Only paths inside current directory are shown
   eq(#items, 1)
   eq(items[1], 'LICENSE')
+end
+
+T['pickers']['oldfiles()']['respects `local_opts.preserve_order`'] = function()
+  child.lua('vim.fn.filereadable = function() return 1 end')
+  child.v.oldfiles = { 'axay', 'b', 'aaxy', 'ccc', 'xaa' }
+  pick_oldfiles({ preserve_order = true })
+
+  type_keys('x')
+  eq(get_picker_matches().all_inds, { 1, 3, 5 })
+  type_keys('y')
+  eq(get_picker_matches().all_inds, { 1, 3 })
 end
 
 T['pickers']['oldfiles()']['respects `opts`'] = function()
@@ -2999,7 +3160,7 @@ local setup_treesitter = function()
   local path = real_file('a.lua')
   child.cmd('edit ' .. path)
   child.lua('vim.treesitter.start()')
-  sleep(10)
+  sleep(small_time)
 
   return path
 end
@@ -3045,22 +3206,25 @@ T['pickers']['treesitter()']['respects `opts`'] = function()
 end
 
 local setup_visits = function()
-  --stylua: ignore
+  -- NOTE: 'mini.visits' uses forward slashes in index
+  local dir = test_dir_absolute:gsub('\\', '/')
+  local path_1 = full_path(make_testpath('git-files', 'git-file-1')):gsub('\\', '/')
+  local path_2 = full_path(make_testpath('git-files', 'git-file-2')):gsub('\\', '/')
   local visit_index = {
-    [test_dir_absolute] = {
-      [join_path(test_dir_absolute, 'file-xyyx')] = { count = 5, latest = 5 },
-      [join_path(test_dir_absolute, 'file-xx')] = { count = 1, labels = { xxx = true, uuu = true }, latest = 10 },
-      [join_path(test_dir_absolute, 'file-xyx')] = { count = 10, labels = { xxx = true }, latest = 2 },
-      [join_path(test_dir_absolute, 'real-files', 'a.lua')] = { count = 3, labels = { yyy = true }, latest = 3 },
+    [dir] = {
+      [dir .. '/file-xyyx'] = { count = 5, latest = 5 },
+      [dir .. '/file-xx'] = { count = 1, labels = { xxx = true, uuu = true }, latest = 10 },
+      [dir .. '/file-xyx'] = { count = 10, labels = { xxx = true }, latest = 2 },
+      [dir .. '/real-files/a.lua'] = { count = 3, labels = { yyy = true }, latest = 3 },
     },
-    [join_path(test_dir_absolute, 'git-files')] = {
-      [full_path(make_testpath('git-files', 'git-file-1'))] = { count = 0, labels = { xxx = true, www = true }, latest = 0 },
-      [full_path(make_testpath('git-files', 'git-file-2'))] = { count = 100, latest = 100 },
+    [dir .. '/git-files'] = {
+      [path_1] = { count = 0, labels = { xxx = true, www = true }, latest = 0 },
+      [path_2] = { count = 100, latest = 100 },
     },
   }
 
   child.lua([[require('mini.visits').set_index(...)]], { visit_index })
-  child.fn.chdir(test_dir_absolute)
+  child.fn.chdir(dir)
 end
 
 T['pickers']['visit_paths()'] = new_set({ hooks = { pre_case = setup_visits } })
@@ -3083,7 +3247,7 @@ T['pickers']['visit_paths()']['works'] = function()
   validate_buf_name(0, join_path('real-files', 'a.lua'))
 
   -- Should return chosen value
-  eq(child.lua_get('_G.return_item'), join_path('real-files', 'a.lua'))
+  eq(child.lua_get('_G.return_item'), 'real-files/a.lua')
 end
 
 T['pickers']['visit_paths()']['respects `local_opts.cwd`'] = function()
@@ -3091,12 +3255,12 @@ T['pickers']['visit_paths()']['respects `local_opts.cwd`'] = function()
   validate_picker_name('Visit paths (all)')
   eq(get_picker_items(), {
     -- Should use short paths relative to the current working directory
-    join_path('git-files', 'git-file-2'),
+    'git-files/git-file-2',
     'file-xyyx',
     'file-xx',
     'file-xyx',
-    join_path('real-files', 'a.lua'),
-    join_path('git-files', 'git-file-1'),
+    'real-files/a.lua',
+    'git-files/git-file-1',
   })
 end
 
@@ -3121,11 +3285,11 @@ end
 
 T['pickers']['visit_paths()']['respects `local_opts.recency_weight`'] = function()
   pick_visit_paths({ recency_weight = 1 })
-  eq(get_picker_items(), { 'file-xx', 'file-xyyx', join_path('real-files', 'a.lua'), 'file-xyx' })
+  eq(get_picker_items(), { 'file-xx', 'file-xyyx', 'real-files/a.lua', 'file-xyx' })
 end
 
 T['pickers']['visit_paths()']['respects `local_opts.sort`'] = function()
-  child.lua([[_G.sort = function() return { { path = vim.fn.getcwd() .. '/aaa' } } end]])
+  child.lua([[_G.sort = function() return { { path = vim.fn.getcwd():gsub('\\', '/') .. '/aaa' } } end]])
   child.lua_notify([[MiniExtra.pickers.visit_paths({ sort = _G.sort })]])
   eq(get_picker_items(), { 'aaa' })
 end
@@ -3177,7 +3341,7 @@ T['pickers']['visit_labels()']['works'] = function()
   validate_buf_name(0, join_path('real-files', 'a.lua'))
 
   -- Should return chosen path
-  eq(child.lua_get('_G.return_item'), join_path('real-files', 'a.lua'))
+  eq(child.lua_get('_G.return_item'), 'real-files/a.lua')
 end
 
 T['pickers']['visit_labels()']['respects `local_opts.cwd`'] = function()
@@ -3199,7 +3363,7 @@ end
 
 T['pickers']['visit_labels()']['respects `local_opts.sort`'] = function()
   child.set_size(15, 60)
-  child.lua([[_G.sort = function() return { { path = vim.fn.getcwd() .. '/aaa' } } end]])
+  child.lua([[_G.sort = function() return { { path = vim.fn.getcwd():gsub('\\', '/') .. '/aaa' } } end]])
   child.lua_notify([[MiniExtra.pickers.visit_labels({ sort = _G.sort })]])
   eq(get_picker_items(), { 'xxx', 'uuu', 'yyy' })
 

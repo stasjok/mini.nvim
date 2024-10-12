@@ -168,9 +168,7 @@ MiniStatusline.config = {
   -- Whether to use icons by default
   use_icons = true,
 
-  -- Whether to set Vim's settings for statusline (make it always shown with
-  -- 'laststatus' set to 2).
-  -- To use global statusline, set this to `false` and 'laststatus' to 3.
+  -- Whether to set Vim's settings for statusline (make it always shown)
   set_vim_settings = true,
 }
 --minidoc_afterlines_end
@@ -510,7 +508,7 @@ H.apply_config = function(config)
   MiniStatusline.config = config
 
   -- Set settings to ensure statusline is displayed properly
-  if config.set_vim_settings then vim.o.laststatus = 2 end
+  if config.set_vim_settings and (vim.o.laststatus == 0 or vim.o.laststatus == 1) then vim.o.laststatus = 2 end
 
   -- Ensure proper 'statusline' values (to not rely on autocommands trigger)
   H.ensure_content()
@@ -521,10 +519,10 @@ H.apply_config = function(config)
 end
 
 H.create_autocommands = function()
-  local augroup = vim.api.nvim_create_augroup('MiniStatusline', {})
+  local gr = vim.api.nvim_create_augroup('MiniStatusline', {})
 
   local au = function(event, pattern, callback, desc)
-    vim.api.nvim_create_autocmd(event, { group = augroup, pattern = pattern, callback = callback, desc = desc })
+    vim.api.nvim_create_autocmd(event, { group = gr, pattern = pattern, callback = callback, desc = desc })
   end
 
   au({ 'WinEnter', 'BufWinEnter' }, '*', H.ensure_content, 'Ensure statusline content')
@@ -535,6 +533,8 @@ H.create_autocommands = function()
     vim.cmd('redrawstatus')
   end)
   au({ 'LspAttach', 'LspDetach' }, '*', track_lsp, 'Track LSP clients')
+
+  au('ColorScheme', '*', H.create_default_hl, 'Ensure colors')
 end
 
 --stylua: ignore

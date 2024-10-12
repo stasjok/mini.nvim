@@ -1211,10 +1211,10 @@ end
 H.apply_config = function(config) MiniAnimate.config = config end
 
 H.create_autocommands = function()
-  local augroup = vim.api.nvim_create_augroup('MiniAnimate', {})
+  local gr = vim.api.nvim_create_augroup('MiniAnimate', {})
 
   local au = function(event, pattern, callback, desc)
-    vim.api.nvim_create_autocmd(event, { group = augroup, pattern = pattern, callback = callback, desc = desc })
+    vim.api.nvim_create_autocmd(event, { group = gr, pattern = pattern, callback = callback, desc = desc })
   end
 
   au('CursorMoved', '*', H.auto_cursor, 'Animate cursor')
@@ -1246,7 +1246,7 @@ H.create_autocommands = function()
 
   au('WinClosed', '*', function() H.auto_openclose('close') end, 'Animate window close')
 
-  au('ColorScheme', '*', H.create_default_hl, 'Ensure proper colors')
+  au('ColorScheme', '*', H.create_default_hl, 'Ensure colors')
 end
 
 H.create_default_hl = function()
@@ -1783,8 +1783,7 @@ H.make_openclose_step = function(action_type, win_id, config)
         vim.api.nvim_win_set_config(float_win_id, float_config)
       end
 
-      local new_winblend = H.round(winblend(step, n_steps))
-      vim.api.nvim_win_set_option(float_win_id, 'winblend', new_winblend)
+      vim.wo[float_win_id].winblend = H.round(winblend(step, n_steps))
 
       return true
     end,

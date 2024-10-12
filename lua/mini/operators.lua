@@ -182,6 +182,9 @@ MiniOperators.setup = function(config)
   -- Apply config
   H.apply_config(config)
 
+  -- Define behavior
+  H.create_autocommands()
+
   -- Create default highlighting
   H.create_default_hl()
 end
@@ -742,6 +745,11 @@ H.get_config = function(config)
   return vim.tbl_deep_extend('force', MiniOperators.config, vim.b.minioperators_config or {}, config or {})
 end
 
+H.create_autocommands = function()
+  local gr = vim.api.nvim_create_augroup('MiniOperators', {})
+  vim.api.nvim_create_autocmd('ColorScheme', { group = gr, callback = H.create_default_hl, desc = 'Ensure colors' })
+end
+
 H.create_default_hl = function()
   vim.api.nvim_set_hl(0, 'MiniOperatorsExchangeFrom', { default = true, link = 'IncSearch' })
 end
@@ -997,7 +1005,7 @@ H.replace_do = function(data)
   local edge_to_col = vim.fn.col({ to_line, '$' }) - 1 - (vim.o.selection == 'exclusive' and 0 or 1)
 
   local is_edge_line = submode == 'V' and to_line == vim.fn.line('$')
-  local is_edge_col = submode ~= 'V' and to_col == edge_to_col
+  local is_edge_col = submode ~= 'V' and to_col == edge_to_col and vim.o.virtualedit ~= 'all'
   local is_edge = is_edge_line or is_edge_col
 
   local covers_linewise_all_buffer = is_edge_line and from_line == 1

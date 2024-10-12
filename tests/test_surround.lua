@@ -14,8 +14,7 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
 -- Make helpers
@@ -76,6 +75,11 @@ local mock_treesitter_builtin = function() child.cmd('source tests/dir-surround/
 
 local mock_treesitter_plugin = function() child.cmd('set rtp+=tests/dir-surround') end
 
+-- Time constants
+local default_highlight_duraion = 500
+local helper_message_delay = 1000
+local small_time = helpers.get_time_const(10)
+
 -- Output test set ============================================================
 local T = new_set({
   hooks = {
@@ -88,6 +92,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -96,6 +101,9 @@ T['setup()'] = new_set()
 T['setup()']['creates side effects'] = function()
   -- Global variable
   eq(child.lua_get('type(_G.MiniSurround)'), 'table')
+
+  -- Autocommand group
+  eq(child.fn.exists('#MiniSurround'), 1)
 
   -- Highlight groups
   child.cmd('hi clear')
@@ -157,6 +165,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ respect_selection_type = 1 }, 'respect_selection_type', 'boolean')
   expect_config_error({ search_method = 1 }, 'search_method', 'one of')
   expect_config_error({ silent = 1 }, 'silent', 'boolean')
+end
+
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniSurround'), 'links to IncSearch')
 end
 
 T['setup()']['properly handles `config.mappings`'] = function()
@@ -248,7 +261,7 @@ T['gen_spec']['input']['treesitter()']['works with empty region'] = function()
   set_lines(lines)
   set_cursor(1, 0)
   type_keys('sh', 'o')
-  poke_eventloop()
+  child.poke_eventloop()
   -- It highlights `local` differently from other places
   if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
 
@@ -514,10 +527,10 @@ T['Add surrounding']['prompts helper message after one idle second'] = function(
 
   -- Execute one time to test if 'needs help message' flag is set per call
   type_keys('sa', 'iw', ')')
-  sleep(200)
+  sleep(0.1 * helper_message_delay)
 
   type_keys('sa', 'iw')
-  sleep(1000)
+  sleep(helper_message_delay + small_time)
 
   -- Should show helper message without adding it to `:messages` and causing
   -- hit-enter-prompt
@@ -663,7 +676,7 @@ T['Add surrounding']['respects `config.silent`'] = function()
 
   -- It should not show helper message after one idle second
   type_keys('sa', 'iw')
-  sleep(1000 + 15)
+  sleep(helper_message_delay + small_time)
   child.expect_screenshot()
 end
 
@@ -793,15 +806,15 @@ T['Delete surrounding']['prompts helper message after one idle second'] = functi
 
   -- Mapping is applied only after `timeoutlen` milliseconds, because
   -- there are `sdn`/`sdl` mappings. Wait 1000 seconds after that.
-  child.o.timeoutlen = 50
-  local total_wait_time = 1000 + child.o.timeoutlen
+  child.o.timeoutlen = 5 * small_time
+  local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
   set_lines({ '((aaa))' })
   set_cursor(1, 1)
 
   -- Execute one time to test if 'needs help message' flag is set per call
   type_keys('sd', ')')
-  sleep(200)
+  sleep(0.1 * helper_message_delay)
 
   type_keys('sd')
   sleep(total_wait_time)
@@ -917,15 +930,15 @@ T['Delete surrounding']['respects `config.silent`'] = function()
   child.lua('MiniSurround.config.silent = true')
   child.set_size(10, 20)
 
-  child.o.timeoutlen = 50
-  local total_wait_time = 1000 + child.o.timeoutlen
+  child.o.timeoutlen = 5 * small_time
+  local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
   set_lines({ '<aaa>' })
   set_cursor(1, 1)
 
   -- It should not show helper message after one idle second
   type_keys('sd')
-  sleep(total_wait_time + 15)
+  sleep(total_wait_time)
   child.expect_screenshot()
 
   -- It should not show message about "No surrounding found"
@@ -1024,15 +1037,15 @@ T['Replace surrounding']['prompts helper message after one idle second'] = funct
 
   -- Mapping is applied only after `timeoutlen` milliseconds, because
   -- there are `srn`/`srl` mappings. Wait 1000 seconds after that.
-  child.o.timeoutlen = 50
-  local total_wait_time = 1000 + child.o.timeoutlen
+  child.o.timeoutlen = 5 * small_time
+  local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
   set_lines({ '((aaa))' })
   set_cursor(1, 1)
 
   -- Execute one time to test if 'needs help message' flag is set per call
   type_keys('sr', ')', '>')
-  sleep(200)
+  sleep(0.1 * helper_message_delay)
 
   type_keys('sr')
   sleep(total_wait_time)
@@ -1046,7 +1059,7 @@ T['Replace surrounding']['prompts helper message after one idle second'] = funct
   type_keys(')')
 
   -- Here mapping collision doesn't matter any more
-  sleep(1000)
+  sleep(helper_message_delay + small_time)
   eq(get_latest_message(), '')
   child.expect_screenshot()
 
@@ -1170,15 +1183,15 @@ T['Replace surrounding']['respects `config.silent`'] = function()
   child.lua('MiniSurround.config.silent = true')
   child.set_size(10, 20)
 
-  child.o.timeoutlen = 50
-  local total_wait_time = 1000 + child.o.timeoutlen
+  child.o.timeoutlen = 5 * small_time
+  local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
   set_lines({ '<aaa>' })
   set_cursor(1, 1)
 
   -- It should not show helper message after one idle second
   type_keys('sr')
-  sleep(total_wait_time + 15)
+  sleep(total_wait_time)
   child.expect_screenshot()
 
   -- It should not show message about "No surrounding found"
@@ -1316,15 +1329,15 @@ T['Find surrounding']['prompts helper message after one idle second'] = function
 
   -- Mapping is applied only after `timeoutlen` milliseconds, because
   -- there are `sfn`/`sfl` mappings. Wait 1000 seconds after that.
-  child.o.timeoutlen = 50
-  local total_wait_time = 1000 + child.o.timeoutlen
+  child.o.timeoutlen = 5 * small_time
+  local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
   set_lines({ '(aaa)' })
   set_cursor(1, 2)
 
   -- Execute one time to test if 'needs help message' flag is set per call
   type_keys('sf', ')')
-  sleep(200)
+  sleep(0.1 * helper_message_delay)
 
   type_keys('sf')
   sleep(total_wait_time)
@@ -1454,7 +1467,7 @@ T['Highlight surrounding'] = new_set({
   hooks = {
     pre_case = function()
       -- Reduce default highlight duration to speed up tests execution
-      child.lua('MiniSurround.config.highlight_duration = 50')
+      child.lua('MiniSurround.config.highlight_duration = ' .. (5 * small_time))
       child.set_size(5, 12)
       child.o.cmdheight = 1
     end,
@@ -1463,7 +1476,7 @@ T['Highlight surrounding'] = new_set({
 
 local activate_highlighting = function()
   type_keys('sh)')
-  poke_eventloop()
+  child.poke_eventloop()
 end
 
 T['Highlight surrounding']['works with dot-repeat'] = function()
@@ -1476,11 +1489,11 @@ T['Highlight surrounding']['works with dot-repeat'] = function()
   child.expect_screenshot()
 
   -- Should still highlight
-  sleep(test_duration - 10)
+  sleep(test_duration - 2 * small_time)
   child.expect_screenshot()
 
   -- Should stop highlighting
-  sleep(10)
+  sleep(2 * small_time + small_time)
   child.expect_screenshot()
 
   -- Should highlight with dot-repeat
@@ -1488,7 +1501,7 @@ T['Highlight surrounding']['works with dot-repeat'] = function()
   child.expect_screenshot()
 
   -- Should stop highlighting
-  sleep(test_duration)
+  sleep(test_duration + small_time)
   child.expect_screenshot()
 
   -- Should allow not immediate dot-repeat
@@ -1504,22 +1517,22 @@ T['Highlight surrounding']['works in extended mappings'] = function()
 
   set_cursor(1, 1)
   type_keys('shn', ')')
-  poke_eventloop()
+  child.poke_eventloop()
   child.expect_screenshot()
-  sleep(test_duration + 1)
+  sleep(test_duration + small_time)
 
   set_cursor(1, 12)
   type_keys('shl', ')')
-  poke_eventloop()
+  child.poke_eventloop()
   child.expect_screenshot()
-  sleep(test_duration + 1)
+  sleep(test_duration + small_time)
 
   -- Dot-repeat
   set_cursor(1, 1)
   type_keys('shn', ')')
-  sleep(test_duration + 1)
+  sleep(test_duration + small_time)
   type_keys('.')
-  poke_eventloop()
+  child.poke_eventloop()
   child.expect_screenshot()
 end
 
@@ -1542,7 +1555,7 @@ T['Highlight surrounding']['respects `config.n_lines`'] = function()
 end
 
 T['Highlight surrounding']['works with multiline input surroundings'] = function()
-  child.lua('MiniSurround.config.highlight_duration = 5')
+  child.lua('MiniSurround.config.highlight_duration = ' .. small_time)
   child.lua([[MiniSurround.config.custom_surroundings = {
     a = { input = { '%(\na().-()a\n%)' } },
     b = { input = { '%(\n().-()\n%)' } },
@@ -1554,15 +1567,15 @@ T['Highlight surrounding']['works with multiline input surroundings'] = function
 
   type_keys('sh', 'a')
   child.expect_screenshot()
-  sleep(10)
+  sleep(small_time + small_time)
 
   type_keys('sh', 'b')
   child.expect_screenshot()
-  sleep(10)
+  sleep(small_time + small_time)
 
   type_keys('sh', 'c')
   child.expect_screenshot()
-  sleep(10)
+  sleep(small_time + small_time)
 
   type_keys('sh', 'd')
   child.expect_screenshot()
@@ -1581,12 +1594,12 @@ T['Highlight surrounding']['removes highlighting in correct buffer'] = function(
   child.cmd('vsplit current')
   set_lines({ '(bbb)' })
   set_cursor(1, 2)
-  sleep(0.5 * test_duration)
+  sleep(0.5 * test_duration + small_time)
   activate_highlighting()
 
   -- Highlighting should be removed only in previous buffer
   child.expect_screenshot()
-  sleep(0.5 * test_duration + 2)
+  sleep(0.5 * test_duration + small_time)
   child.expect_screenshot()
 end
 
@@ -1607,11 +1620,11 @@ T['Highlight surrounding']['removes highlighting per line'] = function()
   child.expect_screenshot()
 
   -- Should highlight only in second line
-  sleep(half_duration + 1)
+  sleep(half_duration + small_time)
   child.expect_screenshot()
 
   -- Should stop highlighting at all
-  sleep(half_duration + 1)
+  sleep(half_duration + small_time)
   child.expect_screenshot()
 end
 
@@ -1640,7 +1653,7 @@ T['Highlight surrounding']['respects `vim.{g,b}.minisurround_disable`'] = new_se
     set_lines({ '(aaa)', 'bbb' })
     set_cursor(1, 2)
     type_keys('sh', ')')
-    poke_eventloop()
+    child.poke_eventloop()
 
     -- Shouldn't highlight anything (instead moves cursor with `)` motion)
     child.expect_screenshot()
@@ -1650,18 +1663,18 @@ T['Highlight surrounding']['respects `vim.{g,b}.minisurround_disable`'] = new_se
 T['Highlight surrounding']['respects `vim.b.minisurround_config`'] = function()
   child.b.minisurround_config = {
     custom_surroundings = { ['<'] = { input = { '>().-()<' } } },
-    highlight_duration = 50,
+    highlight_duration = 5 * small_time,
   }
   validate_edit({ '>aaa<' }, { 1, 2 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', '<')
 
   set_lines({ '>aaa<', 'bbb' })
   set_cursor(1, 2)
   type_keys('sh', '<')
-  poke_eventloop()
+  child.poke_eventloop()
   child.expect_screenshot()
 
   -- Should stop highlighting after duration from local config
-  sleep(50)
+  sleep(5 * small_time + small_time)
   child.expect_screenshot()
 end
 

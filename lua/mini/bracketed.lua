@@ -62,7 +62,7 @@
 ---   Window in current tab........... `[W` `[w` `]w` `]W` .... |MiniBracketed.window()|
 ---
 ---   Yank selection replacing
----   latest put region................`[Y` `[y` `]y` `]Y` .... |MiniBracketed.yank()|
+---   latest put region............... `[Y` `[y` `]y` `]Y` .... |MiniBracketed.yank()|
 ---
 --- Notes:
 --- - The `undo` target remaps |u| and |<C-R>| keys to register undo state
@@ -342,7 +342,7 @@ MiniBracketed.comment = function(direction, opts)
   if opts.add_to_jumplist then H.add_to_jumplist() end
 
   -- Apply. Open just enough folds and put cursor on first non-blank.
-  vim.api.nvim_win_set_cursor(0, { res_line_num, 0 })
+  H.set_cursor(res_line_num, 0)
   vim.cmd('normal! zv^')
 end
 
@@ -404,7 +404,7 @@ MiniBracketed.conflict = function(direction, opts)
   if opts.add_to_jumplist then H.add_to_jumplist() end
 
   -- Apply. Open just enough folds and put cursor on first non-blank.
-  vim.api.nvim_win_set_cursor(0, { res_line_num, 0 })
+  H.set_cursor(res_line_num, 0)
   vim.cmd('normal! zv^')
 end
 
@@ -643,7 +643,7 @@ MiniBracketed.indent = function(direction, opts)
   if opts.add_to_jumplist then H.add_to_jumplist() end
 
   -- Apply. Open just enough folds and put cursor on first non-blank.
-  vim.api.nvim_win_set_cursor(0, { res_line_num, 0 })
+  H.set_cursor(res_line_num, 0)
   vim.cmd('normal! zv^')
 end
 
@@ -825,12 +825,6 @@ end
 ---   - <n_times> `(number)` - Number of times to advance. Default: |v:count1|.
 ---   __bracketed_add_to_jumplist
 MiniBracketed.treesitter = function(direction, opts)
-  if H.get_treesitter_node == nil then
-    H.error(
-      '`treesitter()` target requires either `vim.treesitter.get_node()` or `vim.treesitter.get_node_at_pos()`.'
-        .. ' Use newer Neovim version.'
-    )
-  end
   if H.is_disabled() then return end
 
   H.validate_direction(direction, { 'first', 'backward', 'forward', 'last' }, 'treesitter')
@@ -919,8 +913,7 @@ MiniBracketed.treesitter = function(direction, opts)
   if opts.add_to_jumplist then H.add_to_jumplist() end
 
   -- Apply
-  local row, col = res_node_pos.pos[1], res_node_pos.pos[2]
-  vim.api.nvim_win_set_cursor(0, { row + 1, col })
+  H.set_cursor(res_node_pos.pos[1] + 1, res_node_pos.pos[2])
 end
 
 --- Undo along a tracked linear history
@@ -1136,12 +1129,9 @@ MiniBracketed.yank = function(direction, opts)
   if H.is_disabled() then return end
 
   H.validate_direction(direction, { 'first', 'backward', 'forward', 'last' }, 'yank')
-  opts = vim.tbl_deep_extend(
-    'force',
-    { n_times = vim.v.count1, operators = { 'c', 'd', 'y' }, wrap = true },
-    H.get_config().yank.options,
-    opts or {}
-  )
+  -- NOTE: Don't use `tbl_deep_extend` to prefer full input `operators` array
+  local default_opts = { n_times = vim.v.count1, operators = { 'c', 'd', 'y' }, wrap = true }
+  opts = vim.tbl_extend('force', default_opts, H.get_config().yank.options, opts or {})
 
   -- Update yank history data
   local cache_yank, history = H.cache.yank, H.cache.yank.history
@@ -1600,10 +1590,10 @@ end
 H.get_suffix_variants = function(char) return char:lower(), char:upper() end
 
 H.create_autocommands = function()
-  local augroup = vim.api.nvim_create_augroup('MiniBracketed', {})
+  local gr = vim.api.nvim_create_augroup('MiniBracketed', {})
 
   local au = function(event, pattern, callback, desc)
-    vim.api.nvim_create_autocmd(event, { group = augroup, pattern = pattern, callback = callback, desc = desc })
+    vim.api.nvim_create_autocmd(event, { group = gr, pattern = pattern, callback = callback, desc = desc })
   end
 
   au('BufEnter', '*', H.track_oldfile, 'Track oldfile')
@@ -1975,7 +1965,7 @@ end
 
 H.region_delete = function(region, normal_fun)
   -- Start with `to` to have cursor positioned on region start after deletion
-  vim.api.nvim_win_set_cursor(0, { region.to.line, region.to.col - 1 })
+  H.set_cursor(region.to.line, region.to.col - 1)
 
   -- Do nothing more if region is empty (or leads to unnecessary line deletion)
   local is_empty = region.from.line == region.to.line
@@ -1986,7 +1976,7 @@ H.region_delete = function(region, normal_fun)
 
   -- Select region in correct Visual mode
   normal_fun(region.mode)
-  vim.api.nvim_win_set_cursor(0, { region.from.line, region.from.col - 1 })
+  H.set_cursor(region.from.line, region.from.col - 1)
 
   -- Delete region in "black hole" register
   -- - NOTE: it doesn't affect history as `"_` doesn't trigger `TextYankPost`
@@ -2016,5 +2006,13 @@ H.map = function(mode, lhs, rhs, opts)
 end
 
 H.add_to_jumplist = function() vim.cmd([[normal! m']]) end
+
+H.set_cursor = function(row, col)
+  if row <= 0 then return vim.api.nvim_win_set_cursor(0, { 1, 0 }) end
+  local n_lines = vim.api.nvim_buf_line_count(0)
+  if n_lines < row then return vim.api.nvim_win_set_cursor(0, { n_lines, vim.fn.getline(n_lines):len() - 1 }) end
+  col = math.min(math.max(col, 0), vim.fn.getline(row):len())
+  return vim.api.nvim_win_set_cursor(0, { row, col })
+end
 
 return MiniBracketed

@@ -59,6 +59,9 @@ end
 
 local unmock_file = function() pcall(vim.fn.delete, mocked_filepath) end
 
+-- Time constants
+local term_mode_wait = helpers.get_time_const(50)
+
 -- Output test set ============================================================
 local T = new_set({
   hooks = {
@@ -72,6 +75,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(1),
 })
 
 -- Unit tests =================================================================
@@ -135,6 +139,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ use_icons = 'a' }, 'use_icons', 'boolean')
 end
 
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniStatuslineModeNormal'), 'links to Cursor')
+end
+
 T['setup()']['sets proper autocommands'] = function()
   local validate = function(win_id, field)
     eq(child.api.nvim_win_get_option(win_id, 'statusline'), '%{%v:lua.MiniStatusline.' .. field .. '()%}')
@@ -151,8 +160,16 @@ T['setup()']['sets proper autocommands'] = function()
 end
 
 T['setup()']['respects `config.set_vim_settings`'] = function()
-  reload_module({ set_vim_settings = true })
-  eq(child.o.laststatus, 2)
+  local validate = function(init_laststatus, ref_laststatus)
+    child.o.laststatus = init_laststatus
+    reload_module({ set_vim_settings = true })
+    eq(child.o.laststatus, ref_laststatus)
+  end
+
+  validate(0, 2)
+  validate(1, 2)
+  validate(2, 2)
+  validate(3, 3)
 end
 
 T['setup()']['disables built-in statusline in quickfix window'] = function()
@@ -161,16 +178,18 @@ T['setup()']['disables built-in statusline in quickfix window'] = function()
 end
 
 T['setup()']['ensures content when working with built-in terminal'] = function()
+  helpers.skip_on_windows('Terminal emulator testing is not robust/easy on Windows')
+
   local init_buf_id = child.api.nvim_get_current_buf()
 
   child.cmd('terminal! bash --noprofile --norc')
   -- Wait for terminal to get active
-  child.loop.sleep(50)
+  vim.loop.sleep(term_mode_wait)
   expect.match(child.wo.statusline, 'MiniStatusline%.active')
   eq(child.api.nvim_get_current_buf() == init_buf_id, false)
 
   type_keys('i', 'exit', '<CR>')
-  child.loop.sleep(50)
+  vim.loop.sleep(term_mode_wait)
   type_keys('<CR>')
   expect.match(child.wo.statusline, 'MiniStatusline%.active')
   eq(child.api.nvim_get_current_buf() == init_buf_id, true)
@@ -774,7 +793,9 @@ T['Default content']['active'] = new_set({
   parametrize = { { 120 }, { 75 }, { 40 }, { 39 } },
 }, {
   test = function(window_width)
-    eq(child.api.nvim_win_get_option(0, 'statusline'), '%{%v:lua.MiniStatusline.active()%}')
+    helpers.skip_on_windows('Windows has different default path separator')
+
+    eq(child.wo.statusline, '%{%v:lua.MiniStatusline.active()%}')
     set_width(window_width)
     child.expect_screenshot()
   end,

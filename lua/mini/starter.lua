@@ -385,9 +385,9 @@ MiniStarter.refresh = function(buf_id)
   if not vim.deep_equal(data.items, old_items) then data.current_item_id = 1 end
 
   -- Add content
-  vim.api.nvim_buf_set_option(buf_id, 'modifiable', true)
+  vim.bo[buf_id].modifiable = true
   vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, MiniStarter.content_to_lines(content))
-  vim.api.nvim_buf_set_option(buf_id, 'modifiable', false)
+  vim.bo[buf_id].modifiable = false
 
   -- Add highlighting
   H.content_highlight(buf_id)
@@ -1053,7 +1053,7 @@ end
 H.apply_config = function(config) MiniStarter.config = config end
 
 H.create_autocommands = function(config)
-  local augroup = vim.api.nvim_create_augroup('MiniStarter', {})
+  local gr = vim.api.nvim_create_augroup('MiniStarter', {})
 
   if config.autoopen then
     local on_vimenter = function()
@@ -1065,11 +1065,11 @@ H.create_autocommands = function(config)
       vim.cmd('noautocmd lua MiniStarter.open()')
     end
 
-    vim.api.nvim_create_autocmd(
-      'VimEnter',
-      { group = augroup, nested = true, once = true, callback = on_vimenter, desc = 'Open on VimEnter' }
-    )
+    local au_opts = { group = gr, nested = true, once = true, callback = on_vimenter, desc = 'Open on VimEnter' }
+    vim.api.nvim_create_autocmd('VimEnter', au_opts)
   end
+
+  vim.api.nvim_create_autocmd('ColorScheme', { group = gr, callback = H.create_default_hl, desc = 'Ensure colors' })
 end
 
 --stylua: ignore

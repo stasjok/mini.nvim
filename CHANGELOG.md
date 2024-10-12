@@ -1,4 +1,18 @@
-# Version 0.13.0.9000
+# Version 0.14.0.9000
+
+## mini.hues
+
+FEATURE: add `'lowmedium'` and `'mediumhigh'` saturation levels.
+
+## mini.test
+
+- FEATURE: add `n_retry` test set property. When set, each case will be tried that at most that many times until first success (if any).
+- FEATURE: add `hooks.pre_source` and `hooks.post_source` fields to collected cases. They can be either `'once'` or `'case'` and allow a more granular control over case execution.
+- FEATURE: `finally()` now can be called several times inside a single function with callbacks executed in order of how they were registered.
+- BREAKING FEATURE: now calling `skip()` in set's `pre_case` hook results in skipping all test cases in a set. Calling in other hooks has no effect. This enables a more structured skipping of all test cases inside a set. To skip inside hooks, use `add_note()` followed by `return`.
+
+
+# Version 0.14.0
 
 - Stop official support of Neovim 0.7.
 - Update help files to use code blocks with language annotation, as it results in a better code highlighting. Implies enabled tree-sitter highlighting in 'help' filetype:
@@ -6,6 +20,16 @@
     - Tree-sitter parser is built-in in Neovim 0.9.x, needs manual enabling via `vim.treesitter.start()`.
     - Has visual regressions on Neovim 0.8.0 and 0.8.1 without enabled tree-sitter (code blocks are highlighted as normal text). Use 0.8.2 or newer.
 - Universally prefer 'mini.icons' module over 'nvim-tree/nvim-web-devicons'.
+- Start automated testing on Windows and MacOS.
+- Universally ensure that all plugin's highlight groups are defined after any color scheme takes effect.
+
+## mini.base16
+
+- FEATURE: add 'kevinhwang91/nvim-bqf' plugin integration.
+
+## mini.completion
+
+- FEATURE: add highlighting of LSP kind (like "Function", "Keyword", etc.). Works only on Neovim>=0.11. Requires enabled 'mini.icons' to work out of the box.
 
 ## mini.doc
 
@@ -13,9 +37,16 @@
 
 ## mini.extra
 
-- FEATURE: update `pickers.oldfiles()` to have `current_dir` option which if `true` shows files only from picker's working directory. By @abeldekat, PR #997.
+- FEATURE: update `oldfiles` picker to have `current_dir` option which if `true` shows files only from picker's working directory. By @abeldekat, PR #997.
 - FEATURE: make `git_hunks`, `list`, and `lsp` pickers show icons. Scopes `document_symbol` and `workspace_symbol` in `lsp` picker show icon based on LSP kind (requires set up 'mini.icons'), others - based on path data.
+- FEATURE: update `buf_lines` and `oldfiles` pickers to have `preserve_order` local option, similar to `visit_paths` picker. Other possible candidates for this option are intentionally not updated to not increase maintenance (manually override `match` source method to call `MiniPick.default_match()` with `{ preserve_order = true }` options).
+- FEATURE: update `buf_lines` picker to pad line numbers to achieve more aligned look.
 - BREAKING FEATURE: use "│" as line/position separator instead of ":". This aligns with changes in 'mini.pick' and makes line/position more easily visible.
+
+## mini.git
+
+- FEATURE: update `show_at_cursor()` to include commit's statistics when showing commit.
+- FEATURE: update `show_at_cursor()` to show relevant at cursor commit data inside 'mini.deps' confirmation buffer.
 
 ## mini.hipatterns
 
@@ -24,10 +55,26 @@
 ## mini.hues
 
 - FEATURE: implement `apply_palette()` (to compliment `make_palette()`) providing a way to tweak applied palette before applying it.
+- FEATURE: add 'kevinhwang91/nvim-bqf' plugin integration.
 
 ## mini.files
 
 - FEATURE: prefer using 'mini.icons' as icon provider.
+- FEATURE: implement bookmarks. With default config:
+    - Type `m` followed by a single character `<char>` to set directory path of focused window as a bookmark with id `<char>`.
+    - Type `'` followed by a bookmark id to make bookmark's path focused in explorer.
+    - Use `MiniFiles.set_bookmark()` inside `MiniFilesExplorerOpen` event to set custom bookmarks.
+- FEATURE: make data for `MiniFilesActionDelete` contain `to` field in case of not permanent delete.
+- FEATURE: make file manipulation work better for special complex/overlapping cases (like delete 'file-a' and copy 'file-b' as 'file-a'). It is **still** a better idea to split overlapping manipulations into smaller and not related steps, as there *are* cases which won't work.
+- FEATURE: add `get_explorer_state()` to allow more reliable user customizations.
+- FEATURE: add `set_branch()` to allow to set what paths should be displayed and focused.
+- BREAKING: soft deprecate `get_target_window()` in favor of `get_explorer_state().target_window`. Will be completely removed after the next release.
+- BREAKING: update how confirmation lines are computed:
+    - Show create actions in the group directory where text manipulation took place. This matters during creating nested entries and is usually a more intuitive representation.
+    - For delete show its type after the file name ("permanently" or "to trash") as an additional visual indication of delete type.
+    - For create, copy and move prefer showing its "to" path relative to group directory.
+    - Separate action name and paths with "│" (instead of ":") for better visual separation.
+    - Don't enclose paths in quotes. Initially it was done to reliably show possible whitespace in paths, but inferring it from overall line structure should be good enough.
 
 ## mini.icons
 
@@ -35,14 +82,17 @@
 
 ## mini.misc
 
-- FEATURE: implement `setup_termbg_sync()` to set up terminal background synchronization (removes possible "frame" around current Neovim instance).
+- FEATURE: implement `setup_termbg_sync()` to set up terminal background synchronization (removes possible "frame" around current Neovim instance). Works only on Neovim>=0.10.
 
 ## mini.pick
 
 - FEATURE: prefer using 'mini.icons' as icon provider.
+- BREAKING: update `default_match()` to have table `opts` as fourth argument (instead of boolean `do_sync`). Use `{ sync = true }` to run synchronously. The new design is more aligned with other functions and is more forward compatible.
+- FEATURE: add `preserve_order` option to `default_match()` to allow asynchronous matching which preserves order (i.e. doesn't do sort step of fuzzy matching).
 - BREAKING: encoding line or position in string items has changed:
     - Use "\0" (null character; use "\000" form if it is in a string before digit) instead of ":" as delimiter. This makes it work with files similar to ":" position encoding (like "time_12:34:56"). This only matters for custom sources which provide line or position in string items.
     - Update `default_show()` to display "│" character instead of "\0" in item's string representation (previously was ":"). In particular, this changes how line/position is displayed in `grep` and `grep_live` built-in pickers. This change was done because "│" is more visible as separator.
+- FEATURE: explicitly hide cursor when picker is active (instead of putting it in command line).
 
 ## mini.starter
 
@@ -51,6 +101,7 @@
 ## mini.statusline
 
 - BREAKING FEATURE: update `section_fileinfo()` to show non-empty filetype even in not normal buffers (like plugin's scratch buffers, help, quickfix, etc.). Previously it showed nothing, which was a mistake as filetype can be a valuable information.
+- BREAKING FEATURE: the default `set_vim_settings` config value now does not affect `laststatus = 3` (aka global statusline).
 - FEATURE: prefer using 'mini.icons' as icon provider for `section_fileinfo()`.
 
 ## mini.surround
@@ -60,6 +111,10 @@
 ## mini.tabline
 
 - FEATURE: prefer using 'mini.icons' as icon provider.
+
+## mini.test
+
+- FEATURE: make it work on Windows. By @cameronr, PR #1101.
 
 
 # Version 0.13.0

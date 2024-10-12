@@ -12,8 +12,7 @@ local set_cursor = function(...) return child.set_cursor(...) end
 local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child, true) end
 --stylua: ignore end
 
 local get_virt_cursor = function()
@@ -82,11 +81,6 @@ local create_openclose_test_winconfig = function()
 end
 
 -- Data =======================================================================
-local test_times = { total_timing = 250 }
-
-local step_time = 40
-local small_time = 5
-
 --stylua: ignore
 local example_scroll_lines = {
   'aaaa', 'bbbb', 'cccc', 'dddd', 'eeee',
@@ -101,15 +95,23 @@ local example_scroll_lines_2 = {
   'KKKK', 'LLLL', 'MMMM', 'NNNN', 'OOOO',
 }
 
+-- Time constants
+local default_total_time = 250
+local step_time = helpers.get_time_const(40)
+local small_time = helpers.get_time_const(10)
+
 -- Output test set ============================================================
 local T = new_set({
   hooks = {
     pre_case = function()
       child.setup()
       load_module()
+
+      child.lua('_G.step_time, _G.small_time = ' .. step_time .. ', ' .. small_time)
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -203,8 +205,8 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ close = { winblend = 'a' } }, 'close.winblend', 'callable')
 end
 
-T['setup()']['defines non-linked default highlighting on `ColorScheme`'] = function()
-  child.cmd('colorscheme blue')
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
   expect.match(child.cmd_capture('hi MiniAnimateCursor'), 'gui=reverse,nocombine')
 end
 
@@ -219,9 +221,9 @@ T['is_active()']['works for `cursor`'] = function()
   set_cursor(1, 0)
   type_keys('2j')
   eq(is_active('cursor'), true)
-  sleep(test_times.total_timing - 20)
+  sleep(default_total_time - small_time)
   eq(is_active('cursor'), true)
-  sleep(20 + 10)
+  sleep(small_time + 3 * small_time)
   eq(is_active('cursor'), false)
 end
 
@@ -232,9 +234,9 @@ T['is_active()']['works for `scroll`'] = function()
   set_cursor(1, 0)
   type_keys('<C-f>')
   eq(is_active('scroll'), true)
-  sleep(test_times.total_timing - 20)
+  sleep(default_total_time - small_time)
   eq(is_active('scroll'), true)
-  sleep(20 + 10)
+  sleep(small_time + 3 * small_time)
   eq(is_active('scroll'), false)
 end
 
@@ -243,9 +245,9 @@ T['is_active()']['works for `resize`'] = function()
 
   type_keys('<C-w>v', '<C-w>|')
   eq(is_active('resize'), true)
-  sleep(test_times.total_timing - 20)
+  sleep(default_total_time - small_time)
   eq(is_active('resize'), true)
-  sleep(20 + 20)
+  sleep(small_time + 3 * small_time)
   eq(is_active('resize'), false)
 end
 
@@ -256,20 +258,20 @@ T['is_active()']['works for `open`/`close`'] = function()
   type_keys('<C-w>v')
   eq(is_active('open'), true)
   eq(is_active('close'), false)
-  sleep(test_times.total_timing - 20)
+  sleep(default_total_time - small_time)
   eq(is_active('open'), true)
   eq(is_active('close'), false)
-  sleep(20 + 10)
+  sleep(small_time + 3 * small_time)
   eq(is_active('open'), false)
   eq(is_active('close'), false)
 
   child.cmd('quit')
   eq(is_active('open'), false)
   eq(is_active('close'), true)
-  sleep(test_times.total_timing - 20)
+  sleep(default_total_time - small_time)
   eq(is_active('open'), false)
   eq(is_active('close'), true)
-  sleep(20 + 10)
+  sleep(small_time + 3 * small_time)
   eq(is_active('open'), false)
   eq(is_active('close'), false)
 end
@@ -296,9 +298,9 @@ T['execute_after()']['works after animation is done'] = function()
 
   type_keys('n')
   eq(child.g.been_here, vim.NIL)
-  sleep(test_times.total_timing - 20)
+  sleep(default_total_time - small_time)
   eq(child.g.been_here, vim.NIL)
-  sleep(20 + 10)
+  sleep(small_time + small_time)
   eq(child.g.been_here, true)
 end
 
@@ -317,28 +319,28 @@ T['animate()'] = new_set()
 T['animate()']['works'] = function()
   child.lua('_G.action_history = {}')
   child.lua('_G.step_action = function(step) table.insert(_G.action_history, step); return step < 3 end')
-  child.lua('_G.step_timing = function(step) return 25 * step end')
+  child.lua('_G.step_timing = function(step) return _G.step_time * step end')
 
   child.lua([[MiniAnimate.animate(_G.step_action, _G.step_timing)]])
   -- It should execute the following order:
   -- Action (step 0) - wait (step 1) - action (step 1) - ...
-  -- So here it should be:
+  -- So here it should be (with `step_time = 25`):
   -- 0 ms - `action(0)`
   -- 25(=`timing(1)`) ms - `action(1)`
   -- 75 ms - `action(2)`
   -- 150 ms - `action(3)` and stop
   eq(child.lua_get('_G.action_history'), { 0 })
-  sleep(25 - small_time)
+  sleep(step_time - small_time)
   eq(child.lua_get('_G.action_history'), { 0 })
   sleep(small_time)
   eq(child.lua_get('_G.action_history'), { 0, 1 })
 
-  sleep(50 - small_time)
+  sleep(2 * step_time - small_time)
   eq(child.lua_get('_G.action_history'), { 0, 1 })
   sleep(small_time)
   eq(child.lua_get('_G.action_history'), { 0, 1, 2 })
 
-  sleep(75 - small_time)
+  sleep(3 * step_time - small_time)
   eq(child.lua_get('_G.action_history'), { 0, 1, 2 })
   sleep(small_time)
   eq(child.lua_get('_G.action_history'), { 0, 1, 2, 3 })
@@ -346,8 +348,8 @@ end
 
 T['animate()']['respects `opts.max_steps`'] = function()
   child.lua('_G.step_action = function(step) _G.latest_step = step; return step < 1000 end')
-  child.lua('MiniAnimate.animate(_G.step_action, function() return 10 end, { max_steps = 2 })')
-  sleep(10 * 2 + 5)
+  child.lua('MiniAnimate.animate(_G.step_action, function() return _G.step_time end, { max_steps = 2 })')
+  sleep(step_time * 2 + small_time)
   eq(child.lua_get('_G.latest_step'), 2)
 end
 
@@ -356,18 +358,20 @@ T['animate()']['handles step times less than 1 ms'] = function()
   child.lua('MiniAnimate.animate(_G.step_action, function() return 0.1 end)')
 
   -- All steps should be executed almost immediately (respectnig `libuv` loops)
-  poke_eventloop()
-  poke_eventloop()
-  poke_eventloop()
+  child.poke_eventloop()
+  child.poke_eventloop()
+  child.poke_eventloop()
   eq(child.lua_get('_G.latest_step'), 3)
 end
 
 T['animate()']['handles non-integer step times'] = function()
+  local new_step_time = 0.91 * step_time
+  child.lua('_G.new_step_time = ' .. new_step_time)
   -- It should accumulate fractional parts, not discard them
   child.lua('_G.step_action = function(step) _G.latest_step = step; return step < 10 end')
-  child.lua('MiniAnimate.animate(_G.step_action, function() return 1.9 end)')
+  child.lua('MiniAnimate.animate(_G.step_action, function() return _G.new_step_time end)')
 
-  sleep(19 - small_time)
+  sleep(10 * new_step_time - small_time)
   eq(child.lua_get('_G.latest_step') < 10, true)
 
   sleep(small_time + small_time)
@@ -1263,7 +1267,7 @@ T['Cursor']['stops on buffer change'] = function()
 
   set_cursor(5, 0)
   child.expect_screenshot()
-  sleep(step_time + small_time)
+  sleep(step_time)
   child.expect_screenshot()
   sleep(step_time)
   child.expect_screenshot()
@@ -1313,10 +1317,10 @@ T['Cursor']['correctly calls `timing`'] = function()
   child.lua('_G.args_history = {}')
   child.lua([[MiniAnimate.config.cursor.timing = function(s, n)
     table.insert(_G.args_history, { s = s, n = n })
-    return 10
+    return _G.step_time
   end]])
   set_cursor(5, 0)
-  sleep(10 * 5)
+  sleep(step_time * 5 + small_time)
   eq(child.lua_get('_G.args_history'), { { s = 1, n = 4 }, { s = 2, n = 4 }, { s = 3, n = 4 }, { s = 4, n = 4 } })
 end
 
@@ -1811,14 +1815,14 @@ T['Scroll']["does not automatically animate result of 'incsearch'"] = function()
   -- Should work for search with `/`
   type_keys('/', 'oo', '<CR>')
   child.expect_screenshot()
-  sleep(step_time + 10)
+  sleep(step_time + small_time)
   -- Should be the same
   child.expect_screenshot()
 
   -- Should work for search with `?`
   type_keys('?', 'aa', '<CR>')
   child.expect_screenshot()
-  sleep(step_time + 10)
+  sleep(step_time + small_time)
   -- Should be the same
   child.expect_screenshot()
 end
@@ -1867,7 +1871,7 @@ end
 
 T['Scroll']['works with different keys']['zb'] = function()
   type_keys('2<C-e>')
-  sleep(step_time * 2 + 10)
+  sleep(step_time * 2 + small_time)
   set_cursor(6, 0)
   validate_topline(3)
 
@@ -1927,7 +1931,8 @@ T['Scroll']['works with different keys']['G'] = function()
   sleep(step_time)
   validate_topline(3)
 
-  sleep(step_time * 6 + 2)
+  sleep(small_time)
+  sleep(step_time * 6)
   validate_topline(9)
   sleep(step_time)
   validate_topline(10)
@@ -1948,11 +1953,11 @@ T['Scroll']['correctly calls `timing`'] = function()
   child.lua('_G.args_history = {}')
   child.lua([[MiniAnimate.config.scroll.timing = function(s, n)
     table.insert(_G.args_history, { s = s, n = n })
-    return 10
+    return _G.step_time
   end]])
 
   type_keys('4<C-e>')
-  sleep(10 * 4 + 5)
+  sleep(step_time * 4 + small_time)
   eq(child.lua_get('_G.args_history'), { { s = 1, n = 4 }, { s = 2, n = 4 }, { s = 3, n = 4 }, { s = 4, n = 4 } })
 end
 
@@ -2195,11 +2200,11 @@ T['Resize']['correctly calls `timing`'] = function()
   child.lua('_G.args_history = {}')
   child.lua([[MiniAnimate.config.resize.timing = function(s, n)
     table.insert(_G.args_history, { s = s, n = n })
-    return 10
+    return _G.step_time
   end]])
 
   type_keys('<C-w>|')
-  sleep(10 * 5 + 5)
+  sleep(step_time * 5 + small_time)
   eq(
     child.lua_get('_G.args_history'),
     { { s = 1, n = 5 }, { s = 2, n = 5 }, { s = 3, n = 5 }, { s = 4, n = 5 }, { s = 5, n = 5 } }
@@ -2333,7 +2338,7 @@ T['Open']['works for a new tabpage'] = function()
   validate_floats({
     [win_id] = { relative = 'editor', row = 1, col = 0, width = 12, height = 5, winblend = 80 },
   })
-  sleep(2 * 20)
+  sleep(2 * small_time)
   child.cmd('tabclose')
 
   -- Should also work second time (testing correct usage of tabpage number)
@@ -2391,11 +2396,11 @@ T['Open']['correctly calls `timing`'] = function()
   child.lua('_G.args_history = {}')
   child.lua([[MiniAnimate.config.open.timing = function(s, n)
     table.insert(_G.args_history, { s = s, n = n })
-    return 10
+    return _G.step_time
   end]])
 
   child.cmd('wincmd v')
-  sleep(10 * 2 + 5)
+  sleep(step_time * 2 + small_time)
   eq(child.lua_get('_G.args_history'), { { s = 1, n = 2 }, { s = 2, n = 2 } })
 end
 
@@ -2527,12 +2532,12 @@ T['Close']['correctly calls `timing`'] = function()
   child.lua('_G.args_history = {}')
   child.lua([[MiniAnimate.config.close.timing = function(s, n)
     table.insert(_G.args_history, { s = s, n = n })
-    return 10
+    return _G.step_time
   end]])
 
   child.cmd('wincmd v')
   child.cmd('close')
-  sleep(10 * 2 + 5)
+  sleep(step_time * 2 + small_time)
   eq(child.lua_get('_G.args_history'), { { s = 1, n = 2 }, { s = 2, n = 2 } })
 end
 

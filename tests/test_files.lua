@@ -13,8 +13,7 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
 -- Tweak `expect_screenshot()` to test only on Neovim>=0.9 (as it introduced
@@ -29,21 +28,10 @@ end
 local test_dir = 'tests/dir-files'
 
 local join_path = function(...) return table.concat({ ... }, '/') end
+local full_path = function(...) return (vim.fn.fnamemodify(join_path(...), ':p'):gsub('\\', '/'):gsub('(.)/$', '%1')) end
+local short_path = function(...) return (vim.fn.fnamemodify(join_path(...), ':~'):gsub('\\', '/'):gsub('(.)/$', '%1')) end
 
-local full_path = function(...)
-  local res = vim.fn.fnamemodify(join_path(...), ':p'):gsub('(.)/$', '%1')
-  return res
-end
-
-local short_path = function(...)
-  local res = vim.fn.fnamemodify(join_path(...), ':~'):gsub('(.)/$', '%1')
-  return res
-end
-
-local make_test_path = function(...)
-  local path = join_path(test_dir, join_path(...))
-  return child.fn.fnamemodify(path, ':p')
-end
+local make_test_path = function(...) return full_path(join_path(test_dir, ...)) end
 
 local make_temp_dir = function(name, children)
   -- Make temporary directory and make sure it is removed after test is done
@@ -66,17 +54,36 @@ local make_temp_dir = function(name, children)
 end
 
 -- Common validators and helpers
-local validate_directory = function(...) eq(child.fn.isdirectory(join_path(...)), 1) end
-
-local validate_no_directory = function(...) eq(child.fn.isdirectory(join_path(...)), 0) end
-
-local validate_file = function(...) eq(child.fn.filereadable(join_path(...)), 1) end
-
-local validate_no_file = function(...) eq(child.fn.filereadable(join_path(...)), 0) end
-
 local validate_file_content = function(path, lines) eq(child.fn.readfile(path), lines) end
 
+local validate_tree = function(dir, ref_tree)
+  child.lua('_G.dir = ' .. vim.inspect(dir))
+  local tree = child.lua([[
+    local read_dir
+    read_dir = function(path, res)
+      res = res or {}
+      local fs = vim.loop.fs_scandir(path)
+      local name, fs_type = vim.loop.fs_scandir_next(fs)
+      while name do
+        local cur_path = path .. '/' .. name
+        table.insert(res, cur_path .. (fs_type == 'directory' and '/' or ''))
+        if fs_type == 'directory' then read_dir(cur_path, res) end
+        name, fs_type = vim.loop.fs_scandir_next(fs)
+      end
+      return res
+    end
+    local dir_len = _G.dir:len()
+    return vim.tbl_map(function(p) return p:sub(dir_len + 2) end, read_dir(_G.dir))
+  ]])
+  table.sort(tree)
+  local ref = vim.deepcopy(ref_tree)
+  table.sort(ref)
+  eq(tree, ref)
+end
+
 local validate_cur_line = function(x) eq(get_cursor()[1], x) end
+
+local is_explorer_active = function() return child.lua_get('MiniFiles.get_explorer_state() ~= nil') end
 
 local validate_n_wins = function(n) eq(#child.api.nvim_tabpage_list_wins(0), n) end
 
@@ -98,7 +105,7 @@ end
 local make_plain_pattern = function(...) return table.concat(vim.tbl_map(vim.pesc, { ... }), '.*') end
 
 local is_file_in_buffer = function(buf_id, path)
-  return string.find(child.api.nvim_buf_get_name(buf_id), vim.pesc(path) .. '$') ~= nil
+  return string.find(child.api.nvim_buf_get_name(buf_id):gsub('\\', '/'), vim.pesc(path:gsub('\\', '/')) .. '$') ~= nil
 end
 
 local is_file_in_window = function(win_id, path) return is_file_in_buffer(child.api.nvim_win_get_buf(win_id), path) end
@@ -115,6 +122,12 @@ local go_in = forward_lua('MiniFiles.go_in')
 local go_out = forward_lua('MiniFiles.go_out')
 local trim_left = forward_lua('MiniFiles.trim_left')
 local trim_right = forward_lua('MiniFiles.trim_right')
+local get_explorer_state = forward_lua('MiniFiles.get_explorer_state')
+local set_bookmark = forward_lua('MiniFiles.set_bookmark')
+
+local get_visible_paths = function()
+  return vim.tbl_map(function(x) return x.path end, get_explorer_state().windows)
+end
 
 -- Extmark helper
 local get_extmarks_hl = function()
@@ -143,10 +156,10 @@ local mock_stdpath_data = function()
     [[
     _G.stdpath_orig = vim.fn.stpath
     vim.fn.stdpath = function(what)
-      if what == 'data' then return '%s' end
+      if what == 'data' then return %s end
       return _G.stdpath_orig(what)
     end]],
-    data_dir
+    vim.inspect(data_dir)
   )
   child.lua(lua_cmd)
   return data_dir
@@ -166,6 +179,10 @@ local test_fs_entries = {
   { fs_type = 'file', name = 'A-file-2', path = full_path('A-file-2') },
   { fs_type = 'file', name = 'b-file', path = full_path('b-file') },
 }
+
+-- Time constants
+local track_lost_focus_delay = 1000
+local small_time = helpers.get_time_const(10)
 
 -- Output test set ============================================================
 local T = new_set({
@@ -191,6 +208,7 @@ local T = new_set({
     post_case = function() vim.fn.delete(make_test_path('data'), 'rf') end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -294,6 +312,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ windows = { width_preview = 'a' } }, 'windows.width_preview', 'number')
 end
 
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniFilesBorder'), 'links to FloatBorder')
+end
+
 T['open()'] = new_set()
 
 T['open()']['works with directory path'] = function()
@@ -301,13 +324,13 @@ T['open()']['works with directory path'] = function()
   open(test_dir_path)
   child.expect_screenshot()
   close()
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
 
   -- Works with absolute path
   open(vim.fn.fnamemodify(test_dir_path, ':p'))
   child.expect_screenshot()
   close()
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
 
   -- Works with trailing slash
   open(test_dir_path .. '/')
@@ -371,6 +394,7 @@ T['open()']['uses icon provider'] = function()
     'MiniIconsAzure',  'MiniFilesFile',
     'MiniIconsCyan',   'MiniFilesFile',
     'MiniIconsGrey',   'MiniFilesFile',
+    'MiniIconsGrey',   'MiniFilesFile',
   })
 
   go_out()
@@ -420,7 +444,7 @@ T['open()']['history']['opens from history by default'] = function()
   child.expect_screenshot()
 
   close()
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
   open(test_dir_path)
   -- Should be exactly the same, including cursors
   child.expect_screenshot()
@@ -447,7 +471,7 @@ T['open()']['history']['respects `use_latest`'] = function()
   child.expect_screenshot()
 
   close()
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
   open(test_dir_path, false)
   -- Should be as if opened first time
   child.expect_screenshot()
@@ -556,7 +580,7 @@ T['open()']['normalizes before first refresh when focused on file'] = function()
   -- Prepare explorer state to be opened from history
   open(make_test_path('common'))
   go_in()
-  validate_n_wins(3)
+  eq(is_explorer_active(), true)
   close()
 
   -- Mock `nvim_open_win()`
@@ -581,7 +605,7 @@ end
 T['open()']['normalizes before first refresh when focused on directory with `windows.preview`'] = function()
   -- Prepare explorer state to be opened from history
   open(test_dir_path)
-  validate_n_wins(2)
+  eq(is_explorer_active(), true)
   close()
 
   -- Mock `nvim_open_win()`
@@ -676,6 +700,64 @@ T['open()']['`content.prefix` can return `nil`'] = function()
   validate()
   validate([['', nil]])
   validate([[nil, '']])
+end
+
+T['open()']['`content.prefix` is called only on visible part of preview'] = function()
+  child.set_size(5, 100)
+  child.lua([[
+    MiniFiles.config.windows.preview = true
+
+    _G.log = {}
+    MiniFiles.config.content.prefix = function(fs_entry)
+      table.insert(_G.log, fs_entry.name)
+      return '-', 'Comment'
+    end
+
+    _G.scandir_log = {}
+    fs_scandir_orig = vim.loop.fs_scandir
+    vim.loop.fs_scandir = function(path)
+      table.insert(_G.scandir_log, path)
+      return fs_scandir_orig(path)
+    end
+  ]])
+
+  local validate_log = function(ref)
+    local computed_prefix = child.lua_get('_G.log')
+    table.sort(computed_prefix)
+    eq(computed_prefix, ref)
+    child.lua('_G.log = {}')
+  end
+
+  local children = { 'dir/', 'dir/subdir/' }
+  for i = 1, 6 do
+    table.insert(children, 'dir/subdir/file-' .. i)
+  end
+  local temp_dir = make_temp_dir('temp', children)
+
+  open(temp_dir .. '/dir')
+  -- Prefix should be computed only for entries that might be visible (first
+  -- vim.o.cmdheight)
+  validate_log({ 'file-1', 'file-2', 'file-3', 'file-4', 'file-5', 'subdir' })
+
+  -- Prefix should be recomputed for all entries *only* if the path is focused
+  go_out()
+  validate_log({ 'dir' })
+
+  go_in()
+  validate_log({})
+
+  -- - Synchronization should also not force recomputation on **all** entries
+  type_keys('o', 'new-file', '<Esc>', 'k')
+  mock_confirm(1)
+  child.lua('MiniFiles.synchronize()')
+  validate_log({ 'dir', 'file-1', 'file-2', 'file-3', 'file-4', 'file-5', 'new-file', 'subdir' })
+
+  child.lua('_G.scandir_log = {}')
+  go_in()
+  -- - Only focus should result into prefix recomputation on all entries
+  validate_log({ 'file-1', 'file-2', 'file-3', 'file-4', 'file-5', 'file-6' })
+  -- - Should also not result in additional disk read
+  eq(child.lua_get('_G.scandir_log'), {})
 end
 
 T['open()']['respects `content.sort`'] = function()
@@ -822,7 +904,7 @@ T['open()']['properly closes currently opened explorer'] = function()
   local path_1, path_2 = make_test_path('common'), make_test_path('common/a-dir')
   open(path_1)
   go_in()
-  validate_n_wins(3)
+  eq(is_explorer_active(), true)
 
   -- Should properly close current opened explorer (at least save to history)
   open(path_2)
@@ -854,10 +936,11 @@ T['open()']['tracks lost focus'] = function()
 
   local validate = function(loose_focus)
     open(test_dir_path)
+    child.cmd('redraw')
     loose_focus()
     -- Tracking is done by checking every second
-    sleep(1000 + 20)
-    validate_n_wins(1)
+    sleep(track_lost_focus_delay + small_time)
+    eq(is_explorer_active(), false)
     eq(#child.api.nvim_list_bufs(), 1)
   end
 
@@ -873,7 +956,7 @@ T['open()']['tracks lost focus'] = function()
 
   -- Should still be possible to open same explorer afterwards
   open(test_dir_path)
-  validate_n_wins(3)
+  eq(is_explorer_active(), true)
 end
 
 T['open()']['validates input'] = function()
@@ -986,7 +1069,7 @@ end
 
 T['refresh()']['works when no explorer is opened'] = function() expect.no_error(refresh) end
 
--- More extensive testing is done in 'File Manipulation'
+-- More extensive testing is done in 'File manipulation'
 T['synchronize()'] = new_set()
 
 local synchronize = forward_lua('MiniFiles.synchronize')
@@ -1013,10 +1096,10 @@ T['synchronize()']['can apply file system actions'] = function()
 
   local new_file_path = join_path(temp_dir, 'new-file')
   mock_confirm(1)
-  validate_no_file(new_file_path)
 
+  validate_tree(temp_dir, {})
   synchronize()
-  validate_file(new_file_path)
+  validate_tree(temp_dir, { 'new-file' })
 end
 
 T['synchronize()']['should follow cursor on current entry path'] = function()
@@ -1116,7 +1199,7 @@ T['close()']['works'] = function()
   child.expect_screenshot()
 
   -- Should close all windows and delete all buffers
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
   eq(#child.api.nvim_list_bufs(), 1)
 end
 
@@ -1211,7 +1294,7 @@ T['go_in()']['works on file'] = function()
   eq(get_lines(), { '.a-file' })
 
   -- Should open with relative path to have better view in `:buffers`
-  expect.match(child.cmd_capture('buffers'), '"' .. vim.pesc(test_dir_path))
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '"' .. vim.pesc(test_dir_path))
 end
 
 T['go_in()']['respects `opts.close_on_file`'] = function()
@@ -1221,13 +1304,13 @@ T['go_in()']['respects `opts.close_on_file`'] = function()
   expect.match(child.api.nvim_buf_get_name(0), '%.a%-file$')
   eq(get_lines(), { '.a-file' })
 
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
 end
 
 T['go_in()']['works on files with problematic names'] = function()
   local bad_name = '%a bad-file-name'
   local temp_dir = make_temp_dir('temp', { bad_name })
-  vim.fn.writefile({ 'aaa' }, join_path(temp_dir, bad_name))
+  child.fn.writefile({ 'aaa' }, join_path(temp_dir, bad_name))
 
   open(temp_dir)
   go_in()
@@ -1298,6 +1381,41 @@ T['go_in()']['works on directory'] = function()
 end
 
 T['go_in()']['works when no explorer is opened'] = function() expect.no_error(go_in) end
+
+T['go_in()']['warns about paths not present on disk'] = function()
+  local validate_log = function(msg_pattern)
+    local notify_log = child.lua_get('_G.notify_log')
+    eq(#notify_log, 1)
+    expect.match(notify_log[1][1], msg_pattern)
+    eq(notify_log[1][2], child.lua_get('vim.log.levels.WARN'))
+    child.lua('_G.notify_log = {}')
+  end
+
+  open(test_dir_path)
+
+  -- Modified line without synchronization
+  type_keys('O', 'new-file', '<Esc>')
+  go_in()
+  validate_log('Line "new%-file".*Did you modify without synchronization%?')
+
+  -- Entry which doesn't exist on disk
+  child.lua([[
+    local get_fs_entry_orig = MiniFiles.get_fs_entry
+    MiniFiles.get_fs_entry = function(...)
+      local res = get_fs_entry_orig(...)
+      res.fs_type = nil
+      return res
+    end
+  ]])
+  type_keys('j')
+  go_in()
+  validate_log('Path .* is not present on disk%.$')
+
+  -- Entry with possibly miscreated symlink
+  child.lua('vim.fn.resolve = function() return "miscreated-symlink" end')
+  go_in()
+  validate_log('Path.*is not present on disk.*miscreated symlink %(resolved to miscreated%-symlink%)')
+end
 
 T['go_out()'] = new_set()
 
@@ -1476,7 +1594,7 @@ T['show_help()'] = new_set()
 local show_help = forward_lua('MiniFiles.show_help')
 
 T['show_help()']['works'] = function()
-  child.set_size(20, 60)
+  child.set_size(22, 60)
   open(test_dir_path)
   local win_id_explorer = child.api.nvim_get_current_win()
 
@@ -1494,7 +1612,7 @@ T['show_help()']['works'] = function()
 end
 
 T['show_help()']['opens relatively current window'] = function()
-  child.set_size(20, 60)
+  child.set_size(22, 60)
   child.lua('MiniFiles.config.windows.width_focus = 30')
 
   open(test_dir_path)
@@ -1505,7 +1623,7 @@ T['show_help()']['opens relatively current window'] = function()
 end
 
 T['show_help()']['handles non-default mappings'] = function()
-  child.set_size(20, 60)
+  child.set_size(22, 60)
   child.lua('MiniFiles.config.mappings.go_in = ""')
   child.lua('MiniFiles.config.mappings.go_in_plus = "l"')
 
@@ -1515,7 +1633,7 @@ T['show_help()']['handles non-default mappings'] = function()
 end
 
 T['show_help()']['handles mappings without description'] = function()
-  child.set_size(20, 60)
+  child.set_size(22, 60)
 
   open(test_dir_path)
   child.lua([[vim.keymap.set('n', 'g.', '<Cmd>echo 1<CR>', { buffer = vim.api.nvim_get_current_buf() })]])
@@ -1523,8 +1641,31 @@ T['show_help()']['handles mappings without description'] = function()
   child.expect_screenshot()
 end
 
+T['show_help()']['handles bookmarks'] = function()
+  child.set_size(30, 60)
+  open(test_dir_path)
+  local root = full_path(test_dir)
+  -- Relative (should use path as is)
+  set_bookmark('a', test_dir)
+  -- With description
+  set_bookmark('b', root .. '/common', { desc = 'Desc' })
+  -- Not normalized
+  set_bookmark('~', '~')
+  child.lua([[
+    -- Function without description (should be called and use output)
+    MiniFiles.set_bookmark('c', function() return '~/' end)
+    -- Function with description
+    MiniFiles.set_bookmark('d', vim.fn.getcwd, { desc = 'Cwd' })
+  ]])
+  -- Long description
+  set_bookmark('e', root .. '/nested', { desc = 'Should use these to adjust width' })
+
+  show_help()
+  child.expect_screenshot()
+end
+
 T['show_help()']['adjusts window width'] = function()
-  child.set_size(20, 60)
+  child.set_size(22, 60)
   child.lua('MiniFiles.config.mappings.go_in = "<C-l>"')
 
   open(test_dir_path)
@@ -1574,6 +1715,131 @@ T['get_fs_entry()']['validates input'] = function()
   expect.error(function() get_fs_entry(0, 1000) end, 'line.*valid line number in buffer %d')
 end
 
+T['get_explorer_state()'] = new_set()
+
+T['get_explorer_state()']['works'] = function()
+  child.cmd('belowright vertical split')
+  local ref_target_win = child.api.nvim_get_current_win()
+  local anchor = full_path(test_dir_path)
+
+  open(anchor)
+  local win_1 = child.api.nvim_get_current_win()
+  local path_2 = get_fs_entry().path
+  go_in()
+  local win_2 = child.api.nvim_get_current_win()
+
+  set_bookmark('a', anchor, { desc = 'Anchor' })
+
+  local ref_branch = { anchor, path_2 }
+  local ref_windows = { { win_id = win_1, path = anchor }, { win_id = win_2, path = path_2 } }
+  local ref_state = {
+    anchor = anchor,
+    bookmarks = { a = { path = anchor, desc = 'Anchor' } },
+    branch = ref_branch,
+    depth_focus = 2,
+    target_window = ref_target_win,
+    windows = ref_windows,
+  }
+  eq(get_explorer_state(), ref_state)
+end
+
+T['get_explorer_state()']['works with preview'] = function()
+  child.lua('MiniFiles.config.windows.preview = true')
+  local ref_target_win = child.api.nvim_get_current_win()
+  local anchor = full_path(test_dir_path)
+
+  open(anchor)
+  local win_cur = child.api.nvim_get_current_win()
+  local path_preview = get_fs_entry().path
+  local win_preview
+  for _, win_id in ipairs(child.api.nvim_list_wins()) do
+    if win_id ~= ref_target_win and win_id ~= win_cur then win_preview = win_id end
+  end
+
+  -- Should show preview as window entry
+  local ref_branch = { anchor, path_preview }
+  local ref_windows = { { win_id = win_cur, path = anchor }, { win_id = win_preview, path = path_preview } }
+  local ref_state = {
+    anchor = anchor,
+    bookmarks = {},
+    branch = ref_branch,
+    depth_focus = 1,
+    target_window = ref_target_win,
+    windows = ref_windows,
+  }
+  eq(get_explorer_state(), ref_state)
+end
+
+T['get_explorer_state()']['works when explorer is opened with file path'] = function()
+  child.lua('MiniFiles.config.windows.preview = true')
+  local file_full = full_path(test_file_path)
+  local file_parent_dir = file_full:gsub('[\\/][^\\/]-$', '')
+
+  open(file_full)
+  local state = get_explorer_state()
+
+  -- Anchor is always a directory path, parent directory of a file in this case
+  eq(state.anchor, file_parent_dir)
+
+  -- Should include file path in branch
+  eq(state.branch, { file_parent_dir, file_full })
+  eq(state.depth_focus, 1)
+
+  -- Should show file preview as window entry
+  eq(vim.tbl_map(function(x) return x.path end, state.windows), { file_parent_dir, file_full })
+end
+
+T['get_explorer_state()']['works when branch is not fully visible'] = function()
+  child.set_size(10, 40)
+  child.lua('MiniFiles.config.windows.width_focus = 35')
+
+  local test_path = make_test_path('nested')
+  open(test_path)
+  go_in()
+  go_in()
+
+  local ref_branch = { test_path, test_path .. '/dir-1', test_path .. '/dir-1/dir-11' }
+  local validate = function(depth_focus)
+    local state = get_explorer_state()
+    eq(state.branch, ref_branch)
+    eq(state.depth_focus, depth_focus)
+    eq(state.windows, { { win_id = child.api.nvim_get_current_win(), path = ref_branch[depth_focus] } })
+  end
+
+  validate(3)
+  go_out()
+  validate(2)
+  go_out()
+  validate(1)
+end
+
+T['get_explorer_state()']['returns copy of data'] = function()
+  open(test_dir_path)
+  local res = child.lua([[
+    local state = MiniFiles.get_explorer_state()
+    local ref = vim.deepcopy(state)
+    state.bookmarks.a, state.branch[1], state.windows[1].win_id = -1, -1, -1
+    local new_state = MiniFiles.get_explorer_state()
+    return vim.deep_equal(new_state, ref)
+  ]])
+  eq(res, true)
+end
+
+T['get_explorer_state()']['works when no explorer is opened'] = function() eq(get_explorer_state(), vim.NIL) end
+
+T['get_explorer_state()']['ensures valid target window'] = function()
+  local init_win_id = child.api.nvim_get_current_win()
+  child.cmd('belowright vertical split')
+  local ref_win_id = child.api.nvim_get_current_win()
+
+  open(test_dir_path)
+
+  eq(get_explorer_state().target_window, ref_win_id)
+
+  child.api.nvim_win_close(ref_win_id, true)
+  eq(get_explorer_state().target_window, init_win_id)
+end
+
 T['get_target_window()'] = new_set()
 
 local get_target_window = forward_lua('MiniFiles.get_target_window')
@@ -1615,9 +1881,9 @@ T['set_target_window()']['works'] = function()
 
   open(test_file_path)
 
-  eq(get_target_window(), ref_win_id)
+  eq(get_explorer_state().target_window, ref_win_id)
   set_target_window(init_win_id)
-  eq(get_target_window(), init_win_id)
+  eq(get_explorer_state().target_window, init_win_id)
 
   go_in()
   eq(is_file_in_buffer(child.api.nvim_win_get_buf(init_win_id), test_file_path), true)
@@ -1630,6 +1896,300 @@ end
 
 T['set_target_window()']['works when no explorer is opened'] = function()
   expect.no_error(function() set_target_window(child.api.nvim_get_current_win()) end)
+end
+
+T['set_branch()'] = new_set()
+
+local set_branch = forward_lua('MiniFiles.set_branch')
+local get_branch = function() return child.lua_get('(MiniFiles.get_explorer_state() or {}).branch') end
+local get_depth_focus = function() return (get_explorer_state() or {}).depth_focus end
+
+T['set_branch()']['works'] = function()
+  child.set_size(12, 30)
+  child.lua('MiniFiles.config.windows.width_focus = 20')
+  child.lua('MiniFiles.config.windows.width_nofocus = 10')
+  child.lua('MiniFiles.config.windows.width_preview = 15')
+  open()
+
+  local path = full_path(test_dir_path)
+  set_branch({ path })
+  eq(get_branch(), { path })
+  eq(get_depth_focus(), 1)
+  child.expect_screenshot()
+
+  -- More than one path
+  set_branch({ path, path .. '/a-dir' })
+  eq(get_branch(), { path, path .. '/a-dir' })
+  -- - Should set default focus on deepest directory
+  eq(get_depth_focus(), 2)
+  -- - Should set full branch although it might not be visible fully
+  child.expect_screenshot()
+
+  -- - Changing instance width should show more of branch
+  child.set_size(12, 40)
+  child.expect_screenshot()
+end
+
+T['set_branch()']['works with file path in branch'] = function()
+  child.lua('MiniFiles.config.windows.width_focus = 20')
+  child.lua('MiniFiles.config.windows.width_nofocus = 10')
+  child.lua('MiniFiles.config.windows.width_preview = 15')
+  child.set_size(12, 40)
+  local anchor = child.fn.getcwd()
+  open(anchor)
+
+  local real_dir = make_test_path('real')
+  set_branch({ real_dir, real_dir .. '/LICENSE' })
+  -- Width of 'LICENSE' window is `width_nofocus` because preview is disabled
+  child.expect_screenshot()
+  -- - Should show file preview even though preview is not enabled
+  eq(get_branch(), { real_dir, real_dir .. '/LICENSE' })
+  -- - Should set default focus on deepest directory
+  eq(get_depth_focus(), 1)
+  -- - Should position cursor on child entry
+  eq(get_fs_entry().name, 'LICENSE')
+
+  close()
+
+  -- Should use `width_preview` when preview is enabled
+  child.lua('MiniFiles.config.windows.preview = true')
+  open(anchor, false)
+  set_branch({ real_dir, real_dir .. '/LICENSE' })
+  child.expect_screenshot()
+end
+
+T['set_branch()']['works with preview'] = function()
+  child.lua('MiniFiles.config.windows.width_focus = 20')
+  child.lua('MiniFiles.config.windows.width_nofocus = 10')
+  child.lua('MiniFiles.config.windows.width_preview = 15')
+  child.set_size(12, 40)
+  child.lua('MiniFiles.config.windows.preview = true')
+  open()
+
+  -- Preview should be applied after setting branch
+  local path = full_path(test_dir_path)
+  set_branch({ path })
+  eq(get_branch(), { path, get_fs_entry().path })
+  eq(get_depth_focus(), 1)
+  child.expect_screenshot()
+end
+
+T['set_branch()']['works with not absolute paths'] = function()
+  open()
+
+  -- Using `~` for home directory should be allowed
+  set_branch({ '~' })
+  eq(get_explorer_state().branch, { full_path(child.loop.os_homedir()) })
+
+  -- Relative paths should be resolved against current working directory
+  local nested = make_test_path('nested')
+  child.fn.chdir(nested)
+  set_branch({ '.', './dir-1' })
+  eq(get_explorer_state().branch, { nested, nested .. '/dir-1' })
+
+  -- The ".." should also be resolved (but supported only on Neovim>=0.10)
+  if child.fn.has('nvim-0.10') == 1 then
+    set_branch({ '..' })
+    eq(get_explorer_state().branch, { full_path(test_dir) })
+  end
+end
+
+T['set_branch()']['sets cursors on child entries'] = function()
+  child.set_size(12, 180)
+  local root = full_path(test_dir)
+  local root_parent = child.fn.fnamemodify(root, ':h')
+
+  open(root_parent)
+  local branch = { root, root .. '/nested', root .. '/nested/dir-1', root .. '/nested/dir-1/dir-12' }
+  set_branch(branch)
+  eq(get_branch(), branch)
+  eq(get_visible_paths(), branch)
+
+  local cursor_lines = vim.tbl_map(function(x)
+    local lnum = child.api.nvim_win_get_cursor(x.win_id)[1]
+    return child.fn.getbufline(child.api.nvim_win_get_buf(x.win_id), lnum)[1]:match('[\\/]([^\\/]+)$')
+  end, get_explorer_state().windows)
+  eq(cursor_lines, { 'nested', 'dir-1', 'dir-12', 'file-121' })
+end
+
+T['set_branch()']['respects previously set cursors'] = function()
+  local nested = make_test_path('nested')
+  local path = join_path(nested, 'dir-1')
+  open(path)
+  type_keys('G')
+  eq(child.fn.line('.'), 2)
+
+  -- Inside visible window
+  go_out()
+  eq(get_visible_paths(), { nested, path })
+  set_branch({ path })
+  eq(get_branch(), { path })
+  eq(child.fn.line('.'), 2)
+
+  -- Not inside visible window
+  go_out()
+  go_out()
+  type_keys('j')
+  eq(get_visible_paths(), { full_path(test_dir) })
+  set_branch({ path })
+  eq(get_branch(), { path })
+  eq(child.fn.line('.'), 2)
+end
+
+T['set_branch()']['respects `opts.depth_focus`'] = function()
+  open()
+  local path = full_path(test_dir_path)
+  local branch = { path, path .. '/a-dir', path .. '/a-dir/aa-file' }
+
+  local validate = function(depth_focus, ref_depth_focus)
+    set_branch(branch, { depth_focus = depth_focus })
+    eq(get_branch(), branch)
+    eq(get_depth_focus(), ref_depth_focus)
+  end
+
+  validate(1, 1)
+  eq(get_fs_entry().path, path .. '/a-dir')
+
+  -- Should normalize to fit in branch
+  validate(0, 1)
+  validate(-math.huge, 1)
+
+  -- - Maximum allowed depth is the depth of deepest directory
+  validate(10, 2)
+  validate(math.huge, 2)
+
+  -- - Fractional depth are allowed
+  validate(1.99, 1)
+end
+
+T['set_branch()']['works when no explorer is opened'] = function() eq(set_branch(full_path(test_dir_path)), vim.NIL) end
+
+T['set_branch()']['validates input'] = function()
+  open()
+  local validate = function(branch, opts, err_pattern)
+    expect.error(function() set_branch(branch, opts or {}) end, err_pattern)
+  end
+
+  validate(test_dir, nil, 'array')
+  validate({}, nil, 'at least one element')
+  validate({ -1 }, nil, 'not string.*%-1')
+  validate({ test_dir, -1 }, nil, 'not string.*%-1')
+
+  validate({ test_dir .. '/absent' }, nil, 'not present path.*/absent')
+  validate({ test_dir, test_dir .. '/absent' }, nil, 'not present path.*/absent')
+
+  validate({ test_dir .. '/common', test_dir }, nil, 'parent%-child')
+  validate({ test_dir, test_dir .. '/common/a-dir', test_dir .. '/common' }, nil, 'parent%-child')
+
+  validate({ full_path(test_file_path) }, nil, 'one directory')
+end
+
+T['set_bookmark()'] = new_set()
+
+T['set_bookmark()']['works'] = function()
+  open()
+  local root = full_path(test_dir)
+  local path_a, path_A, path_b = root, root .. '/common', root .. '/lua'
+  local path_c, path_d = root .. '/nested', root .. '/real'
+
+  set_bookmark('a', path_a)
+  -- Allows different cases
+  set_bookmark('A', path_A)
+  -- Same path under different id
+  set_bookmark('x', path_a)
+  -- Allows any single character
+  set_bookmark('~', '~')
+  -- Allows description
+  set_bookmark('b', path_b, { desc = 'Path b' })
+
+  -- Allows callable path
+  child.lua([[
+    local root = vim.fn.getcwd() .. '/tests/dir-files'
+    MiniFiles.set_bookmark('c', function() return root .. '/nested' end)
+    MiniFiles.set_bookmark('d', function() return root .. '/real' end, { desc = 'Path d' })
+  ]])
+
+  local res = child.lua([[
+    local bookmarks = MiniFiles.get_explorer_state().bookmarks
+    for k, v in pairs(bookmarks) do
+      if vim.is_callable(v.path) then v.path = { 'Callable', (v.path():gsub('\\', '/')) } end
+    end
+    return bookmarks
+  ]])
+
+  local ref = {
+    a = { path = path_a },
+    A = { path = path_A },
+    ['~'] = { path = '~' },
+    b = { path = path_b, desc = 'Path b' },
+    c = { path = { 'Callable', path_c } },
+    d = { path = { 'Callable', path_d }, desc = 'Path d' },
+    x = { path = path_a },
+  }
+  eq(res, ref)
+
+  -- Can override bookmarks
+  set_bookmark('a', path_b, { desc = 'Another path b' })
+  eq(child.lua_get('MiniFiles.get_explorer_state().bookmarks.a'), { path = path_b, desc = 'Another path b' })
+end
+
+T['set_bookmark()']['preserves path as is'] = function()
+  open()
+
+  -- Relative path
+  set_bookmark('a', test_dir)
+  eq(get_explorer_state().bookmarks.a, { path = test_dir })
+
+  -- Not normalized path
+  set_bookmark('b', test_dir .. '/common/')
+  eq(get_explorer_state().bookmarks.b, { path = test_dir .. '/common/' })
+
+  -- Path with `~` for home directory
+  set_bookmark('~', '~')
+  eq(get_explorer_state().bookmarks['~'], { path = '~' })
+
+  -- Callable
+  child.lua('MiniFiles.set_bookmark("c", vim.fn.getcwd)')
+  eq(child.lua_get('MiniFiles.get_explorer_state().bookmarks.c.path()'), child.fn.getcwd())
+end
+
+T['set_bookmark()']['persists across restart/reset'] = function()
+  local path = full_path(test_dir_path)
+  open(path)
+  go_in()
+  set_bookmark('a', path .. '/a-dir')
+  local ref_bookmarks = get_explorer_state().bookmarks
+  eq(ref_bookmarks.a, { path = path .. '/a-dir' })
+
+  reset()
+  eq(get_explorer_state().bookmarks, ref_bookmarks)
+
+  -- Should preserve if opening explorer from history
+  close()
+  open(path, true)
+  eq(get_explorer_state().bookmarks, ref_bookmarks)
+  close()
+
+  -- Should NOT preserve if opening fresh explorer
+  open(path, false)
+  eq(get_explorer_state().bookmarks, {})
+end
+
+T['set_bookmark()']['works when no explorer is opened'] = function() eq(set_bookmark('a', test_dir), vim.NIL) end
+
+T['set_bookmark()']['validates input'] = function()
+  open()
+  local validate = function(id, path, opts, err_pattern)
+    expect.error(function() set_bookmark(id, path, opts) end, err_pattern)
+  end
+  local path = full_path(test_dir_path)
+  local path_file = full_path(test_file_path)
+
+  validate(1, path, nil, 'id.*character')
+  validate('aa', path, nil, 'id.*single')
+  validate('a', 1, nil, 'path.*valid')
+  validate('a', path_file, nil, 'path.*directory')
+  validate('a', path, { desc = 1 }, 'description.*string')
 end
 
 T['get_latest_path()'] = new_set()
@@ -1923,6 +2483,38 @@ T['Windows']['never shows past end of buffer'] = function()
   child.expect_screenshot()
 end
 
+T['Windows']['restricts manual buffer navigation'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Window and buffer pairing is available on Neovim>=0.10') end
+  child.api.nvim_create_buf(true, false)
+  open(test_dir_path)
+  validate_n_wins(2)
+  expect.error(function() child.cmd('bnext') end)
+  -- Attempting to switch buffer should keep explorer usable
+  expect.no_error(get_fs_entry)
+end
+
+T['Windows']["do not evaluate 'foldexpr' too much"] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Correct behavior is only on Neovim>=0.10') end
+
+  child.lua('MiniFiles.config.windows.preview = true')
+  child.lua([[
+    _G.n = 0
+    _G.foldexpr_count = function() _G.n = _G.n + 1; return 0 end
+    vim.o.foldmethod = 'expr'
+    vim.o.foldexpr = 'v:lua.foldexpr_count()'
+  ]])
+  open(test_dir_path)
+
+  -- There still might be evaluations after `open()` because 'foldexpr' seems
+  -- to be executed even if buffer is not shown in any window
+  child.lua('_G.n = 0')
+  type_keys('j')
+  type_keys('k')
+  go_in()
+  go_out()
+  eq(child.lua_get('_G.n'), 0)
+end
+
 T['Preview'] = new_set({
   hooks = {
     pre_case = function()
@@ -1979,6 +2571,12 @@ T['Preview']['works for files'] = function()
   expect_screenshot()
 
   -- Should fall back to built-in syntax highlighting in case of no tree-sitter
+  type_keys('j')
+  expect_screenshot()
+
+  -- Should not error on files which failed to read (looks like on Windows it
+  -- can be different from "non-readable" files)
+  child.lua('vim.loop.fs_open = function() return nil end')
   type_keys('j')
   expect_screenshot()
 end
@@ -2092,7 +2690,7 @@ T['Preview']['does not result in flicker'] = function()
   ]])
 
   -- State shown initially should be the same as after some time has passed
-  sleep(10)
+  sleep(small_time)
   eq(child.lua_get('_G.visible_bufs'), child.lua_get('_G.get_visible_bufs()'))
 end
 
@@ -2113,24 +2711,24 @@ T['Mappings'] = new_set()
 T['Mappings']['`close` works'] = function()
   -- Default
   open(test_dir_path)
-  validate_n_wins(2)
+  eq(is_explorer_active(), true)
   type_keys('q')
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
   close()
 
   -- User-supplied
   open(test_dir_path, false, { mappings = { close = 'Q' } })
-  validate_n_wins(2)
+  eq(is_explorer_active(), true)
   type_keys('Q')
-  validate_n_wins(1)
+  eq(is_explorer_active(), false)
   close()
 
   -- Empty
   open(test_dir_path, false, { mappings = { close = '' } })
-  validate_n_wins(2)
+  eq(is_explorer_active(), true)
   -- - Needs second `q` to unblock child process after built-in `q`
   type_keys('q', 'q')
-  validate_n_wins(2)
+  eq(is_explorer_active(), true)
 end
 
 T['Mappings']['`go_in` works'] = function()
@@ -2389,29 +2987,177 @@ T['Mappings']['`go_out_plus` supports <count>'] = function()
   child.expect_screenshot()
 end
 
+T['Mappings']['`mark_goto` works'] = function()
+  local validate_log = function(ref_log)
+    eq(child.lua_get('_G.notify_log'), ref_log)
+    child.lua('_G.notify_log = {}')
+  end
+  local warn_level = child.lua_get('vim.log.levels.WARN')
+
+  local path = full_path(test_dir_path)
+  local mark_path = path .. '/a-dir'
+  open(path)
+  set_bookmark('a', mark_path)
+  go_out()
+  expect.no_equality(get_branch(), { mark_path })
+  type_keys("'", 'a')
+  eq(get_branch(), { mark_path })
+  -- - Should show no notifications
+  validate_log({})
+
+  -- Warns about not existing bookmark id
+  go_out()
+  local ref_branch = get_branch()
+  type_keys("'", 'x')
+  eq(get_branch(), ref_branch)
+  validate_log({ { '(mini.files) No bookmark with id "x"', warn_level } })
+
+  -- Does nothing (silently) after `<Esc>` or `<C-c>`
+  type_keys("'", '<Esc>')
+  eq(get_branch(), ref_branch)
+  validate_log({})
+  type_keys("'", '<C-c>')
+  eq(get_branch(), ref_branch)
+  validate_log({})
+
+  close()
+
+  -- User-supplied
+  open(path, false, { mappings = { mark_goto = '`' } })
+  set_bookmark('a', mark_path)
+  go_out()
+  type_keys('`', 'a')
+  eq(get_branch(), { mark_path })
+  close()
+
+  -- Empty
+  open(path, false, { mappings = { mark_goto = '' } })
+  set_bookmark('a', mark_path)
+  go_out()
+  expect.error(function() type_keys("'", 'a') end, 'E20')
+end
+
+T['Mappings']["`mark_goto` automatically sets `'` bookmark"] = function()
+  local get_cur_path = function()
+    local state = get_explorer_state()
+    return state.branch[state.depth_focus]
+  end
+
+  local path = full_path(test_dir_path)
+  local mark_path = path .. '/a-dir'
+  open(path)
+  set_bookmark('a', mark_path)
+
+  go_out()
+  local path_before_jump = get_cur_path()
+  eq(get_explorer_state().bookmarks["'"], nil)
+  type_keys("'", 'a')
+  eq(get_branch(), { mark_path })
+  eq(get_explorer_state().bookmarks["'"], { desc = 'Before latest jump', path = path_before_jump })
+
+  type_keys("'", "'")
+  eq(get_branch(), { path_before_jump })
+  eq(get_explorer_state().bookmarks["'"], { desc = 'Before latest jump', path = mark_path })
+end
+
+T['Mappings']['`mark_goto` works with special paths'] = function()
+  local validate_log = function(ref_log)
+    eq(child.lua_get('_G.notify_log'), ref_log)
+    child.lua('_G.notify_log = {}')
+  end
+  local warn_level = child.lua_get('vim.log.levels.WARN')
+  local cwd = child.fn.getcwd():gsub('\\', '/')
+
+  local path = full_path(test_dir_path)
+  open(path)
+
+  -- Relative paths (should be resolved against cwd, not currently focused)
+  local path_rel = test_dir_path .. '/a-dir'
+  set_bookmark('a', path_rel)
+  type_keys("'", 'a')
+  eq(get_branch(), { full_path(path_rel) })
+
+  -- Involving '~'
+  set_bookmark('~', '~')
+  type_keys("'", '~')
+  expect.no_equality(get_branch(), { full_path(path_rel) })
+  validate_log({})
+
+  -- Function paths
+  child.lua([[MiniFiles.set_bookmark('b', vim.fn.getcwd)]])
+  type_keys("'", 'b')
+  eq(get_branch(), { cwd })
+
+  -- Not existing on disk
+  child.lua([[MiniFiles.set_bookmark('c', function() return vim.fn.getcwd() .. '/not-present' end)]])
+  type_keys("'", 'c')
+  eq(get_branch(), { cwd })
+  validate_log({ { '(mini.files) Bookmark path should be a valid path to directory', warn_level } })
+
+  -- Not directory path
+  child.lua('_G.file_path = ' .. vim.inspect(full_path(test_file_path)))
+  child.lua([[MiniFiles.set_bookmark('d', function() return _G.file_path end)]])
+  type_keys("'", 'd')
+  eq(get_branch(), { cwd })
+  validate_log({ { '(mini.files) Bookmark path should be a valid path to directory', warn_level } })
+end
+
+T['Mappings']['`mark_set` works'] = function()
+  local path = full_path(test_dir_path)
+  open(path)
+  local mark_path = get_fs_entry().path
+  go_in()
+  type_keys('m', 'a')
+  local ref_bookmarks = { a = { path = mark_path } }
+  eq(get_explorer_state().bookmarks, ref_bookmarks)
+
+  -- - Should show notification
+  local info_level = child.lua_get('vim.log.levels.INFO')
+  eq(child.lua_get('_G.notify_log'), { { '(mini.files) Bookmark "a" is set', info_level } })
+
+  -- Does nothing after `<Esc>` or `<C-c>`
+  type_keys('m', '<Esc>')
+  eq(get_explorer_state().bookmarks, ref_bookmarks)
+  type_keys('m', '<C-c>')
+  eq(get_explorer_state().bookmarks, ref_bookmarks)
+
+  close()
+
+  -- User-supplied
+  open(path, false, { mappings = { mark_set = 'M' } })
+  go_in()
+  type_keys('M', 'a')
+  eq(get_explorer_state().bookmarks, ref_bookmarks)
+  close()
+
+  -- Empty
+  open(path, false, { mappings = { mark_set = '' } })
+  go_in()
+  type_keys('m', 'a')
+  eq(get_explorer_state().bookmarks, {})
+end
+
 T['Mappings']['`reset` works'] = function()
   local prepare = function(...)
     close()
     open(...)
     type_keys('j')
     go_in()
+    validate_n_wins(3)
   end
 
   -- Default
   prepare(test_dir_path)
-  validate_n_wins(3)
   type_keys('<BS>')
   child.expect_screenshot()
 
   -- User-supplied
   prepare(test_dir_path, false, { mappings = { reset = 'Q' } })
-  validate_n_wins(3)
   type_keys('Q')
   child.expect_screenshot()
 
   -- Empty
   prepare(test_dir_path, false, { mappings = { reset = '' } })
-  validate_n_wins(3)
   type_keys('<BS>')
   child.expect_screenshot()
 end
@@ -2449,11 +3195,10 @@ T['Mappings']['`reveal_cwd` works'] = function()
 end
 
 T['Mappings']['`show_help` works'] = function()
-  child.set_size(20, 60)
+  child.set_size(22, 60)
 
   -- Default
   open(test_dir_path)
-  validate_n_wins(2)
   type_keys('g?')
   child.expect_screenshot()
   type_keys('q')
@@ -2461,7 +3206,6 @@ T['Mappings']['`show_help` works'] = function()
 
   -- User-supplied
   open(test_dir_path, false, { mappings = { show_help = 'Q' } })
-  validate_n_wins(2)
   type_keys('Q')
   child.expect_screenshot()
   type_keys('q')
@@ -2469,7 +3213,6 @@ T['Mappings']['`show_help` works'] = function()
 
   -- Empty
   open(test_dir_path, false, { mappings = { show_help = '' } })
-  validate_n_wins(2)
   type_keys('g?')
   child.expect_screenshot()
 end
@@ -2567,16 +3310,12 @@ T['File manipulation']['can create'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_file(temp_dir, 'new-file')
-  validate_directory(temp_dir, 'new-dir')
+  validate_tree(temp_dir, { 'new-file', 'new-dir/' })
 
-  local ref_pattern = make_plain_pattern(
-    'CONFIRM FILE SYSTEM ACTIONS',
-    short_path(temp_dir) .. ':',
-    [[  CREATE: 'new-file' (file)]],
-    [[  CREATE: 'new-dir' (directory)]]
-  )
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
+  validate_confirm_args('  CREATE │ new%-file %(file%)')
+  validate_confirm_args('  CREATE │ new%-dir %(directory%)')
 end
 
 T['File manipulation']['create does not override existing entry'] = function()
@@ -2594,9 +3333,8 @@ T['File manipulation']['create does not override existing entry'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_file(file_path)
+  validate_tree(temp_dir, { 'dir/', 'dir/subfile', 'file' })
   validate_file_content(file_path, { 'File' })
-  validate_file(temp_dir, 'dir', 'subfile')
 
   -- Should show warning
   local warn_level = child.lua_get('vim.log.levels.WARN')
@@ -2622,25 +3360,16 @@ T['File manipulation']['creates files in nested directories'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_file(temp_dir, 'dir', 'nested-file')
-  validate_directory(temp_dir, 'dir-1')
-  validate_file(temp_dir, 'dir-1', 'nested-file-1')
-  validate_file(temp_dir, 'dir-1', 'nested-file-2')
+  validate_tree(temp_dir, { 'dir/', 'dir/nested-file', 'dir-1/', 'dir-1/nested-file-1', 'dir-1/nested-file-2' })
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern_1 = make_plain_pattern(
-    'CONFIRM FILE SYSTEM ACTIONS',
-    short_path(temp_dir) .. '/dir' .. ':',
-    [[  CREATE: 'nested-file' (file)]]
-  )
-  validate_confirm_args(ref_pattern_1)
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
+  validate_confirm_args(ref_pattern)
 
-  local ref_pattern_2 = make_plain_pattern(
-    short_path(temp_dir) .. '/dir-1' .. ':',
-    [[  CREATE: 'nested-file-1' (file)]],
-    [[  CREATE: 'nested-file-2' (file)]]
-  )
-  validate_confirm_args(ref_pattern_2)
+  -- - Should show paths relative to directory where manipulation was registered
+  validate_confirm_args('  CREATE │ dir/nested%-file %(file%)')
+  validate_confirm_args('  CREATE │ dir%-1/nested%-file%-1 %(file%)')
+  validate_confirm_args('  CREATE │ dir%-1/nested%-file%-2 %(file%)')
 end
 
 T['File manipulation']['creates nested directories'] = function()
@@ -2658,25 +3387,16 @@ T['File manipulation']['creates nested directories'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_directory(temp_dir, 'dir', 'nested-dir')
-  validate_directory(temp_dir, 'dir-1')
-  validate_directory(temp_dir, 'dir-1', 'nested-dir-1')
-  validate_directory(temp_dir, 'dir-1', 'nested-dir-2')
+  validate_tree(temp_dir, { 'dir/', 'dir/nested-dir/', 'dir-1/', 'dir-1/nested-dir-1/', 'dir-1/nested-dir-2/' })
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern_1 = make_plain_pattern(
-    'CONFIRM FILE SYSTEM ACTIONS',
-    short_path(temp_dir) .. '/dir' .. ':',
-    [[  CREATE: 'nested-dir' (directory)]]
-  )
-  validate_confirm_args(ref_pattern_1)
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
+  validate_confirm_args(ref_pattern)
 
-  local ref_pattern_2 = make_plain_pattern(
-    short_path(temp_dir) .. '/dir-1' .. ':',
-    [[  CREATE: 'nested-dir-1' (directory)]],
-    [[  CREATE: 'nested-dir-2' (directory)]]
-  )
-  validate_confirm_args(ref_pattern_2)
+  -- - Should show paths relative to directory where manipulation was registered
+  validate_confirm_args('  CREATE │ dir/nested%-dir %(directory%)')
+  validate_confirm_args('  CREATE │ dir%-1/nested%-dir%-1 %(directory%)')
+  validate_confirm_args('  CREATE │ dir%-1/nested%-dir%-2 %(directory%)')
 end
 
 T['File manipulation']['can delete'] = function()
@@ -2691,17 +3411,15 @@ T['File manipulation']['can delete'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_no_file(temp_dir, 'file')
-  validate_no_directory(temp_dir, 'empty-dir')
-  validate_no_directory(temp_dir, 'dir')
+  validate_tree(temp_dir, {})
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
 
-  validate_confirm_args([[  DELETE: 'dir']])
-  validate_confirm_args([[  DELETE: 'empty%-dir']])
-  validate_confirm_args([[  DELETE: 'file']])
+  validate_confirm_args('  DELETE │ dir %(permanently%)')
+  validate_confirm_args('  DELETE │ empty%-dir %(permanently%)')
+  validate_confirm_args('  DELETE │ file %(permanently%)')
 end
 
 T['File manipulation']['delete respects `options.permanent_delete`'] = function()
@@ -2715,22 +3433,18 @@ T['File manipulation']['delete respects `options.permanent_delete`'] = function(
   child.lua('MiniFiles.config.options.permanent_delete = false')
   local temp_dir = make_temp_dir('temp', { 'file', 'dir/', 'dir/subfile' })
 
-  local validate_move_delete = function()
-    -- Should move into special trash directory
-    validate_no_file(temp_dir, 'file')
-    validate_no_directory(temp_dir, 'dir')
-    validate_file(trash_dir, 'file')
-    validate_directory(trash_dir, 'dir')
-    validate_file(trash_dir, 'dir', 'subfile')
-  end
-
   open(temp_dir)
 
   type_keys('VGd')
   mock_confirm(1)
   synchronize()
 
-  validate_move_delete()
+  -- Should move into special trash directory
+  validate_tree(temp_dir, {})
+  validate_tree(trash_dir, { 'dir/', 'dir/subfile', 'file' })
+
+  validate_confirm_args('  DELETE │ file %(to trash%)')
+  validate_confirm_args('  DELETE │ dir %(to trash%)')
 
   -- Deleting entries again with same name should replace previous ones
   -- - Recreate previously deleted entries with different content
@@ -2746,11 +3460,40 @@ T['File manipulation']['delete respects `options.permanent_delete`'] = function(
   mock_confirm(1)
   synchronize()
 
-  validate_move_delete()
+  validate_tree(temp_dir, {})
+  validate_tree(trash_dir, { 'dir/', 'dir/subfile', 'file' })
 
   -- - Check that files actually were replaced
   validate_file_content(join_path(trash_dir, 'file'), { 'New file' })
   validate_file_content(join_path(trash_dir, 'dir', 'subfile'), { 'New subfile' })
+end
+
+T['File manipulation']['can move to trash across devices'] = function()
+  child.set_size(10, 60)
+
+  local data_dir = mock_stdpath_data()
+  local trash_dir = join_path(data_dir, 'mini.files', 'trash')
+  child.lua('MiniFiles.config.options.permanent_delete = false')
+
+  -- Mock `vim.loop.fs_rename()` not working across devices/volumes/partitions
+  child.lua('vim.loop.fs_rename = function() return nil, "EXDEV: cross-device link not permitted:", "EXDEV" end')
+
+  local temp_dir = make_temp_dir('temp', { 'file', 'dir/', 'dir/nested/', 'dir/nested/file' })
+  open(temp_dir)
+
+  -- Write lines in moved files to check "copy-delete" and not "create-delete"
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
+  child.fn.writefile({ 'File nested' }, join_path(temp_dir, 'dir', 'nested', 'file'))
+
+  type_keys('dG')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, {})
+  validate_tree(trash_dir, { 'dir/', 'dir/nested/', 'dir/nested/file', 'file' })
+
+  validate_file_content(join_path(trash_dir, 'file'), { 'File' })
+  validate_file_content(join_path(trash_dir, 'dir', 'nested', 'file'), { 'File nested' })
 end
 
 T['File manipulation']['can rename'] = function()
@@ -2765,17 +3508,14 @@ T['File manipulation']['can rename'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'file-new')
-  validate_no_directory(temp_dir, 'dir')
-  validate_directory(temp_dir, 'new-dir')
+  validate_tree(temp_dir, { 'file-new', 'new-dir/' })
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
 
-  validate_confirm_args([[  RENAME: 'dir' to 'new%-dir']])
-  validate_confirm_args([[  RENAME: 'file' to 'file%-new']])
+  validate_confirm_args('  RENAME │ dir => new%-dir')
+  validate_confirm_args('  RENAME │ file => file%-new')
 end
 
 T['File manipulation']['rename does not override existing entry'] = function()
@@ -2855,8 +3595,8 @@ T['File manipulation']['renames even if lines are rearranged'] = function()
   mock_confirm(1)
   synchronize()
 
-  validate_confirm_args([[RENAME: 'file%-2' to 'new%-file%-2']])
-  validate_confirm_args([[RENAME: 'file%-1' to 'new%-file%-1']])
+  validate_confirm_args('RENAME │ file%-2 => new%-file%-2')
+  validate_confirm_args('RENAME │ file%-1 => new%-file%-1')
 end
 
 T['File manipulation']['rename works again after undo'] = function()
@@ -2869,13 +3609,12 @@ T['File manipulation']['rename works again after undo'] = function()
   mock_confirm(1)
   synchronize()
 
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'file-new')
+  validate_tree(temp_dir, { 'file-new' })
 
   -- Validate confirmation messages
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
-  validate_confirm_args([[  RENAME: 'file' to 'file%-new']])
+  validate_confirm_args('  RENAME │ file => file%-new')
 
   -- Undo and synchronize should cleanly rename back
   type_keys('u', 'u')
@@ -2884,9 +3623,8 @@ T['File manipulation']['rename works again after undo'] = function()
   mock_confirm(1)
   synchronize()
 
-  validate_confirm_args([[  RENAME: 'file%-new' to 'file']])
-  validate_file(temp_dir, 'file')
-  validate_no_file(temp_dir, 'file-new')
+  validate_tree(temp_dir, { 'file' })
+  validate_confirm_args('  RENAME │ file%-new => file')
 end
 
 T['File manipulation']['can move file'] = function()
@@ -2906,18 +3644,14 @@ T['File manipulation']['can move file'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'dir', 'file')
+  validate_tree(temp_dir, { 'dir/', 'dir/file' })
   validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
-
-  -- - Target path should be absolute but can with `~` for home directory
-  local target_path = short_path(temp_dir, 'dir', 'file')
-  local ref_pattern_2 = string.format([[    MOVE: 'file' to '%s']], vim.pesc(target_path))
-  validate_confirm_args(ref_pattern_2)
+  -- - Target path should be relative to group directory
+  validate_confirm_args('  MOVE   │ file => dir/file')
 end
 
 T['File manipulation']['can move directory'] = function()
@@ -2936,17 +3670,32 @@ T['File manipulation']['can move directory'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_no_directory(temp_dir, 'dir')
-  validate_directory(temp_dir, 'dir-target', 'dir')
+  --stylua: ignore
+  local ref_tree = {
+    'dir-target/',
+    'dir-target/dir/', 'dir-target/dir/file',
+    'dir-target/dir/nested/', 'dir-target/dir/nested/file',
+  }
+  validate_tree(temp_dir, ref_tree)
   validate_file_content(join_path(temp_dir, 'dir-target', 'dir', 'file'), { 'File' })
 
-  local target_path = short_path(temp_dir, 'dir-target', 'dir')
-  local ref_pattern = make_plain_pattern(
-    'CONFIRM FILE SYSTEM ACTIONS',
-    short_path(temp_dir) .. ':',
-    string.format([[    MOVE: 'dir' to '%s']], target_path)
-  )
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
+  validate_confirm_args('  MOVE   │ dir => dir%-target/dir')
+end
+
+T['File manipulation']['move can show not relative "to" path'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+
+  -- Perform manipulation
+  type_keys('dd')
+  go_out()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_confirm_args('  MOVE   │ file => ' .. vim.pesc(short_path(temp_dir, 'file')))
 end
 
 T['File manipulation']['move does not override existing entry'] = function()
@@ -2991,10 +3740,9 @@ T['File manipulation']['handles move directory inside itself'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_directory(temp_dir, 'dir')
-  validate_no_directory(temp_dir, 'dir', 'nested', 'dir')
+  validate_tree(temp_dir, { 'dir/', 'dir/file', 'dir/nested/' })
 
-  validate_confirm_args([[    MOVE: 'dir' to '.*dir/nested/dir']])
+  validate_confirm_args('  MOVE   │ dir => dir/nested/dir')
 end
 
 T['File manipulation']['can move while changing basename'] = function()
@@ -3016,14 +3764,10 @@ T['File manipulation']['can move while changing basename'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'dir', 'new-file')
+  validate_tree(temp_dir, { 'dir/', 'dir/new-file' })
   validate_file_content(join_path(temp_dir, 'dir', 'new-file'), { 'File' })
 
-  -- - Target path should be absolute but can with `~` for home directory
-  local target_path = short_path(temp_dir, 'dir', 'new-file')
-  local ref_pattern_2 = string.format([[    MOVE: 'file' to '%s']], vim.pesc(target_path))
-  validate_confirm_args(ref_pattern_2)
+  validate_confirm_args('  MOVE   │ file => dir/new%-file')
 end
 
 T['File manipulation']['can move inside new directory'] = function()
@@ -3043,9 +3787,39 @@ T['File manipulation']['can move inside new directory'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'new-dir', 'new-subdir', 'file')
+  validate_tree(temp_dir, { 'new-dir/', 'new-dir/new-subdir/', 'new-dir/new-subdir/file' })
   validate_file_content(join_path(temp_dir, 'new-dir', 'new-subdir', 'file'), { 'File' })
+
+  local ref_pattern = make_plain_pattern(short_path(temp_dir) .. '\n')
+  validate_confirm_args(ref_pattern)
+  validate_confirm_args('  MOVE   │ file => new%-dir/new%-subdir/file')
+end
+
+T['File manipulation']['can move across devices'] = function()
+  child.set_size(10, 60)
+
+  -- Mock `vim.loop.fs_rename()` not working across devices/volumes/partitions
+  child.lua('vim.loop.fs_rename = function() return nil, "EXDEV: cross-device link not permitted:", "EXDEV" end')
+
+  local tmp_children = { 'dir/', 'dir/file', 'dir/nested/', 'dir/nested/sub/', 'dir/nested/sub/file' }
+  local temp_dir = make_temp_dir('temp', tmp_children)
+  open(temp_dir)
+
+  -- Write lines in moved files to check "copy-delete" and not "create-delete"
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'dir', 'file'))
+  child.fn.writefile({ 'File nested' }, join_path(temp_dir, 'dir', 'nested', 'sub', 'file'))
+
+  go_in()
+  type_keys('dG')
+  go_out()
+  type_keys('P')
+
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'file', 'nested/', 'nested/sub/', 'nested/sub/file' })
+  validate_file_content(join_path(temp_dir, 'file'), { 'File' })
+  validate_file_content(join_path(temp_dir, 'nested', 'sub', 'file'), { 'File nested' })
 end
 
 T['File manipulation']['move works again after undo'] = function()
@@ -3061,34 +3835,27 @@ T['File manipulation']['move works again after undo'] = function()
   mock_confirm(1)
   synchronize()
 
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'dir', 'file')
+  validate_tree(temp_dir, { 'dir/', 'dir/file' })
 
   -- Validate confirmation messages
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
-
-  -- - Target path should be absolute but can with `~` for home directory
-  local target_path = short_path(temp_dir, 'dir', 'file')
-  local ref_pattern_2 = string.format([[    MOVE: 'file' to '%s']], vim.pesc(target_path))
-  validate_confirm_args(ref_pattern_2)
+  validate_confirm_args('  MOVE   │ file => dir/file')
 
   -- Undos and synchronize should cleanly move back
   type_keys('u', 'u')
   go_out()
   type_keys('u', 'u')
+  -- - Clear command line
+  type_keys(':', '<Esc>')
   -- - Highlighting is different on Neovim>=0.10
   if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
 
   mock_confirm(1)
   synchronize()
 
-  validate_file(temp_dir, 'file')
-  validate_no_file(temp_dir, 'dir', 'file')
-
-  local target_path_2 = short_path(temp_dir, 'file')
-  local ref_pattern_3 = string.format([[    MOVE: 'file' to '%s']], vim.pesc(target_path_2))
-  validate_confirm_args(ref_pattern_3)
+  validate_tree(temp_dir, { 'dir/', 'file' })
+  validate_confirm_args('  MOVE   │ file => ' .. vim.pesc(short_path(temp_dir, 'file')))
 end
 
 T['File manipulation']['can copy file'] = function()
@@ -3111,25 +3878,18 @@ T['File manipulation']['can copy file'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_file(temp_dir, 'file')
+  validate_tree(temp_dir, { 'dir/', 'dir/file', 'file', 'file-copy' })
   validate_file_content(join_path(temp_dir, 'file'), { 'File' })
-  validate_file(temp_dir, 'dir', 'file')
   validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
-  validate_file(temp_dir, 'file-copy')
   validate_file_content(join_path(temp_dir, 'file-copy'), { 'File' })
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
 
-  -- - Target path should be absolute but can with `~` for home directory
-  local target_path_1 = short_path(temp_dir, 'dir', 'file')
-  local ref_pattern_1 = string.format([[    COPY: 'file' to '%s']], vim.pesc(target_path_1))
-  validate_confirm_args(ref_pattern_1)
-
-  local target_path_2 = short_path(temp_dir, 'file-copy')
-  local ref_pattern_2 = string.format([[    COPY: 'file' to '%s']], vim.pesc(target_path_2))
-  validate_confirm_args(ref_pattern_2)
+  -- - Target path should be relative to group directory
+  validate_confirm_args('  COPY   │ file => dir/file')
+  validate_confirm_args('  COPY   │ file => file%-copy')
 end
 
 T['File manipulation']['can copy file inside new directory'] = function()
@@ -3150,8 +3910,7 @@ T['File manipulation']['can copy file inside new directory'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_file(temp_dir, 'file')
-  validate_file(temp_dir, 'new-dir', 'new-subdir', 'file')
+  validate_tree(temp_dir, { 'file', 'new-dir/', 'new-dir/new-subdir/', 'new-dir/new-subdir/file' })
   validate_file_content(join_path(temp_dir, 'new-dir', 'new-subdir', 'file'), { 'File' })
 end
 
@@ -3175,31 +3934,25 @@ T['File manipulation']['can copy directory'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_directory(temp_dir, 'dir')
+  --stylua: ignore
+  local ref_tree = {
+    'dir/',                           'dir/file',            'dir/nested/',
+    'dir-target/', 'dir-target/dir/', 'dir-target/dir/file', 'dir-target/dir/nested/',
+    'dir-copy/',                      'dir-copy/file',       'dir-copy/nested/',
+  }
+  validate_tree(temp_dir, ref_tree)
+
   validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
-
-  validate_directory(temp_dir, 'dir-target', 'dir')
-  validate_file(temp_dir, 'dir-target', 'dir', 'file')
   validate_file_content(join_path(temp_dir, 'dir-target', 'dir', 'file'), { 'File' })
-  validate_directory(temp_dir, 'dir-target', 'dir', 'nested')
-
-  validate_directory(temp_dir, 'dir-copy')
-  validate_file(temp_dir, 'dir-copy', 'file')
   validate_file_content(join_path(temp_dir, 'dir-copy', 'file'), { 'File' })
-  validate_directory(temp_dir, 'dir-copy', 'nested')
 
   -- Validate separately because order is not guaranteed
-  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. ':')
+  local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
   validate_confirm_args(ref_pattern)
 
-  -- - Target path should be absolute but can with `~` for home directory
-  local target_path_1 = short_path(temp_dir, 'dir-target', 'dir')
-  local ref_pattern_1 = string.format([[    COPY: 'dir' to '%s']], vim.pesc(target_path_1))
-  validate_confirm_args(ref_pattern_1)
-
-  local target_path_2 = short_path(temp_dir, 'dir-copy')
-  local ref_pattern_2 = string.format([[    COPY: 'dir' to '%s']], vim.pesc(target_path_2))
-  validate_confirm_args(ref_pattern_2)
+  -- - Target path should be relative to group directory
+  validate_confirm_args('  COPY   │ dir => dir%-target/dir')
+  validate_confirm_args('  COPY   │ dir => dir%-copy')
 end
 
 T['File manipulation']['can copy directory inside new directory'] = function()
@@ -3220,15 +3973,30 @@ T['File manipulation']['can copy directory inside new directory'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_directory(temp_dir, 'dir')
-  validate_directory(temp_dir, 'dir', 'nested')
-  validate_file(temp_dir, 'dir', 'file')
-  validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
+  --stylua: ignore
+  local ref_tree = {
+    'dir/', 'dir/file', 'dir/nested/',
+    'new-dir/', 'new-dir/new-subdir/',
+    'new-dir/new-subdir/dir/', 'new-dir/new-subdir/dir/file', 'new-dir/new-subdir/dir/nested/',
+  }
+  validate_tree(temp_dir, ref_tree)
 
-  validate_directory(temp_dir, 'new-dir', 'new-subdir', 'dir')
-  validate_directory(temp_dir, 'new-dir', 'new-subdir', 'dir', 'nested')
-  validate_file(temp_dir, 'new-dir', 'new-subdir', 'dir', 'file')
+  validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
   validate_file_content(join_path(temp_dir, 'new-dir', 'new-subdir', 'dir', 'file'), { 'File' })
+end
+
+T['File manipulation']['copy can show not relative "to" path'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+
+  -- Perform manipulation
+  type_keys('yy')
+  go_out()
+  type_keys('p')
+  mock_confirm(1)
+  synchronize()
+
+  validate_confirm_args('  COPY   │ file => ' .. vim.pesc(short_path(temp_dir, 'file')))
 end
 
 T['File manipulation']['copy does not override existing entry'] = function()
@@ -3272,82 +4040,11 @@ T['File manipulation']['can copy directory inside itself'] = function()
   synchronize()
   child.expect_screenshot()
 
-  validate_directory(temp_dir, 'dir')
+  validate_tree(temp_dir, { 'dir/', 'dir/dir/', 'dir/dir/file', 'dir/dir/nested/', 'dir/file', 'dir/nested/' })
   validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
-
-  validate_directory(temp_dir, 'dir', 'dir')
-  validate_file(temp_dir, 'dir', 'dir', 'file')
   validate_file_content(join_path(temp_dir, 'dir', 'dir', 'file'), { 'File' })
-  validate_directory(temp_dir, 'dir', 'dir', 'nested')
 
-  -- Target path should be absolute but can with `~` for home directory
-  local target_path = short_path(temp_dir, 'dir', 'dir')
-  local ref_pattern = string.format([[    COPY: 'dir' to '%s']], vim.pesc(target_path))
-  validate_confirm_args(ref_pattern)
-end
-
-T['File manipulation']['handles simultaneous copy and move'] = function()
-  local temp_dir = make_temp_dir('temp', { 'file', 'dir/' })
-  open(temp_dir)
-
-  -- Write lines in copied file to check actual move/copy
-  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
-
-  -- Perform manipulation
-  type_keys('j', 'dd')
-  go_in()
-  -- - Move
-  type_keys('V', 'P')
-  -- - Copy
-  type_keys('P', 'C', 'file-1', '<Esc>')
-
-  child.expect_screenshot()
-
-  mock_confirm(1)
-  synchronize()
-  child.expect_screenshot()
-
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'dir', 'file')
-  validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
-  validate_file(temp_dir, 'dir', 'file-1')
-  validate_file_content(join_path(temp_dir, 'dir', 'file-1'), { 'File' })
-
-  -- Validate separately as there is no guarantee which file is copied and
-  -- which is moved
-  validate_confirm_args('    COPY:')
-  validate_confirm_args('    MOVE:')
-end
-
-T['File manipulation']['handles simultaneous copy and rename'] = function()
-  local temp_dir = make_temp_dir('temp', { 'file' })
-  open(temp_dir)
-
-  -- Write lines in copied file to check actual move/copy
-  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
-
-  -- Perform manipulation
-  type_keys('yy')
-  -- - Rename
-  type_keys('C', 'file-1', '<Esc>')
-  -- - Copy
-  type_keys('"0p', 'C', 'file-2', '<Esc>')
-  child.expect_screenshot()
-
-  mock_confirm(1)
-  synchronize()
-  child.expect_screenshot()
-
-  validate_no_file(temp_dir, 'file')
-  validate_file(temp_dir, 'file-1')
-  validate_file_content(join_path(temp_dir, 'file-1'), { 'File' })
-  validate_file(temp_dir, 'file-2')
-  validate_file_content(join_path(temp_dir, 'file-2'), { 'File' })
-
-  -- Validate separately as there is no guarantee which file is copied and
-  -- which is moved
-  validate_confirm_args('    COPY:')
-  validate_confirm_args('  RENAME:')
+  validate_confirm_args('  COPY   │ dir => dir/dir')
 end
 
 T['File manipulation']['respects modified hidden buffers'] = function()
@@ -3363,7 +4060,7 @@ T['File manipulation']['respects modified hidden buffers'] = function()
   mock_confirm(1)
   synchronize()
 
-  validate_file(temp_dir, 'dir', 'new-file')
+  validate_tree(temp_dir, { 'dir/', 'dir/new-file', 'file' })
 end
 
 T['File manipulation']['can be not confirmed'] = function()
@@ -3374,7 +4071,7 @@ T['File manipulation']['can be not confirmed'] = function()
   mock_confirm(2)
   synchronize()
   child.expect_screenshot()
-  validate_no_file(test_dir_path, 'new-file')
+  eq(child.fn.filereadable(join_path(test_dir_path, 'new-file')), 0)
 end
 
 T['File manipulation']['can be not confirmed with preview'] = function()
@@ -3386,7 +4083,7 @@ T['File manipulation']['can be not confirmed with preview'] = function()
   mock_confirm(2)
   synchronize()
   child.expect_screenshot()
-  validate_no_file(test_dir_path, 'new-file')
+  eq(child.fn.filereadable(join_path(test_dir_path, 'new-file')), 0)
 end
 
 T['File manipulation']['works with problematic names'] = function()
@@ -3406,14 +4103,11 @@ T['File manipulation']['works with problematic names'] = function()
   synchronize()
   if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
 
-  validate_no_file(temp_dir, [[a %file-]])
-  validate_no_file(temp_dir, 'b file')
-  validate_file(temp_dir, 'c file')
-  validate_file(temp_dir, 'd file')
+  validate_tree(temp_dir, { 'c file', 'd file' })
 end
 
 T['File manipulation']['handles backslash on Unix'] = function()
-  if child.lua_get('vim.loop.os_uname().sysname') == 'Windows_NT' then MiniTest.skip('Test is not for Windows.') end
+  if child.loop.os_uname().sysname == 'Windows_NT' then MiniTest.skip('Test is not for Windows.') end
 
   local temp_dir = make_temp_dir('temp', { '\\', 'hello\\', 'wo\\rld' })
   open(temp_dir)
@@ -3431,10 +4125,7 @@ T['File manipulation']['handles backslash on Unix'] = function()
   synchronize()
   if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
 
-  validate_no_file(temp_dir, [[\]])
-  validate_no_file(temp_dir, [[hello\]])
-  validate_file(temp_dir, 'new-hello')
-  validate_file(temp_dir, [[bad\file]])
+  validate_tree(temp_dir, { 'bad\\file', 'new-hello', 'wo\\rld' })
 end
 
 T['File manipulation']['ignores blank lines'] = function()
@@ -3455,6 +4146,630 @@ T['File manipulation']['ignores identical user-copied entries'] = function()
   -- Should synchronize without confirmation
   synchronize()
   child.expect_screenshot()
+end
+
+T['File manipulation']['special cases'] = new_set()
+
+T['File manipulation']['special cases']['freed path'] = new_set()
+
+T['File manipulation']['special cases']['freed path']['delete and move other'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file-a', 'file-b' })
+  child.fn.writefile({ 'File A' }, join_path(temp_dir, 'dir', 'file-a'))
+  open(temp_dir)
+  type_keys('j', 'dd')
+  go_in()
+  type_keys('dd')
+  go_out()
+  type_keys('p', 'C', 'file-b')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'file-b' })
+  validate_file_content(join_path(temp_dir, 'file-b'), { 'File A' })
+end
+
+T['File manipulation']['special cases']['freed path']['delete and rename other'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file-a', 'file-b' })
+  child.fn.writefile({ 'File B' }, join_path(temp_dir, 'file-b'))
+  open(temp_dir)
+  type_keys('dd', 'C', 'file-a', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file-a' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File B' })
+end
+
+T['File manipulation']['special cases']['freed path']['delete and copy other'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file-a', 'file-b' })
+  child.fn.writefile({ 'File A' }, join_path(temp_dir, 'file-a'))
+  child.fn.writefile({ 'File B' }, join_path(temp_dir, 'file-b'))
+  open(temp_dir)
+  type_keys('dd', 'yy', 'p', 'C', 'file-a', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file-a', 'file-b' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File B' })
+  validate_file_content(join_path(temp_dir, 'file-b'), { 'File B' })
+end
+
+T['File manipulation']['special cases']['freed path']['delete and create'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
+  open(temp_dir)
+  type_keys('dd', 'o', 'file', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file' })
+  validate_file_content(join_path(temp_dir, 'file'), {})
+end
+
+T['File manipulation']['special cases']['freed path']['move and rename other'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file-a', 'file-b' })
+  child.fn.writefile({ 'File A' }, join_path(temp_dir, 'file-a'))
+  child.fn.writefile({ 'File B' }, join_path(temp_dir, 'file-b'))
+  open(temp_dir)
+  type_keys('j', 'dd', 'k')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('j', 'C', 'file-a')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'dir/file-a', 'file-a' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File B' })
+  validate_file_content(join_path(temp_dir, 'dir', 'file-a'), { 'File A' })
+end
+
+T['File manipulation']['special cases']['freed path']['move and copy other'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file-a', 'file-b' })
+  child.fn.writefile({ 'File A' }, join_path(temp_dir, 'file-a'))
+  child.fn.writefile({ 'File B' }, join_path(temp_dir, 'file-b'))
+  open(temp_dir)
+  type_keys('j', 'dd', 'gg')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('j', 'yy', 'p', 'C', 'file-a')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'dir/file-a', 'file-a', 'file-b' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File B' })
+  validate_file_content(join_path(temp_dir, 'file-b'), { 'File B' })
+  validate_file_content(join_path(temp_dir, 'dir', 'file-a'), { 'File A' })
+end
+
+T['File manipulation']['special cases']['freed path']['move and create'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file-a' })
+  child.fn.writefile({ 'File A' }, join_path(temp_dir, 'file-a'))
+  open(temp_dir)
+  type_keys('j', 'dd', 'k')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('o', 'file-a')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'dir/file-a', 'file-a' })
+  validate_file_content(join_path(temp_dir, 'file-a'), {})
+  validate_file_content(join_path(temp_dir, 'dir', 'file-a'), { 'File A' })
+end
+
+T['File manipulation']['special cases']['freed path']['rename and move other'] = function()
+  -- NOTE: Unfortunately, this doesn't work as "move" is done before "rename".
+  -- Accounting for this seems involve even more tweaks than is currently done,
+  -- like fully computing the proper order of overlapping actions (which might
+  -- not be fully possibly due to "cyclic renames/moves"). So this deliberately
+  -- is left unresolved with the suggestion to split steps and sync more often.
+
+  -- local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file-a', 'file-b' })
+  -- child.fn.writefile({ 'File A' }, join_path(temp_dir, 'dir', 'file-a'))
+  -- child.fn.writefile({ 'File B' }, join_path(temp_dir, 'file-b'))
+  -- open(temp_dir)
+  -- type_keys('G', 'C', 'file-c', '<Esc>')
+  -- type_keys('gg')
+  -- go_in()
+  -- type_keys('dd')
+  -- go_out()
+  -- type_keys('p', 'C', 'file-b', '<Esc>')
+  -- mock_confirm(1)
+  -- synchronize()
+  --
+  -- validate_tree(temp_dir, { 'dir/', 'file-b', 'file-c' })
+  -- validate_file_content(join_path(temp_dir, 'file-b'), { 'File A' })
+  -- validate_file_content(join_path(temp_dir, 'file-c'), { 'File B' })
+end
+
+T['File manipulation']['special cases']['freed path']['rename and copy other'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file-a', 'file-b' })
+  child.fn.writefile({ 'File A' }, join_path(temp_dir, 'file-a'))
+  child.fn.writefile({ 'File B' }, join_path(temp_dir, 'file-b'))
+  open(temp_dir)
+  type_keys('C', 'file-c', '<Esc>')
+  type_keys('j', 'yy', 'p', 'C', 'file-a')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file-a', 'file-b', 'file-c' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File B' })
+  validate_file_content(join_path(temp_dir, 'file-b'), { 'File B' })
+  validate_file_content(join_path(temp_dir, 'file-c'), { 'File A' })
+end
+
+T['File manipulation']['special cases']['freed path']['rename and create'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
+  open(temp_dir)
+  type_keys('C', 'new-file', '<Esc>')
+  type_keys('o', 'file')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file', 'new-file' })
+  validate_file_content(join_path(temp_dir, 'file'), {})
+  validate_file_content(join_path(temp_dir, 'new-file'), { 'File' })
+end
+
+T['File manipulation']['special cases']['act on same path'] = new_set()
+
+T['File manipulation']['special cases']['act on same path']['copy and rename'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
+  open(temp_dir)
+  type_keys('yy', 'p', 'C', 'file-a', '<Esc>')
+  type_keys('k^', 'C', 'file-b', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file-a', 'file-b' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File' })
+  validate_file_content(join_path(temp_dir, 'file-b'), { 'File' })
+end
+
+T['File manipulation']['special cases']['act on same path']['copy and move'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'file'))
+  open(temp_dir)
+  type_keys('j', 'yy', 'p', 'C', 'file-a', '<Esc>')
+  type_keys('k', 'dd', 'k')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'dir/file', 'file-a' })
+  validate_file_content(join_path(temp_dir, 'file-a'), { 'File' })
+  validate_file_content(join_path(temp_dir, 'dir', 'file'), { 'File' })
+end
+
+T['File manipulation']['special cases']['inside affected directory'] = new_set()
+
+T['File manipulation']['special cases']['inside affected directory']['delete in copied'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('dd')
+  go_out()
+  type_keys('yy', 'p', 'C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  -- "Delete" is done before "copy", so as to "free" space. So both directories
+  -- don't have deleted file.
+  validate_tree(temp_dir, { 'dir/', 'new-dir/' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['delete in renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('dd')
+  go_out()
+  type_keys('C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'new-dir/' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['delete in moved'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'other-dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('dd')
+  go_out()
+  type_keys('dd')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'other-dir/', 'other-dir/dir/' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['move in deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'dir/subdir/' })
+  open(temp_dir .. '/dir')
+  type_keys('j', 'dd')
+  go_in()
+  type_keys('p')
+  go_out()
+  go_out()
+  type_keys('dd')
+  mock_confirm(1)
+  synchronize()
+
+  -- Should prefer "delete"
+  validate_tree(temp_dir, {})
+end
+
+T['File manipulation']['special cases']['inside affected directory']['move in renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'dir/subdir/' })
+  open(temp_dir .. '/dir')
+  type_keys('j', 'dd')
+  go_in()
+  type_keys('p')
+  go_out()
+  go_out()
+  type_keys('C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'new-dir/', 'new-dir/subdir/', 'new-dir/subdir/file' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['move in copied'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'dir/subdir/' })
+  open(temp_dir .. '/dir')
+  type_keys('j', 'dd')
+  go_in()
+  type_keys('p')
+  go_out()
+  go_out()
+  type_keys('yy', 'p', 'C', 'new-dir')
+  mock_confirm(1)
+  synchronize()
+
+  local ref_tree = { 'dir/', 'dir/subdir/', 'dir/subdir/file', 'new-dir/', 'new-dir/subdir/', 'new-dir/subdir/file' }
+  validate_tree(temp_dir, ref_tree)
+end
+
+T['File manipulation']['special cases']['inside affected directory']['rename in deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('C', 'new-file', '<Esc>')
+  go_out()
+  type_keys('dd')
+  mock_confirm(1)
+  synchronize()
+
+  -- Should prefer "delete"
+  validate_tree(temp_dir, {})
+end
+
+T['File manipulation']['special cases']['inside affected directory']['rename in moved'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'other-dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('C', 'new-file', '<Esc>')
+  go_out()
+  type_keys('dd', 'G')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'other-dir/', 'other-dir/dir/', 'other-dir/dir/new-file' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['rename in copied'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('C', 'new-file', '<Esc>')
+  go_out()
+  type_keys('yy', 'p', 'C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  -- "Rename" is done before "copy", so as to "free" space. So both directories
+  -- have renamed file.
+  validate_tree(temp_dir, { 'dir/', 'dir/new-file', 'new-dir/', 'new-dir/new-file' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['copy in deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('yy', 'p', 'C', 'file-a', '<Esc>')
+  go_out()
+  type_keys('dd')
+  mock_confirm(1)
+  synchronize()
+
+  -- Should prefer "delete"
+  validate_tree(temp_dir, {})
+end
+
+T['File manipulation']['special cases']['inside affected directory']['copy in moved'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'other-dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('yy', 'p', 'C', 'file-a', '<Esc>')
+  go_out()
+  type_keys('dd')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'other-dir/', 'other-dir/dir/', 'other-dir/dir/file', 'other-dir/dir/file-a' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['copy in renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('yy', 'p', 'C', 'file-a', '<Esc>')
+  go_out()
+  type_keys('C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'new-dir/', 'new-dir/file', 'new-dir/file-a' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['create in deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('i', 'file', '<Esc>')
+  go_out()
+  type_keys('dd')
+  mock_confirm(1)
+  synchronize()
+
+  -- Should prefer "delete"
+  validate_tree(temp_dir, {})
+end
+
+T['File manipulation']['special cases']['inside affected directory']['create in moved'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'other-dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('i', 'file', '<Esc>')
+  go_out()
+  type_keys('dd')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'other-dir/', 'other-dir/dir/', 'other-dir/dir/file' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['create in renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('i', 'file', '<Esc>')
+  go_out()
+  type_keys('C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'new-dir/', 'new-dir/file' })
+end
+
+T['File manipulation']['special cases']['inside affected directory']['create in copied'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/' })
+  open(temp_dir .. '/dir')
+  type_keys('i', 'file', '<Esc>')
+  go_out()
+  type_keys('yy', 'p', 'C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  -- "Create" is done last so only in original directory. There is no special
+  -- reason for this choice other than grouping "move"/"rename"/"copy" seems
+  -- like a more organized choice.
+  validate_tree(temp_dir, { 'dir/', 'dir/file', 'new-dir/' })
+end
+
+T['File manipulation']['special cases']['from affected directory'] = new_set()
+
+T['File manipulation']['special cases']['from affected directory']['move from deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('dd')
+  go_out()
+  type_keys('p')
+  type_keys('gg', 'dd')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file' })
+end
+
+T['File manipulation']['special cases']['from affected directory']['move from renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('dd')
+  go_out()
+  type_keys('p')
+  type_keys('gg', 'C', 'new-dir')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file', 'new-dir/' })
+end
+
+T['File manipulation']['special cases']['from affected directory']['move from copied'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  open(temp_dir .. '/dir')
+  type_keys('dd')
+  go_out()
+  type_keys('p')
+  type_keys('gg', 'yy', 'p', 'C', 'new-dir')
+  mock_confirm(1)
+  synchronize()
+
+  -- "Move" is done before "copy", so as to "free" space. So no directories
+  -- have moved file.
+  validate_tree(temp_dir, { 'dir/', 'file', 'new-dir/' })
+end
+
+T['File manipulation']['special cases']['from affected directory']['copy from deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'dir', 'file'))
+  open(temp_dir .. '/dir')
+  type_keys('yy')
+  go_out()
+  type_keys('p')
+  type_keys('gg', 'dd')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file' })
+  validate_file_content(join_path(temp_dir, 'file'), { 'File' })
+end
+
+T['File manipulation']['special cases']['from affected directory']['copy from moved'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file', 'other-dir/' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'dir', 'file'))
+  open(temp_dir .. '/dir')
+  type_keys('yy')
+  go_out()
+  type_keys('p')
+  type_keys('gg', 'dd', 'G')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file', 'other-dir/', 'other-dir/dir/', 'other-dir/dir/file' })
+  validate_file_content(join_path(temp_dir, 'file'), { 'File' })
+  validate_file_content(join_path(temp_dir, 'other-dir', 'dir', 'file'), { 'File' })
+end
+
+T['File manipulation']['special cases']['from affected directory']['copy from renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'dir/file' })
+  child.fn.writefile({ 'File' }, join_path(temp_dir, 'dir', 'file'))
+  open(temp_dir .. '/dir')
+  type_keys('yy')
+  go_out()
+  type_keys('p')
+  type_keys('gg', 'C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file', 'new-dir/', 'new-dir/file' })
+  validate_file_content(join_path(temp_dir, 'file'), { 'File' })
+  validate_file_content(join_path(temp_dir, 'new-dir', 'file'), { 'File' })
+end
+
+T['File manipulation']['special cases']['into affected directory'] = new_set()
+
+T['File manipulation']['special cases']['into affected directory']['move into deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file' })
+  open(temp_dir)
+  type_keys('G', 'dd')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('dd')
+  mock_confirm(1)
+  synchronize()
+
+  -- Should prefer "delete"
+  validate_tree(temp_dir, {})
+end
+
+T['File manipulation']['special cases']['into affected directory']['move into renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file' })
+  open(temp_dir)
+  type_keys('G', 'dd')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('C', 'new-dir')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'new-dir/', 'new-dir/file' })
+end
+
+T['File manipulation']['special cases']['into affected directory']['move into copied'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file' })
+  open(temp_dir)
+  type_keys('G', 'dd')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('yy', 'p', 'C', 'new-dir')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir/', 'dir/file', 'new-dir/', 'new-dir/file' })
+end
+
+T['File manipulation']['special cases']['into affected directory']['copy into deleted'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file' })
+  open(temp_dir)
+  type_keys('G', 'yy', 'gg')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('dd')
+  mock_confirm(1)
+  synchronize()
+
+  -- Should prefer "delete"
+  validate_tree(temp_dir, { 'file' })
+end
+
+T['File manipulation']['special cases']['into affected directory']['copy into moved'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'other-dir/', 'file' })
+  open(temp_dir)
+  type_keys('G', 'yy', 'gg')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('dd')
+  go_in()
+  type_keys('P')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file', 'other-dir/', 'other-dir/dir/', 'other-dir/dir/file' })
+end
+
+T['File manipulation']['special cases']['into affected directory']['copy into renamed'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir/', 'file' })
+  open(temp_dir)
+  type_keys('G', 'yy', 'gg')
+  go_in()
+  type_keys('P')
+  go_out()
+  type_keys('C', 'new-dir', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'file', 'new-dir/', 'new-dir/file' })
+end
+
+T['File manipulation']['special cases']['nested move'] = new_set()
+
+T['File manipulation']['special cases']['nested move']['works'] = function()
+  local temp_dir = make_temp_dir('temp', { 'dir-a/', 'dir-a/dir-b/', 'dir-a/dir-b/dir-c/', 'dir-a/dir-b/dir-c/file' })
+  open(temp_dir .. '/dir-a/dir-b')
+  type_keys('dd')
+  go_out()
+  go_out()
+  type_keys('p')
+  type_keys('gg')
+  go_in()
+  type_keys('dd')
+  go_out()
+  type_keys('p')
+  mock_confirm(1)
+  synchronize()
+
+  validate_tree(temp_dir, { 'dir-a/', 'dir-b/', 'dir-c/', 'dir-c/file' })
 end
 
 T['Cursors'] = new_set()
@@ -3764,28 +5079,48 @@ T['Events']['`MiniFilesWindowUpdate` triggers'] = function()
 
   open(test_dir_path)
   local buf_id_1, win_id_1 = child.api.nvim_get_current_buf(), child.api.nvim_get_current_win()
-  -- Should provide both `buf_id` and `win_id`
-  validate_event_track({ { buf_id = buf_id_1, win_id = win_id_1 } })
+  -- Triggered several times because `CursorMoved` also triggeres it.
+  -- Should provide both `buf_id` and `win_id`.
+  validate_event_track({ { buf_id = buf_id_1, win_id = win_id_1 }, { buf_id = buf_id_1, win_id = win_id_1 } })
   clear_event_track()
 
   go_in()
   local buf_id_2, win_id_2 = child.api.nvim_get_current_buf(), child.api.nvim_get_current_win()
 
-  -- - Force order, as there is no order guarantee of event trigger
   -- - Both windows should be updated
-  validate_event_track({ { buf_id = buf_id_1, win_id = win_id_1 }, { buf_id = buf_id_2, win_id = win_id_2 } }, true)
+  validate_event_track(
+    {
+      { buf_id = buf_id_1, win_id = win_id_1 },
+      { buf_id = buf_id_1, win_id = win_id_1 },
+      { buf_id = buf_id_2, win_id = win_id_2 },
+      { buf_id = buf_id_2, win_id = win_id_2 },
+    },
+    -- - Force order, as there is no order guarantee of event trigger
+    true
+  )
 end
 
-T['Events']['`MiniFilesWindowUpdate` is not triggered for cursor move'] = function()
+T['Events']['`MiniFilesWindowUpdate` is triggered after every possible window config update'] = function()
   track_event('MiniFilesWindowUpdate')
 
   open(test_dir_path)
   clear_event_track()
 
-  type_keys('j')
-  type_keys('<Right>')
-  type_keys('i', '<Left>')
-  validate_event_track({})
+  -- Windows have to adjust configs on every cursor move if preview is set
+  child.lua('MiniFiles.config.windows.preview = true')
+
+  local validate = function(keys)
+    clear_event_track()
+    type_keys(keys)
+    eq(#get_event_track() > 0, true)
+  end
+
+  validate('j')
+  validate('<Right>')
+  validate({ 'i', '<Left>' })
+
+  -- NOTE: Currently this event also is triggered on every cursor move even if
+  -- preview is not enabled. This is to simplify code.
 end
 
 T['Events']['`MiniFilesWindowUpdate` is triggered after current buffer is set'] = function()
@@ -3793,7 +5128,66 @@ T['Events']['`MiniFilesWindowUpdate` is triggered after current buffer is set'] 
   open(test_dir_path)
   clear_event_track()
   go_out()
-  validate_event_track({ { buf_id = 2, win_id = 1004 }, { buf_id = 3, win_id = 1003 } }, true)
+  validate_event_track({
+    { buf_id = 2, win_id = 1004 },
+    { buf_id = 2, win_id = 1004 },
+    { buf_id = 3, win_id = 1003 },
+    { buf_id = 3, win_id = 1003 },
+  }, true)
+end
+
+T['Events']['`MiniFilesWindowUpdate` can customize internally set window config parts'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.9') end
+  child.set_size(15, 80)
+
+  load_module({
+    windows = {
+      preview = true,
+      width_focus = 40,
+      width_nofocus = 10,
+      width_preview = 20,
+    },
+  })
+
+  child.lua([[
+    vim.api.nvim_create_autocmd('User', {
+      pattern = 'MiniFilesWindowUpdate',
+      callback = function(args)
+        local config = vim.api.nvim_win_get_config(args.data.win_id)
+        -- Ensure fixed height
+        config.height = 5
+        -- Ensure title padding
+        local n = #config.title
+        if config.title[n][1] ~= ' ' then table.insert(config.title, { ' ', 'NormalFloat' }) end
+        if config.title[1][1] ~= ' ' then table.insert(config.title, 1, { ' ', 'NormalFloat' }) end
+        vim.api.nvim_win_set_config(args.data.win_id, config)
+      end
+    })
+  ]])
+
+  open(test_dir_path)
+  go_in()
+  child.expect_screenshot()
+
+  -- Works in Insert mode when number of entries is less than height
+  type_keys('o', 'a', 'b', 'c')
+  child.expect_screenshot()
+  child.ensure_normal_mode()
+
+  -- Works in Insert mode when number of entries is more than height
+  go_out()
+  type_keys('o', 'd', 'e', 'f')
+  child.expect_screenshot()
+  child.ensure_normal_mode()
+
+  -- Works when modifying below last visible line
+  type_keys('3j', 'o', 'a')
+  child.expect_screenshot()
+
+  -- Works even if completion menu (like from 'mini.completion') is triggered
+  child.cmd('set iskeyword+=-')
+  type_keys('<C-n>')
+  child.expect_screenshot()
 end
 
 T['Events']['`MiniFilesActionCreate` triggers'] = function()
@@ -3865,6 +5259,8 @@ end
 T['Events']['`MiniFilesActionDelete` triggers for `options.permanent_delete = false`'] = function()
   track_event('MiniFilesActionDelete')
 
+  local data_dir = mock_stdpath_data()
+  local trash_dir = join_path(data_dir, 'mini.files', 'trash')
   child.lua('MiniFiles.config.options.permanent_delete = false')
   local temp_dir = make_temp_dir('temp', { 'file', 'dir/', 'dir/subfile' })
   open(temp_dir)
@@ -3875,9 +5271,10 @@ T['Events']['`MiniFilesActionDelete` triggers for `options.permanent_delete = fa
 
   local event_track = get_event_track()
   table.sort(event_track, function(a, b) return a.from < b.from end)
+  -- Should also supply `to` field with path to trash
   eq(event_track, {
-    { action = 'delete', from = join_path(temp_dir, 'dir') },
-    { action = 'delete', from = join_path(temp_dir, 'file') },
+    { action = 'delete', from = join_path(temp_dir, 'dir'), to = join_path(trash_dir, 'dir') },
+    { action = 'delete', from = join_path(temp_dir, 'file'), to = join_path(trash_dir, 'file') },
   })
 end
 

@@ -5,7 +5,6 @@ local helpers = dofile('tests/helpers.lua')
 local child = helpers.new_child_neovim()
 local expect, eq = helpers.expect, helpers.expect.equality
 local new_set, finally = MiniTest.new_set, MiniTest.finally
-local mark_flaky = helpers.mark_flaky
 
 -- Helpers with child processes
 --stylua: ignore start
@@ -26,7 +25,8 @@ local get_ref_path = function(name) return string.format('tests/dir-test/%s', na
 local get_current_all_cases = function()
   -- Encode functions inside child. Works only for "simple" functions.
   local command = [[vim.tbl_map(function(case)
-    case.hooks = { pre = vim.tbl_map(string.dump, case.hooks.pre), post = vim.tbl_map(string.dump, case.hooks.post) }
+    case.hooks.pre = vim.tbl_map(string.dump, case.hooks.pre)
+    case.hooks.post = vim.tbl_map(string.dump, case.hooks.post)
     case.test = string.dump(case.test)
     return case
   end, MiniTest.current.all_cases)]]
@@ -34,8 +34,8 @@ local get_current_all_cases = function()
 
   -- Decode functions in current process
   res = vim.tbl_map(function(case)
-    case.hooks = { pre = vim.tbl_map(loadstring, case.hooks.pre), post = vim.tbl_map(loadstring, case.hooks.post) }
-    ---@diagnostic disable-next-line:param-type-mismatch
+    case.hooks.pre = vim.tbl_map(loadstring, case.hooks.pre)
+    case.hooks.post = vim.tbl_map(loadstring, case.hooks.post)
     case.test = loadstring(case.test)
     return case
   end, res)
@@ -54,7 +54,17 @@ end
 local testrun_ref_file = function(name)
   local find_files_command = string.format([[_G.find_files = function() return { '%s' } end]], get_ref_path(name))
   child.lua(find_files_command)
-  child.lua('MiniTest.run({ collect = { find_files = _G.find_files }, execute = { reporter = {} } })')
+  child.lua([[
+    _G.reporter_log = {}
+    _G.report_in_log = {
+      start = function(...) table.insert(_G.reporter_log, { 'start', ... }) end,
+      update = function(...)
+        table.insert(_G.reporter_log, { 'update', vim.deepcopy(MiniTest.current.case.exec.state), ... })
+      end,
+      finish = function(...) table.insert(_G.reporter_log, { 'finish', ... }) end,
+    }
+  ]])
+  child.lua([[MiniTest.run({ collect = { find_files = _G.find_files }, execute = { reporter = _G.report_in_log } })]])
   return get_current_all_cases()
 end
 
@@ -71,6 +81,9 @@ local expect_all_state = function(cases, state)
   eq(res, true)
 end
 
+-- Time constants
+local terminal_wait = helpers.get_time_const(500)
+
 -- Output test set
 local T = new_set({
   hooks = {
@@ -82,6 +95,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(1),
 })
 
 -- Unit tests =================================================================
@@ -90,6 +104,9 @@ T['setup()'] = new_set()
 T['setup()']['creates side effects'] = function()
   -- Global variable
   eq(child.lua_get('type(_G.MiniTest)'), 'table')
+
+  -- Autocommand group
+  eq(child.fn.exists('#MiniTest'), 1)
 
   -- Highlight groups
   child.cmd('hi clear')
@@ -140,8 +157,8 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ silent = 1 }, 'silent', 'boolean')
 end
 
-T['setup()']['defines non-linked default highlighting on `ColorScheme`'] = function()
-  child.cmd('colorscheme blue')
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
   expect.match(child.cmd_capture('hi MiniTestFail'), 'gui=bold')
   expect.match(child.cmd_capture('hi MiniTestPass'), 'gui=bold')
   expect.match(child.cmd_capture('hi MiniTestEmphasis'), 'gui=bold')
@@ -161,7 +178,7 @@ T['new_set()']['tracks field order'] = function()
 end
 
 T['new_set()']['stores `opts`'] = function()
-  local opts = { parametrize = { { 'a' } } }
+  local opts = { parametrize = { { 'a' } }, n_retry = 10 }
   child.lua([[_G.set = MiniTest.new_set(...)]], { opts })
   eq(child.lua_get([[getmetatable(_G.set).opts]]), opts)
 end
@@ -174,6 +191,7 @@ T['case helpers']['work'] = function()
   -- `finally()`
   eq(res['finally() with error; check'].exec.state, 'Pass')
   eq(res['finally() no error; check'].exec.state, 'Pass')
+  eq(child.lua_get('_G.finally_log'), { 'one', 'two' })
 
   -- `skip()`
   eq(res['skip(); no message'].exec.state, 'Pass with notes')
@@ -182,9 +200,19 @@ T['case helpers']['work'] = function()
   eq(res['skip(); with message'].exec.state, 'Pass with notes')
   eq(res['skip(); with message'].exec.notes, { 'This is a custom skip message' })
 
+  eq(res['skip() can be called from helper'].exec.notes, { 'Skip from helper' })
+
+  eq(res['skip one'].exec.state, 'Pass with notes')
+  eq(res['skip one'].exec.notes, { 'Should skip case' })
+  eq(res['skip two'].exec.state, 'Pass with notes')
+  eq(res['skip two'].exec.notes, { 'Should skip case' })
+
+  eq(res['skip() in other hooks'].exec.state, 'Fail')
+  eq(res['skip() in other hooks'].exec.notes, {})
+
   -- `add_note()`
-  eq(res['add_note()'].exec.state, 'Pass with notes')
-  eq(res['add_note()'].exec.notes, { 'This note should be appended' })
+  eq(res['add_note() case'].exec.state, 'Pass with notes')
+  eq(res['add_note() case'].exec.notes, { 'pre_once', 'pre_case', 'test case', 'post_case', 'post_once' })
 end
 
 T['run()'] = new_set()
@@ -305,6 +333,85 @@ T['run()']['handles `hooks`'] = function()
   expect.match(filter_by_desc(res, 2, 'skip_case_on_hook_error #1')[1].exec.notes[1], '^Skip.*error.*hooks')
 end
 
+T['run()']['handles `n_retry`'] = function()
+  local res = testrun_ref_file('testref_run-n_retry.lua')
+  --stylua: ignore
+  local ref_log = {
+    'default',
+    'should override', 'should override',
+    'more override', 'more override', 'more override',
+    'first success #1', 'first success #2', 'first success #3',
+    'latest error #1', 'latest error #2', 'latest error #3',
+
+    -- Retries should NOT be applied separately to hooks
+    'no retry pre_once', 'no retry pre_case', 'no retry post_case', 'no retry post_once',
+
+    -- Should retry failed case with all its `pre_case` and `post_case`.
+    -- The `pre_once` and `post_once` should still be executed only once.
+    'outer pre_once', 'inner pre_once',
+    'outer pre_case', 'inner pre_case', 'hook exec case', 'inner post_case', 'outer post_case',
+    'outer pre_case', 'inner pre_case', 'hook exec case', 'inner post_case', 'outer post_case',
+    'inner post_once', 'outer post_once',
+
+    'screenshot', 'screenshot',
+    'skip',
+    'parameter 1', 'parameter 1', 'parameter 2', 'parameter 2'
+  }
+  eq(child.lua_get('_G.log'), ref_log)
+
+  -- Should track relevant `n_retry` value
+  eq(vim.tbl_map(function(x) return x.n_retry end, res), { 1, 2, 3, 10, 3, 2, 2, 2, 2, 2, 2, 2 })
+
+  -- Should report latest (and only latest) error among all retries
+  local latest_error_case_fails = filter_by_desc(res, 2, 'reports latest error')[1].exec.fails
+  eq(#latest_error_case_fails, 1)
+  expect.match(latest_error_case_fails[1], 'Error #3')
+
+  -- Should report hook fails even if `n_retry > 1`
+  eq(#filter_by_desc(res, 2, 'does not retry hooks')[1].exec.fails, 4)
+
+  -- Should not generate new screenshots after first try
+  eq(filter_by_desc(res, 2, 'screenshot number')[1].exec.notes, {})
+
+  -- Should update state on every retry
+  local update_case_num
+  for i, case in ipairs(res) do
+    if case.desc[2] == 'updates state on every retry' then update_case_num = i end
+  end
+  child.lua('_G.target_case_num = ' .. (update_case_num or #res))
+  local updates_of_target_case = child.lua([[
+    local res = {}
+    for _, t in ipairs(_G.reporter_log) do
+      if t[1] == 'update' and t[3] == target_case_num then table.insert(res, t) end
+    end
+    return res
+  ]])
+  local ref_updates = {
+    { 'update', "Executing 'pre' hook #1", 12 },
+    { 'update', "Executing 'pre' hook #2", 12 },
+    { 'update', 'Executing test', 12 },
+    { 'update', "Executing 'post' hook #1", 12 },
+    -- Method `update()` of reporter should be called on every retry
+    { 'update', "Executing 'pre' hook #2", 12 },
+    { 'update', 'Executing test', 12 },
+    { 'update', "Executing 'post' hook #1", 12 },
+    { 'update', "Executing 'post' hook #2", 12 },
+    { 'update', 'Fail', 12 },
+  }
+  eq(updates_of_target_case, ref_updates)
+end
+
+T['run()']['respects `stop_on_error` after all retries'] = function()
+  local path = get_ref_path('testref_run-n_retry-stop_on_error.lua')
+  local command = string.format([[_G.cases = MiniTest.collect({ find_files = function() return { '%s' } end })]], path)
+  child.lua(command)
+
+  -- Should indeed stop on first "final" error (i.e. ignore errors from tries)
+  child.lua('MiniTest.execute(_G.cases, { stop_on_error = true })')
+  eq(child.lua_get('_G.log'), { 'try #1', 'try #2', 'try #3', 'continue' })
+  eq(child.lua_get('_G.cases[3].exec'), vim.NIL)
+end
+
 T['run()']['appends traceback to fails'] = function()
   local res = testrun_ref_file('testref_general.lua')
   local ref_path = get_ref_path('testref_general.lua')
@@ -330,7 +437,7 @@ end
 
 T['run_file()']['normalizes input path'] = function()
   child.lua('MiniTest.run_file(...)', { './' .. get_ref_path('testref_run.lua') })
-  eq(child.lua_get('MiniTest.current.all_cases[1].desc[1]'), 'tests/dir-test/testref_run.lua')
+  eq(child.lua_get('MiniTest.current.all_cases[1].desc[1]'):gsub('\\', '/'), 'tests/dir-test/testref_run.lua')
 end
 
 T['run_at_location()'] = new_set()
@@ -355,7 +462,9 @@ T['run_at_location()']['uses cursor position by default'] = function()
 
   local all_cases = get_current_all_cases()
   eq(#all_cases, 1)
-  eq(all_cases[1].desc, { path, 'run_at_location()' })
+  local desc = all_cases[1].desc
+  eq(desc[1]:gsub('\\', '/'), path)
+  eq(desc[2], 'run_at_location()')
 end
 
 local collect_general = function()
@@ -377,7 +486,11 @@ T['collect()']['works'] = function()
 
   local keys = child.lua_get('vim.tbl_keys(_G.cases[1])')
   table.sort(keys)
-  eq(keys, { 'args', 'data', 'desc', 'hooks', 'test' })
+  eq(keys, { 'args', 'data', 'desc', 'hooks', 'n_retry', 'test' })
+
+  local hook_keys = child.lua_get('vim.tbl_keys(_G.cases[1].hooks)')
+  table.sort(hook_keys)
+  eq(hook_keys, { 'post', 'post_source', 'pre', 'pre_source' })
 end
 
 T['collect()']['respects `emulate_busted` option'] = function()
@@ -1149,11 +1262,12 @@ T['child']['type_keys()']['throws error explicitly'] = function()
 end
 
 T['child']['type_keys()']['respects `wait` argument'] = function()
+  local delay = helpers.get_time_const(100)
   local start_time = vim.loop.hrtime()
-  child.type_keys(100, 'i', 'Hello', { 'w', 'o' }, 'rld')
+  child.type_keys(delay, 'i', 'Hello', { 'w', 'o' }, 'rld')
   local end_time = vim.loop.hrtime()
   local duration = (end_time - start_time) * 0.000001
-  eq(0.9 * 500 <= duration and duration <= 1.1 * 500, true)
+  eq(0.9 * 5 * delay <= duration and duration <= 1.1 * 5 * delay, true)
 end
 
 T['child']['cmd()'] = function()
@@ -1414,8 +1528,6 @@ T['gen_reporter']['buffer'] = new_set({
   test = function(opts_element)
     if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10.') end
 
-    mark_flaky()
-
     -- Testing "in dynamic" is left for manual approach
     local path = get_ref_path('testref_reporters.lua')
     local reporter_command = string.format('_G.reporter = MiniTest.gen_reporter.buffer({ %s })', opts_element)
@@ -1423,6 +1535,16 @@ T['gen_reporter']['buffer'] = new_set({
 
     local execute_command = string.format([[MiniTest.run_file('%s', { execute = { reporter = _G.reporter } })]], path)
     child.lua(execute_command)
+
+    -- Unify path separator for more robust testing. Rely on search and replace
+    -- to preserve extmark highlighting.
+    if package.config:sub(1, 1) == '\\' then
+      local cur_pos = child.api.nvim_win_get_cursor(0)
+      child.cmd([[silent! %s^\S\zs\\^/^g]])
+      child.cmd('silent! nohlsearch')
+      set_cursor(unpack(cur_pos))
+    end
+
     child.expect_screenshot()
 
     -- Should be able to run several times
@@ -1442,14 +1564,14 @@ T['gen_reporter']['stdout'] = new_set({
   parametrize = { { '' }, { 'TEST_GROUP_DEPTH=2' }, { 'TEST_QUIT_ON_FINISH=false' } },
 }, {
   test = function(env_var)
-    mark_flaky()
+    helpers.skip_on_windows('Terminal tests are designed for Unix')
 
     -- Testing "in dynamic" is left for manual approach
     local path = 'tests/dir-test/init_stdout-reporter_works.lua'
     local command = string.format([[%s %s --headless --clean -n -u %s]], env_var, vim.v.progpath, vim.inspect(path))
     child.fn.termopen(command)
     -- Wait until check is done and possible process is ended
-    vim.loop.sleep(500)
+    vim.loop.sleep(terminal_wait)
     child.expect_screenshot()
   end,
 })

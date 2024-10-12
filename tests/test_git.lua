@@ -12,31 +12,42 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 local new_buf = function() return child.api.nvim_create_buf(true, false) end
 local new_scratch_buf = function() return child.api.nvim_create_buf(false, true) end
 local get_buf = function() return child.api.nvim_get_current_buf() end
 local set_buf = function(buf_id) child.api.nvim_set_current_buf(buf_id) end
 local get_win = function() return child.api.nvim_get_current_win() end
-local edit = function(path) child.cmd('edit ' .. child.fn.fnameescape(path)) end
 --stylua: ignore end
 
 -- TODO: Remove after compatibility with Neovim=0.9 is dropped
 local islist = vim.fn.has('nvim-0.10') == 1 and vim.islist or vim.tbl_islist
 
+local path_sep = package.config:sub(1, 1)
 local test_dir = 'tests/dir-git'
-local test_dir_absolute = vim.fn.fnamemodify(test_dir, ':p'):gsub('(.)/$', '%1')
-local test_file_absolute = test_dir_absolute .. '/file'
+local test_dir_absolute = vim.fn.fnamemodify(test_dir, ':p'):gsub('(.)[\\/]$', '%1')
+local test_file_absolute = test_dir_absolute .. path_sep .. 'file'
 
-local git_root_dir = test_dir_absolute .. '/git-repo'
-local git_repo_dir = git_root_dir .. '/.git-dir'
-local git_dir_path = git_root_dir .. '/dir-in-git'
-local git_file_path = git_root_dir .. '/file-in-git'
+local git_root_dir = test_dir_absolute .. path_sep .. 'git-repo'
+local git_repo_dir = git_root_dir .. path_sep .. '.git-dir'
+local git_dir_path = git_root_dir .. path_sep .. 'dir-in-git'
+local git_file_path = git_root_dir .. path_sep .. 'file-in-git'
 
 local forward_lua = function(fun_str)
   local lua_cmd = fun_str .. '(...)'
   return function(...) return child.lua_get(lua_cmd, { ... }) end
+end
+
+-- Time constants
+local repo_watch_delay = 50
+local small_time = helpers.get_time_const(10)
+local micro_time = 1
+
+-- Common wrappers
+local edit = function(path)
+  child.cmd('edit ' .. child.fn.fnameescape(path))
+  -- Slow context needs a small delay to get things up to date
+  if helpers.is_slow() then sleep(small_time) end
 end
 
 local log_calls = function(fun_name)
@@ -66,13 +77,11 @@ local validate_minigit_name = function(buf_id, ref_name)
 end
 
 -- Common mocks
-local small_time = 10
-
 -- - Git mocks
 local mock_change_git_index = function()
   local index_path = git_repo_dir .. '/index'
   child.fn.writefile({}, index_path .. '.lock')
-  sleep(1)
+  sleep(micro_time)
   child.fn.delete(index_path)
   child.loop.fs_rename(index_path .. '.lock', index_path)
 end
@@ -167,6 +176,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -243,7 +253,8 @@ T['show_at_cursor()']['works on commit'] = function()
 
   show_at_cursor()
 
-  local ref_git_spawn_log = { { args = { '--no-pager', 'show', 'abc1234' }, cwd = child.fn.getcwd() } }
+  local ref_args = { '--no-pager', 'show', '--stat', '--patch', 'abc1234' }
+  local ref_git_spawn_log = { { args = ref_args, cwd = child.fn.getcwd() } }
   validate_git_spawn_log(ref_git_spawn_log)
   clear_spawn_log()
 
@@ -271,7 +282,8 @@ T['show_at_cursor()']['uses correct pattern to match commit'] = function()
     clear_spawn_log()
 
     show_at_cursor()
-    local is_commit = vim.deep_equal(get_spawn_log()[1].options.args, { '--no-pager', 'show', cword })
+    local ref_args = { '--no-pager', 'show', '--stat', '--patch', cword }
+    local is_commit = vim.deep_equal(get_spawn_log()[1].options.args, ref_args)
     eq(is_commit, ref_is_commit)
   end
 
@@ -293,6 +305,140 @@ T['show_at_cursor()']['uses `opts` on commit'] = function()
   eq(child.fn.winlayout(), { 'row', { { 'leaf', get_win() }, { 'leaf', init_win_id } } })
   eq(get_lines(), { 'commit abc123456', 'Hello' })
   eq(child.o.filetype, 'git')
+end
+
+T['show_at_cursor()']["works in 'mini.deps' confirmation buffer"] = function()
+  local deps_buf_id = new_scratch_buf()
+  set_buf(deps_buf_id)
+  local lines = child.fn.readfile(test_dir_absolute .. '/deps-confirm')
+  set_lines(lines)
+  child.bo.filetype = 'minideps-confirm'
+  child.api.nvim_buf_set_name(0, 'mini-deps://confirm-update')
+
+  local validate_no_show = function(l_num)
+    -- Assume not existing `cwd` (because it should be called during checking
+    -- if the buffer's directory is inside git repo, which is not)
+    child.lua([[vim.fn.isdirectory = function() return 0 end]])
+
+    -- Should not depend on column
+    set_cursor(l_num, l_num % 13)
+    show_at_cursor()
+
+    eq(get_buf(), deps_buf_id)
+    eq(#child.api.nvim_list_tabpages(), 1)
+
+    -- A spawn log as if nothing is detected at "show commit" step (entries
+    -- come from the next steps)
+    validate_git_spawn_log({})
+    clear_spawn_log()
+    validate_notifications({ { '(mini.git) Nothing Git-related to show at cursor', 'WARN' } })
+    clear_notify_log()
+  end
+
+  local validate_show = function(l_num, commit, plugin_name)
+    -- Prepare spawn mocks data
+    mock_spawn()
+    child.lua([[_G.stdio_queue = { { { 'out', 'commit abc123456\nHello' } } }]])
+    -- Assume `cwd` always exists (for easier `deps-confirm` mock text)
+    child.lua([[vim.fn.isdirectory = function() return 1 end]])
+
+    set_cursor(l_num, l_num % 13)
+    show_at_cursor()
+
+    -- Should show in commit info in separate tabpage
+    expect.no_equality(get_buf(), deps_buf_id)
+    eq(child.bo.filetype, 'git')
+    eq(get_lines(), { 'commit abc123456', 'Hello' })
+    eq(#child.api.nvim_list_tabpages(), 2)
+    eq(child.api.nvim_tabpage_get_number(0), 2)
+    eq(#child.api.nvim_tabpage_list_wins(0), 1)
+
+    local ref_git_spawn_log = {
+      {
+        args = { '--no-pager', 'show', '--stat', '--patch', commit },
+        cwd = '/home/user/.local/share/nvim/site/pack/deps/opt/' .. plugin_name,
+      },
+    }
+    validate_git_spawn_log(ref_git_spawn_log)
+    clear_spawn_log()
+    validate_notifications({})
+    clear_notify_log()
+
+    -- Clean up
+    child.cmd('quit')
+  end
+
+  for i = 1, 11 do
+    validate_no_show(i)
+  end
+  validate_show(12, 'aa339f6ab611da07183a7fe44daa482605392502', 'plugin_b')
+  validate_show(13, '093b29f2b409278e2ed69a90462fee54714b5a84', 'plugin_b')
+  validate_show(14, '093b29f2b409278e2ed69a90462fee54714b5a84', 'plugin_b')
+  validate_show(15, '093b29f2b409278e2ed69a90462fee54714b5a84', 'plugin_b')
+  validate_show(16, '093b29f2', 'plugin_b')
+  validate_show(17, '093b29f2', 'plugin_b')
+  validate_show(18, '093b29f2', 'plugin_b')
+  validate_show(19, 'bfe74a48', 'plugin_b')
+  validate_show(20, 'bfe74a48', 'plugin_b')
+  validate_show(21, 'bfe74a48', 'plugin_b')
+  validate_show(22, '3826d0c4', 'plugin_b')
+  validate_show(23, '3826d0c4', 'plugin_b')
+  validate_show(24, '3826d0c4', 'plugin_b')
+  validate_no_show(25)
+  validate_no_show(26)
+  validate_no_show(27)
+  validate_show(28, '3a3c6244553f13fdd92d312c82722b57ce6c4bec', 'plugin_c')
+  validate_show(29, 'fe3deb7f67ce0cc4ebfe2ea6c1c7ae1c7a939d73', 'plugin_c')
+  validate_show(30, 'fe3deb7f67ce0cc4ebfe2ea6c1c7ae1c7a939d73', 'plugin_c')
+  validate_show(31, 'fe3deb7f67ce0cc4ebfe2ea6c1c7ae1c7a939d73', 'plugin_c')
+  validate_show(32, 'fe3deb7', 'plugin_c')
+  validate_show(33, 'fe3deb7', 'plugin_c')
+  validate_show(34, 'fe3deb7', 'plugin_c')
+  validate_no_show(35)
+  validate_no_show(36)
+  validate_no_show(37)
+  validate_show(38, 'd231729b13da28fd1625c3d85f2315886ddeb05d', 'plugin_d')
+end
+
+T['show_at_cursor()']["uses `opts` in 'mini.deps' confirmation buffer"] = function()
+  local deps_buf_id = new_scratch_buf()
+  set_buf(deps_buf_id)
+  local lines = child.fn.readfile(test_dir_absolute .. '/deps-confirm')
+  set_lines(lines)
+  child.bo.filetype = 'minideps-confirm'
+  child.api.nvim_buf_set_name(0, 'mini-deps://confirm-update')
+
+  child.lua([[vim.fn.isdirectory = function() return 1 end]])
+  child.lua([[_G.stdio_queue = { { { 'out', 'commit abc123456\nHello' } } }]])
+
+  local init_win_id = get_win()
+  set_cursor(16, 0)
+  show_at_cursor({ split = 'vertical' })
+
+  expect.no_equality(get_buf(), deps_buf_id)
+  eq(child.api.nvim_tabpage_get_number(0), 1)
+  eq(child.fn.winlayout(), { 'row', { { 'leaf', get_win() }, { 'leaf', init_win_id } } })
+  eq(get_lines(), { 'commit abc123456', 'Hello' })
+  eq(child.o.filetype, 'git')
+end
+
+T['show_at_cursor()']['shows message if can not find commit'] = function()
+  local lines = child.fn.readfile(test_dir_absolute .. '/deps-confirm')
+  set_lines(lines)
+  set_cursor(16, 2)
+
+  -- Commit at cursor
+  show_at_cursor()
+  validate_notifications({ { '(mini.git) Can not show commit 093b29f2 in repo ' .. child.fn.getcwd(), 'WARN' } })
+  clear_notify_log()
+
+  -- 'mini.deps' confirmation buffer
+  child.bo.filetype = 'minideps-confirm'
+  child.api.nvim_buf_set_name(0, 'mini-deps://confirm-update')
+
+  show_at_cursor()
+  local path = '/home/user/.local/share/nvim/site/pack/deps/opt/plugin_b'
+  validate_notifications({ { '(mini.git) Can not show commit 093b29f2 in repo ' .. path, 'WARN' } })
 end
 
 T['show_at_cursor()']['works for diff source'] = function()
@@ -354,6 +500,16 @@ end
 T['show_at_cursor()']['works on nothing'] = function()
   expect.no_error(show_at_cursor)
   validate_notifications({ { '(mini.git) Nothing Git-related to show at cursor', 'WARN' } })
+  clear_notify_log()
+
+  -- Should work in non-path buffers
+  set_buf(new_scratch_buf())
+  child.api.nvim_buf_set_name(0, 'minigit://2/git show')
+  clear_spawn_log()
+  expect.no_error(show_at_cursor)
+  validate_notifications({ { '(mini.git) Nothing Git-related to show at cursor', 'WARN' } })
+  -- - Should not try to find git directory in "show range history" stage
+  validate_git_spawn_log({})
 end
 
 T['show_diff_source()'] = new_set({
@@ -1147,6 +1303,7 @@ local enable = forward_lua('MiniGit.enable')
 
 T['enable()']['works'] = function()
   enable()
+  if helpers.is_slow() then sleep(small_time) end
   --stylua: ignore
   local ref_git_spawn_log = {
     {
@@ -1251,13 +1408,16 @@ T['enable()']['properly formats buffer-local summary string'] = function()
   edit(git_file_path)
   validate('main (??)')
 
-  child.cmd('edit')
+  edit('')
+  child.poke_eventloop()
   validate('main-1')
 
-  child.cmd('edit')
+  edit('')
+  child.poke_eventloop()
   validate('main-2 (A )')
 
-  child.cmd('edit')
+  edit('')
+  child.poke_eventloop()
   validate('main-3 ( M)')
 end
 
@@ -1420,8 +1580,7 @@ T['get_buf_data()']['works with several actions in progress'] = function()
 
   mock_spawn()
   child.lua('_G.stdio_queue = _G.init_track_stdio_queue')
-  child.cmd('edit')
-  sleep(small_time)
+  edit('')
   eq(get_buf_data().in_progress, 'merge,revert')
 end
 
@@ -1507,7 +1666,7 @@ T['Auto enable']['works after `:edit`'] = function()
   log_calls('MiniGit.enable')
   log_calls('MiniGit.disable')
 
-  child.cmd('edit')
+  edit('')
   validate_calls({ { 'MiniGit.disable', buf_id }, { 'MiniGit.enable', buf_id } })
   eq(get_buf_data(buf_id).root, git_root_dir)
 end
@@ -1555,7 +1714,7 @@ T['Tracking']['updates all buffers from same repo on repo change'] = function()
 
   -- Make change in '.git' directory
   mock_change_git_index()
-  sleep(50 + small_time)
+  sleep(repo_watch_delay + small_time)
 
   eq(get_buf_data(buf_id_1).status, 'MM')
   eq(get_buf_data(buf_id_2).status, 'A ')
@@ -1657,6 +1816,8 @@ T['Tracking']['reacts to buffer rename'] = function()
   -- This is the chosen way to track change in root/repo.
   -- Rely on manual `:edit` otherwise.
   local new_root, new_repo = child.fn.getcwd(), test_dir_absolute
+  local file_rel = 'tests' .. path_sep .. 'dir-git' .. path_sep .. 'file'
+  child.lua('_G.file_rel = ' .. vim.inspect(file_rel))
   local new_rev_parse_track = new_repo .. '\n' .. new_root
   child.lua('_G.new_rev_parse_track = ' .. vim.inspect(new_rev_parse_track))
   child.lua([[_G.stdio_queue = {
@@ -1664,9 +1825,9 @@ T['Tracking']['reacts to buffer rename'] = function()
       { { 'out', 'abc1234\nmain' } },    -- First get HEAD data
       { { 'out', 'M  file-in-git' } },   -- First get file status data
 
-      { { 'out', _G.new_rev_parse_track } },  -- Second get path to root and repo
-      { { 'out', 'def4321\ntmp' } },          -- Second get HEAD data
-      { { 'out', 'MM tests/dir-git/file' } }, -- Second get file status data
+      { { 'out', _G.new_rev_parse_track } }, -- Second get path to root and repo
+      { { 'out', 'def4321\ntmp' } },         -- Second get HEAD data
+      { { 'out', 'MM ' .. _G.file_rel } },   -- Second get file status data
     }
   ]])
 
@@ -1699,7 +1860,7 @@ T['Tracking']['reacts to buffer rename'] = function()
       cwd = new_root,
     },
     {
-      args = { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'tests/dir-git/file' },
+      args = { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', file_rel },
       cwd = new_root,
     },
   }
@@ -1754,7 +1915,7 @@ T['Tracking']['reacts to staging'] = function()
   mock_change_git_index()
 
   -- - Reaction to change in '.git' directory is debouned with delay of 50 ms
-  sleep(50 - small_time)
+  sleep(repo_watch_delay - small_time)
   eq(get_buf_data().status, 'MM')
   eq(#get_spawn_log(), 3)
 
@@ -1795,7 +1956,7 @@ T['Tracking']['reacts to change in HEAD'] = function()
   eq(get_buf_data().head_name, 'main')
   child.fn.writefile({ 'ref: refs/heads/tmp' }, git_repo_dir .. '/HEAD')
 
-  sleep(50 - small_time)
+  sleep(repo_watch_delay - small_time)
   eq(get_buf_data().head_name, 'main')
   eq(#get_spawn_log(), 3)
 
@@ -1858,7 +2019,7 @@ T['Tracking']['reacts to new action in progress'] = function()
   for _, name in ipairs(action_files) do
     local path = git_repo_dir .. '/' .. name
     child.fn.writefile({ '' }, path)
-    sleep(50 + small_time)
+    sleep(repo_watch_delay + small_time)
     output_in_progress[name] = get_buf_data().in_progress
     summary_strings[name] = child.b.minigit_summary_string
     child.fn.delete(path)
@@ -1889,11 +2050,12 @@ T['Tracking']['does not react to ".lock" files in repo directory'] = function()
   mock_init_track_stdio_queue()
   child.lua('_G.stdio_queue = _G.init_track_stdio_queue')
   edit(git_file_path)
+  sleep(small_time)
   eq(#get_spawn_log(), 3)
 
   child.fn.writefile({ '' }, git_repo_dir .. '/tmp.lock')
   MiniTest.finally(function() child.fn.delete(git_repo_dir .. '/tmp.lock') end)
-  sleep(50 + small_time)
+  sleep(repo_watch_delay + small_time)
   eq(#get_spawn_log(), 3)
 end
 
@@ -1930,7 +2092,7 @@ T['Tracking']['redraws statusline when summary is updated'] = function()
 
   -- Status change
   mock_change_git_index()
-  sleep(50 + small_time)
+  sleep(repo_watch_delay + small_time)
   child.expect_screenshot()
 
   -- File content change
@@ -1940,14 +2102,14 @@ T['Tracking']['redraws statusline when summary is updated'] = function()
 
   -- Branch change
   child.fn.writefile({ 'ref: refs/heads/tmp' }, git_repo_dir .. '/HEAD')
-  sleep(50 + small_time)
+  sleep(repo_watch_delay + small_time)
   child.expect_screenshot()
 
   -- "In progress" change
   local path = git_repo_dir .. '/BISECT_LOG'
   child.fn.writefile({ '' }, path)
   MiniTest.finally(function() child.fn.delete(path) end)
-  sleep(50 + small_time)
+  sleep(repo_watch_delay + small_time)
   child.expect_screenshot()
 end
 
@@ -2098,19 +2260,20 @@ local validate_command_call = function(log_index, args, executable, cwd)
 end
 
 T[':Git']['works'] = function()
+  child.lua('_G.dur = ' .. (10 * small_time))
   child.lua([[
     -- Command stdout
     table.insert(_G.stdio_queue, { { 'out', 'abc1234 Hello\ndef4321 World' } })
 
     -- Mock non-trivial command execution time
-    _G.process_mock_data = { [4] = { duration = 50 } }
+    _G.process_mock_data = { [4] = { duration = _G.dur } }
   ]])
 
   -- Should execute command synchronously
   local start_time = vim.loop.hrtime()
   child.cmd('Git log --oneline')
   local duration = 0.000001 * (vim.loop.hrtime() - start_time)
-  eq(50 <= duration and duration <= 70, true)
+  eq(10 * small_time <= duration and duration <= 14 * small_time, true)
 
   -- Should properly gather subcommand data before executing command
   local spawn_log = get_spawn_log()
@@ -2147,7 +2310,7 @@ T[':Git']['works asynchronously with bang modifier'] = function()
 
   -- Should in some way show the output when the process is done
   eq(child.bo.filetype == 'git', false)
-  sleep(50 - small_time)
+  sleep(repo_watch_delay - small_time)
   eq(child.bo.filetype == 'git', false)
   sleep(2 * small_time)
   eq(child.bo.filetype == 'git', true)
@@ -2357,7 +2520,7 @@ T[':Git']['opens Git editor in current instance'] = new_set(
       child.lua('MiniGit.config.job.timeout = 5')
 
       -- Set up content of edit message file
-      local editmsg_path = git_repo_dir .. '/COMMIT_EDITMSG'
+      local editmsg_path = git_repo_dir .. path_sep .. 'COMMIT_EDITMSG'
       child.lua('_G.editmsg_path = ' .. vim.inspect(editmsg_path))
       local cur_lines = vim.fn.readfile(editmsg_path)
       MiniTest.finally(function() vim.fn.writefile(cur_lines, editmsg_path) end)
@@ -2393,7 +2556,7 @@ T[':Git']['opens Git editor in current instance'] = new_set(
       local init_win_id = get_win()
       child.cmd(':belowright vert Git commit --amend')
 
-      sleep(small_time)
+      sleep(3 * small_time)
       eq(child.api.nvim_buf_get_name(0), editmsg_path)
       eq(get_lines(), { '', '# This is a mock of Git template for its `GIT_EDITOR`' })
       eq(child.fn.winlayout(), { 'row', { { 'leaf', init_win_id }, { 'leaf', get_win() } } })
@@ -2404,7 +2567,7 @@ T[':Git']['opens Git editor in current instance'] = new_set(
       -- Should not stop due to timeout
       local is_job_active = function() return child.lua_get('pcall(vim.fn.jobpid, _G.channel)') end
       eq(is_job_active(), true)
-      sleep(50)
+      sleep(repo_watch_delay)
       eq(is_job_active(), true)
 
       -- Should wait until editing is done (window is closed)
@@ -2513,18 +2676,19 @@ T[':Git']['respects `job.git_executable`'] = function()
 end
 
 T[':Git']['respects `job.timeout`'] = function()
+  child.lua('_G.duration = ' .. (5 * small_time))
   child.lua([[
     table.insert(_G.stdio_queue, { { 'out', 'Hello' } })
 
-    _G.process_mock_data = { [4] = { duration = 50 } }
+    _G.process_mock_data = { [4] = { duration = _G.duration } }
   ]])
 
-  child.lua('MiniGit.config.job.timeout = 20')
+  child.lua('MiniGit.config.job.timeout = ' .. (2 * small_time))
 
   local start_time = vim.loop.hrtime()
   child.cmd('Git log')
   local duration = 0.000001 * (vim.loop.hrtime() - start_time)
-  eq(15 <= duration and duration <= 25, true)
+  eq((1.5 * small_time) <= duration and duration <= (2.5 * small_time), true)
 
   local ref_notify_log = {
     { '(mini.git) PROCESS REACHED TIMEOUT', 'WARN' },
@@ -2897,8 +3061,8 @@ T[':Git']['event `MiniGitCommandSplit` can be used to tweak window-local options
   local init_win_id = get_win()
   child.cmd(':Git log')
   eq(child.api.nvim_win_get_option(init_win_id, 'scrollbind'), true)
-  eq(child.api.nvim_win_get_option(0, 'scrollbind'), true)
-  eq(child.api.nvim_win_get_option(0, 'foldlevel'), 0)
+  eq(child.wo.scrollbind, true)
+  eq(child.wo.foldlevel, 0)
 end
 
 return T

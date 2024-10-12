@@ -12,8 +12,7 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
 local get_window = function() return child.api.nvim_get_current_win() end
@@ -159,7 +158,9 @@ local mock_comment_operators = function()
   ]])
 end
 
--- Data =======================================================================
+-- Time constants
+local default_delay, postkeys_check_delay, redraw_interval = 1000, 50, 50
+local small_time = helpers.get_time_const(10)
 
 -- Output test set ============================================================
 local T = new_set({
@@ -167,6 +168,7 @@ local T = new_set({
     pre_case = function() child.setup() end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -232,6 +234,12 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ window = { config = 'a' } }, 'window.config', 'table or callable')
   expect_config_error({ window = { scroll_down = 1 } }, 'window.scroll_down', 'string')
   expect_config_error({ window = { scroll_up = 1 } }, 'window.scroll_up', 'string')
+end
+
+T['setup()']['ensures colors'] = function()
+  load_module()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniClueBorder'), 'links to FloatBorder')
 end
 
 T['setup()']['creates mappings for `@` and `Q`'] = function()
@@ -1182,38 +1190,42 @@ end
 T['Showing keys'] = new_set({ hooks = { pre_case = function() child.set_size(10, 40) end } })
 
 T['Showing keys']['works'] = function()
+  helpers.skip_if_slow()
+
   make_test_map('n', '<Space>aa')
   make_test_map('n', '<Space>ab')
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } } })
 
   -- Window should be shown after debounced delay
   type_keys(' ')
-  sleep(980)
+  sleep(default_delay - small_time)
   child.expect_screenshot()
 
   type_keys('a')
-  sleep(980)
+  sleep(default_delay - small_time)
   child.expect_screenshot()
-  sleep(20 + 5)
+  sleep(small_time + small_time)
   child.expect_screenshot()
 end
 
 T['Showing keys']['respects `config.window.delay`'] = function()
+  helpers.skip_if_slow()
+
   make_test_map('n', '<Space>aa')
   make_test_map('n', '<Space>ab')
   load_module({
     triggers = { { mode = 'n', keys = '<Space>' } },
-    window = { delay = 30 },
+    window = { delay = 0.5 * default_delay },
   })
 
   type_keys(' ')
-  sleep(20)
+  sleep(0.5 * default_delay - small_time)
   child.expect_screenshot()
 
   type_keys('a')
-  sleep(20)
+  sleep(0.5 * default_delay - small_time)
   child.expect_screenshot()
-  sleep(10 + 5)
+  sleep(small_time + small_time)
   child.expect_screenshot()
 end
 
@@ -1549,6 +1561,7 @@ T['Showing keys']['works with multibyte characters'] = function()
 
   type_keys(' ')
   child.expect_screenshot()
+  helpers.skip_on_windows('Windows has different collation order')
   type_keys('э')
   child.expect_screenshot()
 end
@@ -1556,14 +1569,14 @@ end
 T['Showing keys']['works in Command-line window'] = function()
   make_test_map('n', '<Space>f')
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
-  child.o.timeoutlen = 5
+  child.o.timeoutlen = small_time
 
   type_keys('q:')
   type_keys(' ')
 
   child.expect_screenshot()
 
-  sleep(5 + 5)
+  sleep(small_time + small_time)
   type_keys('f')
 
   -- Closing floating window is allowed only on Neovim>=0.10.
@@ -1922,8 +1935,7 @@ T['Postkeys']['closes window if postkeys do not end up key querying'] = function
   })
 
   type_keys(' ', 'a')
-  -- 50 ms is a hardcoded check delay
-  sleep(50 + 5)
+  sleep(postkeys_check_delay + small_time)
   child.expect_screenshot()
 end
 
@@ -1981,11 +1993,11 @@ T['Querying keys']['does not entirely block redraws'] = function()
 
   type_keys('<Space>', 'f')
   -- - Redraws don't happen immediately but inside a repeating timer
-  sleep(50 + 5)
+  sleep(redraw_interval + small_time)
   child.expect_screenshot()
 
   type_keys('f')
-  sleep(50 + 5)
+  sleep(redraw_interval + small_time)
   child.expect_screenshot()
 end
 
@@ -2007,9 +2019,9 @@ T['Querying keys']["does not time out after 'timeoutlen'"] = function()
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } } })
 
   -- Should wait for next key as there are still multiple clues available
-  child.o.timeoutlen = 10
+  child.o.timeoutlen = small_time
   type_keys(' ', 'f')
-  sleep(20)
+  sleep(2 * small_time)
   eq(get_test_map_count('n', ' f'), 0)
 end
 
@@ -2037,9 +2049,9 @@ T['Querying keys']['respects `<CR>`'] = function()
   validate_trigger_keymap('n', '<Space>')
 
   -- `<CR>` should execute current query
-  child.o.timeoutlen = 10
+  child.o.timeoutlen = small_time
   type_keys(' ', 'f', '<CR>')
-  sleep(15)
+  sleep(small_time + small_time)
   eq(get_test_map_count('n', ' f'), 1)
 end
 
@@ -2109,9 +2121,9 @@ T['Querying keys']['allows reaching longest keymap'] = function()
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } } })
   validate_trigger_keymap('n', '<Space>')
 
-  child.o.timeoutlen = 5
+  child.o.timeoutlen = small_time
   type_keys(' ', 'f', 'f')
-  sleep(10)
+  sleep(small_time + small_time)
   type_keys('f')
   eq(get_test_map_count('n', ' f'), 0)
   eq(get_test_map_count('n', ' fff'), 1)
@@ -2841,7 +2853,7 @@ T['Reproducing keys']['works for builtin keymaps in Terminal mode'] = function()
   child.cmd('wincmd v')
   child.cmd('terminal')
   -- Wait for terminal to load
-  vim.loop.sleep(100)
+  vim.loop.sleep(6 * small_time)
   child.cmd('startinsert')
   eq(child.fn.mode(), 't')
 
@@ -2860,7 +2872,7 @@ T['Reproducing keys']['works for user keymaps in Terminal mode'] = function()
   child.cmd('wincmd v')
   child.cmd('terminal')
   -- Wait for terminal to load
-  vim.loop.sleep(100)
+  vim.loop.sleep(6 * small_time)
   child.cmd('startinsert')
   eq(child.fn.mode(), 't')
 

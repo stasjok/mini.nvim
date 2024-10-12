@@ -32,6 +32,8 @@
 ---
 --- - Customizable project specific testing script.
 ---
+--- - Works on Unix (Linux, MacOS, etc.) and Windows.
+---
 --- What it doesn't support:
 --- - Parallel execution. Due to idea of limiting implementation complexity.
 ---
@@ -330,6 +332,8 @@ end
 ---     `parametrize` option at all.
 ---   - <data> - user data to be forwarded to cases. Can be used for a more
 ---     granular filtering.
+---   - <n_retry> - number of times to retry each case until success.
+---     Default: 1.
 ---@param tbl table|nil Initial test items (possibly nested). Will be executed
 ---   without any guarantees on order.
 ---
@@ -341,15 +345,14 @@ end
 ---   T['works'] = function() MiniTest.expect.equality(1, 1) end
 ---
 ---   -- Use with custom options. This will result into two actual cases: first
----   -- will pass, second - fail.
+---   -- will pass, second - fail after two attempts.
 ---   T['nested'] = MiniTest.new_set({
 ---     hooks = { pre_case = function() _G.x = 1 end },
----     parametrize = { { 1 }, { 2 } }
+---     parametrize = { { 1 }, { 2 } },
+---     n_retry = 2,
 ---   })
 ---
----   T['nested']['works'] = function(x)
----     MiniTest.expect.equality(_G.x, x)
----   end
+---   T['nested']['works'] = function(x) MiniTest.expect.equality(_G.x, x) end
 --- <
 MiniTest.new_set = function(opts, tbl)
   opts = opts or {}
@@ -415,7 +418,9 @@ end
 --- Execution of test case goes by the following rules:
 --- - Call functions in order:
 ---     - All elements of `hooks.pre` from first to last without arguments.
----     - Field `test` with arguments unpacked from `args`.
+---     - Field `test` with arguments unpacked from `args`. If execution fails,
+---       retry it (along with hooks that come from `pre_case` and `post_case`)
+---       at most `n_retry` times until first success (if any).
 ---     - All elements of `hooks.post` from first to last without arguments.
 --- - Error in any call gets appended to `exec.fails`, meaning error in any
 ---   hook will lead to test fail.
@@ -436,21 +441,28 @@ end
 ---         - 'Pass with notes' (no fails, some notes).
 ---         - 'Fail' (some fails, no notes).
 ---         - 'Fail with notes' (some fails, some notes).
----@field hooks table Hooks to be executed as part of test case. Has fields
----   <pre> and <post> with arrays to be consecutively executed before and
----   after execution of `test`.
+---@field hooks table Hooks to be executed as part of test case. Has fields:
+---   - <pre> and <post> - arrays of functions to be consecutively executed
+---     before and after every execution of `test`.
+---   - <pre_source> and <post_source> - arrays of strings with sources of
+---     corresponding elements in <pre> and <post> arrays. Source is one of
+---     `"once"` (for `pre_once` and `post_once` hooks) and
+---     `"case"` (for `pre_case` and `post_case` hooks).
 ---@field test function|table Main callable object representing test action.
 ---@tag MiniTest-test-case
 
---- Skip rest of current callable execution
+--- Skip the rest of current case
 ---
---- Can be used inside hooks and main test callable of test case. Note: at the
---- moment implemented as a specially handled type of error.
+--- Notes:
+--- - When called inside test case, stops execution while adding message to notes.
+--- - When called inside `pre_case` hook, registers skip at the start of its
+---   test case. Calling in other hooks has no effect.
+--- - Currently implemented as a specially handled type of error.
 ---
 ---@param msg string|nil Message to be added to current case notes.
 MiniTest.skip = function(msg)
-  H.cache.error_is_from_skip = true
-  error(msg or 'Skip test', 0)
+  H.cache.skip_message = msg or 'Skip test'
+  error(H.cache.skip_message, 0)
 end
 
 --- Add note to currently executed test case
@@ -467,11 +479,11 @@ end
 
 --- Register callable execution after current callable
 ---
---- Can be used inside hooks and main test callable of test case.
+--- Can be used several times inside hooks and main test callable of test case.
 ---
 ---@param f function|table Callable to be executed after current callable is
 ---   finished executing (regardless of whether it ended with error or not).
-MiniTest.finally = function(f) H.cache.finally = f end
+MiniTest.finally = function(f) table.insert(H.cache.finally, f) end
 
 --- Run tests
 ---
@@ -655,8 +667,8 @@ end
 --- - Execute each case in natural array order (aligned with their integer
 ---   keys). Set `MiniTest.current.case` to currently executed case. Detailed
 ---   test case execution is described in |MiniTest-test-case|. After any state
----   change, call `reporter.update(case_num)` (if present), where `case_num` is an
----   integer key of current test case.
+---   change (including case retry attempts), call `reporter.update(case_num)`
+---   (if present), where `case_num` is an integer key of current test case.
 --- - Call `reporter.finish()` (if present).
 ---
 --- Notes:
@@ -698,24 +710,7 @@ MiniTest.execute = function(cases, opts)
   vim.schedule(function() H.exec_callable(reporter.start, cases) end)
 
   for case_num, cur_case in ipairs(cases) do
-    -- Schedule execution in async fashion. This allows doing other things
-    -- while tests are executed.
-    local schedule_step = H.make_step_scheduler(cur_case, case_num, opts)
-
-    vim.schedule(function() MiniTest.current.case = cur_case end)
-
-    for i, hook_pre in ipairs(cur_case.hooks.pre) do
-      schedule_step(hook_pre, 'hook_pre', [[Executing 'pre' hook #]] .. i)
-    end
-
-    schedule_step(function() cur_case.test(unpack(cur_case.args)) end, 'case', 'Executing test')
-
-    for i, hook_post in ipairs(cur_case.hooks.post) do
-      schedule_step(hook_post, 'hook_post', [[Executing 'post' hook #]] .. i)
-    end
-
-    -- Finalize state
-    schedule_step(nil, 'finalize', function() return H.case_final_state(cur_case) end)
+    H.schedule_case(cur_case, case_num, opts)
   end
 
   vim.schedule(function() H.exec_callable(reporter.finish) end)
@@ -1258,6 +1253,12 @@ MiniTest.new_child_neovim = function()
 
     -- Make unique name for `--listen` pipe
     local job = { address = vim.fn.tempname() }
+
+    if vim.fn.has('win32') == 1 then
+      -- Use special local pipe prefix on Windows with (hopefully) unique name
+      -- Source: https://learn.microsoft.com/en-us/windows/win32/ipc/pipe-names
+      job.address = [[\\.\pipe\mininvim]] .. vim.fn.fnamemodify(job.address, ':t')
+    end
 
     --stylua: ignore
     local full_args = {
@@ -1855,10 +1856,10 @@ H.is_headless = #vim.api.nvim_list_uis() == 0
 
 -- Cache for various data
 H.cache = {
-  -- Whether error is initiated from `MiniTest.skip()`
-  error_is_from_skip = false,
-  -- Callable to be executed after step (hook or test function)
-  finally = nil,
+  -- Message with which case is meant to be skipped
+  skip_message = nil,
+  -- Queue of callables to be executed after step (hook or test function)
+  finally = {},
   -- Whether to stop async execution
   should_stop_execution = false,
   -- Number of screenshots made in current case
@@ -1924,11 +1925,8 @@ end
 H.apply_config = function(config) MiniTest.config = config end
 
 H.create_autocommands = function()
-  local augroup = vim.api.nvim_create_augroup('MiniTest', {})
-  vim.api.nvim_create_autocmd(
-    'ColorScheme',
-    { group = augroup, callback = H.create_default_hl, desc = 'Ensure proper colors' }
-  )
+  local gr = vim.api.nvim_create_augroup('MiniTest', {})
+  vim.api.nvim_create_autocmd('ColorScheme', { group = gr, callback = H.create_default_hl, desc = 'Ensure colors' })
 end
 
 H.create_default_hl = function()
@@ -2009,15 +2007,21 @@ H.execute_project_script = function(...)
   return success
 end
 
-H.make_step_scheduler = function(case, case_num, opts)
-  local report_update_case = function() H.exec_callable(opts.reporter.update, case_num) end
+H.schedule_case = function(case, case_num, opts)
+  local update_state = function(state)
+    case.exec.state = state
+    H.exec_callable(opts.reporter.update, case_num)
+  end
 
+  local is_case_executed = false
   local on_err = function(e)
-    if H.cache.error_is_from_skip then
-      -- Add error message to 'notes' rather than 'fails'
-      table.insert(case.exec.notes, tostring(e))
-      H.cache.error_is_from_skip = false
-      return
+    if H.cache.skip_message ~= nil then
+      -- Add skip message to notes (not fails) only during main case execution
+      if is_case_executed then
+        table.insert(case.exec.notes, H.cache.skip_message)
+        H.cache.skip_message = nil
+      end
+      return true
     end
 
     -- Append traceback to error message and indent lines for pretty print
@@ -2025,34 +2029,72 @@ H.make_step_scheduler = function(case, case_num, opts)
     local error_msg = table.concat(error_lines, '\n'):gsub('\n', '\n  ')
     table.insert(case.exec.fails, error_msg)
 
-    if opts.stop_on_error then
-      MiniTest.stop()
-      case.exec.state = H.case_final_state(case)
-      report_update_case()
+    return false
+  end
+
+  local exec_step = function(f, state)
+    update_state(state)
+
+    H.cache.finally, H.cache.n_screenshots = {}, 0
+    local ok_f, ok_err = xpcall(f, on_err)
+
+    for _, fin in ipairs(H.cache.finally) do
+      H.exec_callable(fin)
+    end
+
+    return ok_f or ok_err
+  end
+
+  local exec_hooks = function(name, source)
+    local source_arr = case.hooks[name .. '_source']
+    local state_prefix = "Executing '" .. name .. "' hook #"
+    for i, h in ipairs(case.hooks[name]) do
+      if source_arr[i] == source then exec_step(h, state_prefix .. i) end
     end
   end
 
-  return function(f, f_type, state)
-    f = f or function() end
+  vim.schedule(function()
+    if H.cache.should_stop_execution then return end
 
-    vim.schedule(function()
-      if H.cache.should_stop_execution then return end
+    case.exec = { fails = {}, notes = {} }
+    MiniTest.current.case = case
 
-      local n_fails = case.exec == nil and 0 or #case.exec.fails
-      if f_type == 'case' and n_fails > 0 then
-        f = function() table.insert(case.exec.notes, 'Skip case due to error(s) in hooks.') end
+    exec_hooks('pre', 'once')
+    local exec_data = case.exec
+
+    local ok_case
+    for cur_try = 1, case.n_retry do
+      -- Ensure that fails and notes are not accumulated during retries
+      case.exec = vim.deepcopy(exec_data)
+
+      -- Ensure that `skip()` affects only `pre_case` hooks and case
+      H.cache.skip_message = nil
+
+      -- Executing `*_case` hooks on every retry should ensure same case setup
+      -- (like cleanly restarted child process)
+      exec_hooks('pre', 'case')
+
+      local case_f = function() case.test(unpack(case.args)) end
+      if #case.exec.fails > 0 then
+        case_f = function() table.insert(case.exec.notes, 'Skip case due to error(s) in hooks.') end
       end
+      if H.cache.skip_message ~= nil then case_f = function() MiniTest.skip(H.cache.skip_message) end end
 
-      H.cache.n_screenshots = 0
-      case.exec = case.exec or { fails = {}, notes = {} }
-      case.exec.state = vim.is_callable(state) and state() or state
-      report_update_case()
-      xpcall(f, on_err)
+      is_case_executed = true
+      ok_case = exec_step(case_f, 'Executing test')
+      is_case_executed = false
 
-      H.exec_callable(H.cache.finally)
-      H.cache.finally = nil
-    end)
-  end
+      exec_hooks('post', 'case')
+
+      if ok_case then break end
+    end
+
+    exec_hooks('post', 'once')
+
+    update_state(H.case_final_state(case))
+
+    if not ok_case and opts.stop_on_error then MiniTest.stop() end
+  end)
 end
 
 -- Work with test cases -------------------------------------------------------
@@ -2062,12 +2104,12 @@ end
 ---   be executed only once before corresponding item.
 ---@private
 H.set_to_testcases = function(set, template, hooks_once)
-  template = template or { args = {}, desc = {}, hooks = { pre = {}, post = {} }, data = {} }
+  template = template or { args = {}, desc = {}, hooks = { pre = {}, post = {} }, data = {}, n_retry = 1 }
   hooks_once = hooks_once or { pre = {}, post = {} }
 
   local metatbl = getmetatable(set)
   local opts, key_order = metatbl.opts, metatbl.key_order
-  local hooks, parametrize, data = opts.hooks or {}, opts.parametrize or { {} }, opts.data or {}
+  local hooks, parametrize, data, n_retry = opts.hooks or {}, opts.parametrize or { {} }, opts.data or {}, opts.n_retry
 
   -- Convert to steps only callable or test set nodes
   -- Ensure that all elements of `set` are being considered (might not be the
@@ -2100,6 +2142,7 @@ H.set_to_testcases = function(set, template, hooks_once)
         desc = type(key) == 'string' and key:gsub('\n', '\\n') or key,
         hooks = { pre = hooks.pre_case, post = hooks.post_case },
         data = data,
+        n_retry = n_retry,
       })
 
       if vim.is_callable(node) then
@@ -2135,17 +2178,18 @@ end
 H.inject_hooks_once = function(cases, hooks_once)
   -- NOTE: this heavily relies on the equivalence of "have same object id" and
   -- "are same hooks"
-  local already_injected = {}
-  local n = #cases
+  local already_injected, n = {}, #cases
 
   -- Inject 'pre' hooks moving forwards
   for i = 1, n do
     local case, hooks = cases[i], hooks_once[i].pre
+    case.hooks.pre_source = vim.tbl_map(function() return 'case' end, case.hooks.pre)
     local target_tbl_id = 1
     for j = 1, #hooks do
       local h = hooks[j]
       if not already_injected[h] then
         table.insert(case.hooks.pre, target_tbl_id, h)
+        table.insert(case.hooks.pre_source, target_tbl_id, 'once')
         target_tbl_id, already_injected[h] = target_tbl_id + 1, true
       end
     end
@@ -2154,11 +2198,13 @@ H.inject_hooks_once = function(cases, hooks_once)
   -- Inject 'post' hooks moving backwards
   for i = n, 1, -1 do
     local case, hooks = cases[i], hooks_once[i].post
-    local target_table_id = #case.hooks.post + 1
+    case.hooks.post_source = vim.tbl_map(function() return 'case' end, case.hooks.post)
+    local target_tbl_id = #case.hooks.post + 1
     for j = #hooks, 1, -1 do
       local h = hooks[j]
       if not already_injected[h] then
-        table.insert(case.hooks.post, target_table_id, h)
+        table.insert(case.hooks.post, target_tbl_id, h)
+        table.insert(case.hooks.post_source, target_tbl_id, 'once')
         already_injected[h] = true
       end
     end
@@ -2179,6 +2225,7 @@ H.extend_template = function(template, layer)
   table.insert(res.desc, layer.desc)
   res.hooks = H.extend_hooks(res.hooks, layer.hooks, false)
   res.data = vim.tbl_deep_extend('force', res.data, layer.data)
+  res.n_retry = layer.n_retry or res.n_retry or 1
 
   return res
 end

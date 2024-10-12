@@ -14,8 +14,7 @@ local get_cursor = function(...) return child.get_cursor(...) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
 local get_latest_message = function() return child.cmd_capture('1messages') end
@@ -52,6 +51,10 @@ local mock_treesitter_builtin = function() child.cmd('source tests/dir-ai/mock-l
 
 local mock_treesitter_plugin = function() child.cmd('set rtp+=tests/dir-ai') end
 
+-- Time constants
+local helper_message_delay = 1000
+local small_time = helpers.get_time_const(10)
+
 -- Output test set
 local T = new_set({
   hooks = {
@@ -61,6 +64,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(1),
 })
 
 -- Unit tests =================================================================
@@ -148,6 +152,7 @@ local validate_find = function(lines, cursor, args, expected)
     new_expected = {
       from = { line = expected[1][1], col = expected[1][2] },
       to = { line = expected[2][1], col = expected[2][2] },
+      vis_mode = expected.vis_mode,
     }
   end
 
@@ -386,6 +391,20 @@ T['find_textobject()']['handles function as textobject spec']['returns array of 
   child.lua([[MiniAi.config.n_lines = 10]])
   child.lua([[MiniAi.config.search_method = 'cover']])
   validate_find(lines, { 1, 4 }, { 'a', 'r' }, nil)
+
+  -- Should account for region `vis_mode`
+  child.lua([[_G.line_regions = function(_, _, _)
+    return {
+      { from = { line = 1, col = 1 }, to = { line = 2, col = 1 }, vis_mode = 'V' },
+      { from = { line = 3, col = 1 }, to = { line = 4, col = 1 }, vis_mode = 'V' },
+    }
+  end]])
+  child.lua([[MiniAi.config.custom_textobjects = { m = _G.line_regions }]])
+
+  local ref_region_1 = { { 1, 1 }, { 2, 1 }, vis_mode = 'V' }
+  validate_find({ 'aaa', 'bbb', 'ccc', 'ddd' }, { 1, 0 }, { 'a', 'm' }, ref_region_1)
+  local ref_region_2 = { { 3, 1 }, { 4, 1 }, vis_mode = 'V' }
+  validate_find({ 'aaa', 'bbb', 'ccc', 'ddd' }, { 3, 0 }, { 'a', 'm' }, ref_region_2)
 end
 
 T['find_textobject()']['handles function as specification item'] = function()
@@ -1689,9 +1708,9 @@ T['Textobject']['prompts helper message after one idle second'] = new_set({ para
 
     -- Both mappings are applied only after `timeoutlen` milliseconds, because
     -- there are `an`/`in`/`al`/`il` mappings.
-    -- Wait 1000 seconds after that.
-    child.o.timeoutlen = 50
-    local total_wait_time = 1000 + child.o.timeoutlen
+    -- Wait fixed time after that.
+    child.o.timeoutlen = 2 * small_time
+    local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
     set_lines({ '(aaa)' })
     set_cursor(1, 1)
@@ -1766,8 +1785,8 @@ T['Textobject']['respects `config.silent`'] = function()
   child.o.showcmd = false
   child.lua('MiniAi.config.silent = true')
 
-  child.o.timeoutlen = 50
-  local total_wait_time = 1000 + child.o.timeoutlen
+  child.o.timeoutlen = 2 * small_time
+  local total_wait_time = helper_message_delay + child.o.timeoutlen + small_time
 
   set_lines({ '(aaa)' })
   set_cursor(1, 1)
@@ -3007,8 +3026,24 @@ T['Custom textobject']['handles function as textobject spec'] = function()
   child.lua([[MiniAi.config.search_method = 'next']])
   validate_tobj(lines, { 2, 0 }, 'aL', { { 4, 1 }, { 4, 81 } })
 
-  child.lua([[MiniAi.config.n_lines = 0]])
+  child.lua('MiniAi.config.n_lines = 0')
   validate_no_tobj(lines, { 2, 0 }, 'aL')
+
+  -- Function which returns region array with `vis_mode` set
+  child.lua([[MiniAi.config.search_method = 'cover']])
+  child.lua('MiniAi.config.n_lines = 50')
+  child.lua([[_G.line_regions = function(_, _, _)
+    return {
+      { from = { line = 1, col = 1 }, to = { line = 2, col = 1 }, vis_mode = 'V' },
+      { from = { line = 3, col = 1 }, to = { line = 4, col = 1 }, vis_mode = 'V' },
+    }
+  end]])
+  child.lua('MiniAi.config.custom_textobjects = { m = _G.line_regions }')
+
+  set_lines({ 'aaa', 'bbb', 'ccc', 'ddd' })
+  set_cursor(3, 0)
+  type_keys('d', 'a', 'm')
+  eq(get_lines(), { 'aaa', 'bbb' })
 end
 
 T['Custom textobject']['handles function as specification item'] = function()

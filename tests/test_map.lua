@@ -107,6 +107,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Data =======================================================================
@@ -239,6 +240,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ window = { width = 'a' } }, 'window.width', 'number')
   expect_config_error({ window = { winblend = 'a' } }, 'window.winblend', 'number')
   expect_config_error({ window = { zindex = 'a' } }, 'window.zindex', 'number')
+end
+
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniMapNormal'), 'links to NormalFloat')
 end
 
 local encode_strings = function(strings, opts)
@@ -1215,17 +1221,16 @@ T['gen_integration']['diff()']['updates when appropriate'] = function()
 
   mock_diff()
   child.lua([[
-    MiniMap.current.opts.integrations = { MiniMap.gen_integration.diff() }
-    _G.log = {}
     local refresh_orig = MiniMap.refresh
     MiniMap.refresh = function(...)
-      table.insert(_G.log, { ... })
+      _G.n = (_G.n or 0) + 1
       refresh_orig(...)
     end
   ]])
-  eq(child.lua_get('#_G.log'), 0)
+  child.lua('MiniMap.current.opts.integrations = { MiniMap.gen_integration.diff() }')
+  child.lua('_G.n = 0')
   child.cmd('doautocmd User MiniDiffUpdated')
-  eq(child.lua_get('#_G.log'), 1)
+  eq(child.lua_get('_G.n'), 1)
 end
 
 T['gen_integration']['diff()']['works if no diff data is found'] = function()

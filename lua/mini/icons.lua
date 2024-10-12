@@ -194,6 +194,9 @@ MiniIcons.setup = function(config)
   -- Apply config
   H.apply_config(config)
 
+  -- Define behavior
+  H.create_autocommands()
+
   -- Create default highlighting
   H.create_default_hl()
 end
@@ -1937,6 +1940,11 @@ H.apply_config = function(config)
   H.init_cache(config)
 end
 
+H.create_autocommands = function()
+  local gr = vim.api.nvim_create_augroup('MiniIcons', {})
+  vim.api.nvim_create_autocmd('ColorScheme', { group = gr, callback = H.create_default_hl, desc = 'Ensure colors' })
+end
+
 --stylua: ignore
 H.create_default_hl = function()
   local hi = function(name, opts)
@@ -2035,7 +2043,7 @@ H.get_impl = {
     -- Built-in extensions
     local icon_data = H.extension_icons[name]
     if type(icon_data) == 'string' then return MiniIcons.get('filetype', icon_data) end
-    if icon_data ~= nil then return icon_data, icon_data.hl end
+    if icon_data ~= nil then return icon_data end
 
     -- Parts of complex extension (if can be recognized)
     local dot = string.find(name, '%..')
@@ -2058,7 +2066,8 @@ H.get_impl = {
     -- Built-in file names
     local icon_data = H.file_icons[basename]
     if type(icon_data) == 'string' then return MiniIcons.get('filetype', icon_data) end
-    if icon_data ~= nil then return icon_data end
+    -- - Style icon based on the basename and not full name
+    if icon_data ~= nil then return H.style_icon(icon_data.glyph, basename), icon_data.hl end
 
     -- Basename extensions. Prefer this before `vim.filetype.match()` for speed
     -- (as the latter is slow-ish; like 0.1 ms in Neovim<0.11)

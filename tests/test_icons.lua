@@ -28,6 +28,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -36,6 +37,9 @@ T['setup()'] = new_set()
 T['setup()']['creates side effects'] = function()
   -- Global variable
   eq(child.lua_get('type(_G.MiniIcons)'), 'table')
+
+  -- Autocommand group
+  eq(child.fn.exists('#MiniIcons'), 1)
 
   -- Highlight groups
   child.cmd('hi clear')
@@ -95,6 +99,11 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ lsp = 1 }, 'lsp', 'table')
   expect_config_error({ os = 1 }, 'os', 'table')
   expect_config_error({ use_file_extension = 1 }, 'use_file_extension', 'function')
+end
+
+T['setup()']['ensures colors'] = function()
+  child.cmd('colorscheme default')
+  expect.match(child.cmd_capture('hi MiniIconsAzure'), 'links to Function')
 end
 
 T['setup()']['can customize icons'] = function()
@@ -311,8 +320,8 @@ T['get()']['respects `config.use_file_extension`'] = function()
   eq(get('file', '/extra.dots.yml'), { '', 'MiniIconsPurple', false })
 
   -- - '/queries/.*%.scm' pattern should be built-in
-  eq(get('file', 'queries/lua.scm'), { '󰐅', 'MiniIconsGreen', false })
-  eq(get('file', 'queries/extra.dots.scm'), { '󰐅', 'MiniIconsGreen', false })
+  eq(get('file', './queries/lua.scm'), { '󰐅', 'MiniIconsGreen', false })
+  eq(get('file', './queries/extra.dots.scm'), { '󰐅', 'MiniIconsGreen', false })
   eq(get('file', 'lua.scm'), { '󰘧', 'MiniIconsGrey', false })
 
   -- Should not be called if there is no extension
@@ -520,6 +529,12 @@ T['get()']['respects `config.style`'] = function()
   eq(get('file', 'Cargo.lock'), { 'T', 'MiniIconsOrange', false })
   -- - 'not-supported' is resolved to use "file" default
   eq(get('file', 'not-supported'), { 'F', 'MiniIconsGrey', true })
+
+  -- Should work with full paths
+  eq(get('file', '/home/user/LICENSE'), { 'L', 'MiniIconsCyan', false })
+  eq(get('file', '/home/user/world.lua'), { 'L', 'MiniIconsAzure', false })
+  eq(get('file', '/home/user/Cargo.lock'), { 'T', 'MiniIconsOrange', false })
+  eq(get('file', '/home/user/not-supported-2'), { 'F', 'MiniIconsGrey', true })
 
   -- Should work with all categories
   eq(get('default', 'lsp')[1], 'L')

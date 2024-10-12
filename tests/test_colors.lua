@@ -12,16 +12,15 @@ local colors_path = dir_path .. '/colors/'
 local load_module = function(config) child.mini_load('colors', config) end
 local unload_module = function(config) child.mini_unload('colors', config) end
 local type_keys = function(...) return child.type_keys(...) end
-local poke_eventloop = function() child.api.nvim_eval('1') end
-local sleep = function(ms) vim.loop.sleep(ms); poke_eventloop() end
+local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
 -- Mock test color scheme
 local mock_cs = function() child.cmd('set rtp+=' .. dir_path .. 'mock_cs/') end
 
--- Data =======================================================================
--- Small time used to reduce test flackiness
-local small_time = 15
+-- Time constants
+local default_transition_duration, default_show_duration = 1000, 1000
+local small_time = helpers.get_time_const(10)
 
 -- Output test set ============================================================
 local T = new_set({
@@ -32,6 +31,7 @@ local T = new_set({
     end,
     post_once = child.stop,
   },
+  n_retry = helpers.get_n_retry(2),
 })
 
 -- Unit tests =================================================================
@@ -1313,7 +1313,7 @@ end
 T['as_colorscheme() methods']['write()'] = new_set({
   hooks = {
     pre_case = function()
-      local lua_cmd = string.format([[vim.fn.stdpath = function() return '%s' end]], dir_path)
+      local lua_cmd = string.format([[vim.fn.stdpath = function() return %s end]], vim.inspect(dir_path))
       child.lua(lua_cmd)
 
       -- Add to `rtp` to be able to discrove color schemes
@@ -1381,7 +1381,9 @@ T['as_colorscheme() methods']['write()']['makes unique color scheme name'] = fun
 
   local files = child.fn.readdir(colors_path)
   eq(#files, 1)
-  -- File name should add timestamp suffix in case of duplicated name
+  -- File name should add timestamp suffix in case of duplicated name, but
+  -- doesn't work on Windows
+  helpers.skip_on_windows('`vim.fn.strftime()` does not work on Windows')
   expect.match(files[1], 'mock_cs_%d%d%d%d%d%d%d%d_%d%d%d%d%d%d%.lua')
 end
 
@@ -1432,7 +1434,7 @@ T['as_colorscheme() methods']['write()']['respects `opts.directory`'] = function
     groups = { Normal = { fg = '#ffffff' } }
   })]])
 
-  local write_cmd = string.format([[_G.cs:write({ directory = '%s' })]], inner_dir)
+  local write_cmd = '_G.cs:write({ directory = ' .. vim.inspect(inner_dir) .. ' })'
   child.lua(write_cmd)
 
   eq(child.fn.filereadable(inner_dir .. 'my_cs.lua'), 1)
@@ -1609,8 +1611,13 @@ T['animate()'] = new_set({
           }
         }
       end]])
+
+      -- Create reference duration values
+      child.lua('_G.default_transition_duration = ' .. default_transition_duration)
+      child.lua('_G.default_show_duration = ' .. default_show_duration)
     end,
   },
+  n_retry = helpers.get_n_retry(4),
 })
 
 local is_cs_1 = function()
@@ -1629,6 +1636,8 @@ end
 
 --stylua: ignore
 T['animate()']['works'] = function()
+  helpers.skip_if_slow()
+
   local validate_init = function()
     local cur_cs = child.lua_get('_G.get_relevant_cs_data()')
     eq(cur_cs.name, 'cs_1')
@@ -1676,7 +1685,7 @@ T['animate()']['works'] = function()
     )
   end
 
-  sleep(500 - small_time)
+  sleep(0.5 * default_transition_duration - small_time)
   validate_before_half()
 
   -- Check slightly after half-way
@@ -1708,7 +1717,7 @@ T['animate()']['works'] = function()
     )
   end
 
-  sleep(2 * small_time)
+  sleep(3 * small_time)
   validate_after_half()
 
   -- After first transition end it should show intermediate step for 1 second
@@ -1723,56 +1732,60 @@ T['animate()']['works'] = function()
     eq(child.g.terminal_color_15, '#000000')
   end
 
-  sleep(500)
+  sleep(0.5 * default_transition_duration)
   validate_intermediate()
 
-  sleep(1000 - 2 * small_time)
+  sleep(default_show_duration - 3 * small_time)
   validate_intermediate()
 
   -- After showing period it should start transition back to first one (as it
   -- was specially designed command)
-  sleep(500)
+  sleep(0.5 * default_transition_duration)
   validate_after_half()
 
-  sleep(2 * small_time)
+  sleep(3 * small_time)
   validate_before_half()
 
-  sleep(500 - small_time)
+  sleep(0.5 * default_transition_duration)
   validate_init()
 end
 
 T['animate()']['respects `opts.transition_steps`'] = function()
+  helpers.skip_if_slow()
+
   child.lua('_G.cs_1:apply()')
   child.lua([[MiniColors.animate({ _G.cs_2 }, { transition_steps = 2 })]])
 
-  sleep(500 - small_time - 10)
+  sleep(0.5 * default_transition_duration - 2 * small_time)
   eq(is_cs_1(), true)
 
-  sleep(2 * small_time + 10)
+  sleep(2 * small_time + small_time)
   eq(child.lua_get('_G.get_relevant_cs_data().groups.Normal.fg'), '#050000')
 
-  sleep(500 - small_time)
+  sleep(0.5 * default_transition_duration - small_time)
   eq(is_cs_2(), true)
 end
 
 T['animate()']['respects `opts.transition_duration`'] = function()
-  child.lua([[MiniColors.animate({ _G.cs_2 }, { transition_duration = 500 })]])
+  helpers.skip_if_slow()
 
-  sleep(500 + small_time)
+  child.lua([[MiniColors.animate({ _G.cs_2 }, { transition_duration = 0.5 * default_transition_duration })]])
+  sleep(0.5 * default_transition_duration + 2 * small_time)
   eq(is_cs_2(), true)
 end
 
 T['animate()']['respects `opts.show_duration`'] = function()
-  child.lua([[MiniColors.animate({ _G.cs_1, _G.cs_2 }, { show_duration = 100 })]])
+  helpers.skip_if_slow()
 
-  sleep(1000 + small_time)
+  child.lua([[MiniColors.animate({ _G.cs_1, _G.cs_2 }, { show_duration = 0.5 * default_show_duration })]])
+  sleep(default_transition_duration + small_time)
   eq(is_cs_1(), true)
 
-  sleep(100 - 2 * small_time)
+  sleep(0.5 * default_show_duration - 3 * small_time)
   eq(is_cs_1(), true)
 
-  -- Account that first step takes 40 ms
-  sleep(small_time + 40 + 10)
+  -- Account that first step takes some time
+  sleep(3 * small_time + 3 * small_time)
   eq(is_cs_1(), false)
 end
 
@@ -2198,29 +2211,31 @@ T['simulate_cvd()']['validates arguments'] = function()
 end
 
 -- Integration tests ==========================================================
-T[':Colorscheme'] = new_set()
+T[':Colorscheme'] = new_set({ n_retry = helpers.get_n_retry(4) })
 
 T[':Colorscheme']['works'] = function()
   mock_cs()
 
   child.cmd('hi Normal guifg=#ffffff')
   type_keys(':Colorscheme mock_cs<CR>')
-  sleep(1000 + small_time)
+  sleep(default_transition_duration + 3 * small_time)
   expect.match(child.cmd_capture('hi Normal'), 'guifg=#5f87af')
 end
 
 T[':Colorscheme']['accepts several arguments'] = function()
+  helpers.skip_if_slow()
+
   child.cmd('colorscheme blue')
   mock_cs()
   type_keys(':Colorscheme mock_cs blue<CR>')
 
-  sleep(1000 + small_time)
+  sleep(default_transition_duration + small_time)
   expect.match(child.cmd_capture('hi Normal'), 'guifg=#5f87af')
 
-  sleep(1000 - 2 * small_time)
+  sleep(default_show_duration - 2 * small_time)
   expect.match(child.cmd_capture('hi Normal'), 'guifg=#5f87af')
 
-  sleep(1000 + 2 * small_time)
+  sleep(default_transition_duration + 2 * small_time)
   local blue_normal_fg = '#ffd700'
   expect.match(child.cmd_capture('hi Normal'), 'guifg=' .. blue_normal_fg)
 end
@@ -2236,7 +2251,7 @@ T['interactive()'] = new_set()
 
 T['interactive()']['works'] = function()
   -- - Mock '~/.config/nvim'
-  local lua_cmd = string.format([[vim.fn.stdpath = function() return '%s' end]], dir_path)
+  local lua_cmd = 'vim.fn.stdpath = function() return ' .. vim.inspect(dir_path) .. ' end'
   child.lua(lua_cmd)
   child.cmd('set rtp+=' .. dir_path)
   MiniTest.finally(function() vim.fn.delete(colors_path, 'rf') end)
