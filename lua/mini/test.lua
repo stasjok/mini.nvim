@@ -272,6 +272,7 @@ do
   --- An array defining different arguments with which main test actions will be called.
   ---@field parametrize? any[][]
   ---@field data? table A table with user data that will be forwarded to cases.
+  ---@field n_retry? integer Number of times to retry each case until success. Default: 1.
 
   --- `new_set()` hooks
   ---@class MiniTest.new_set.opts.hooks
@@ -385,10 +386,15 @@ do
   ---         - 'Pass with notes' (no fails, some notes).
   ---         - 'Fail' (some fails, no notes).
   ---         - 'Fail with notes' (some fails, some notes).
-  ---@field hooks MiniTest.case.hooks Hooks to be executed as part of test case. Has fields
-  ---   <pre> and <post> with arrays to be consecutively executed before and
-  ---   after execution of `test`.
+  ---@field hooks MiniTest.case.hooks Hooks to be executed as part of test case. Has fields:
+  ---   - <pre> and <post> - arrays of functions to be consecutively executed
+  ---     before and after every execution of `test`.
+  ---   - <pre_source> and <post_source> - arrays of strings with sources of
+  ---     corresponding elements in <pre> and <post> arrays. Source is one of
+  ---     `"once"` (for `pre_once` and `post_once` hooks) and
+  ---     `"case"` (for `pre_case` and `post_case` hooks).
   ---@field test function|table Main callable object representing test action.
+  ---@field n_retry? integer Number of times to retry each case until success. Default: 1.
 
   --- Information about test case execution.
   ---@class MiniTest.test.exec
@@ -406,6 +412,8 @@ do
   ---@class MiniTest.case.hooks
   ---@field pre function[] Hooks to be executed before execution of the test.
   ---@field post function[] Hooks to be executed after execution of the test.
+  ---@field pre_source ("once"|"case")[] Sources of corresponding elements in `pre` and `post` arrays.
+  ---@field post_source ("once"|"case")[] Sources of corresponding elements in `pre` and `post` arrays.
 end
 
 --- Test case
