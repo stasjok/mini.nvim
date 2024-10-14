@@ -202,7 +202,7 @@
 ---       the moment before command execution).
 ---     - `<win_stdout>` `(number)` - window identifier of command output.
 ---@tag MiniGit-command
----@tag :Git
+---@tag :GitMini
 
 ---@alias __git_buf_id number Target buffer identifier. Default: 0 for current buffer.
 ---@alias __git_split_field <split> `(string)` - split direction. One of "horizontal", "vertical",
