@@ -1333,7 +1333,7 @@ T['child']['lua_func()'] = function()
   eq(method(), 2)
 
   -- Actually executes function in child neovim
-  child.lua('_G.var = 1')
+  eq(child.lua_get('_G.var'), vim.NIL)
   child.lua_func(function() _G.var = 10 end)
   eq(child.lua_get('_G.var'), 10)
 
@@ -1342,12 +1342,21 @@ T['child']['lua_func()'] = function()
 
   -- Has no side effects
   child.lua_func(function() end)
+  eq(child.lua_get('getupvalues'), vim.NIL)
+  eq(child.lua_get('setupvalues'), vim.NIL)
   eq(child.lua_get('f'), vim.NIL)
+  eq(child.lua_get('fn'), vim.NIL)
+  eq(child.lua_get('upvalues'), vim.NIL)
 
   -- Can error
   expect.error(function()
     return child.lua_func(function() error('test error') end)
   end, 'test error')
+
+  -- Supports upvalues
+  local a = 1
+  local b = { c = 2 }
+  eq(child.lua_func(function() return a + b.c end), 3)
 
   validate_child_method(method, { name = 'lua_func' })
 end

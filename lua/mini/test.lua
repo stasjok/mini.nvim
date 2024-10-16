@@ -1529,7 +1529,6 @@ MiniTest.new_child_neovim = function()
 
   --- Execute lua function and return its result.
   --- Function will be called with all extra arguments.
-  --- Note: usage of upvalues is not allowed.
   ---@generic T: MiniTest.child.RPC_types, U: MiniTest.child.RPC_types
   ---@param f fun(...: U): T?
   ---@param ... U
@@ -1537,10 +1536,37 @@ MiniTest.new_child_neovim = function()
   child.lua_func = function(f, ...)
     ensure_running()
     prevent_hanging('lua_func')
-    return child.api.nvim_exec_lua(
-      'local f = ...; return assert(loadstring(f))(select(2, ...))',
-      { string.dump(f), ... }
-    )
+
+    local function getupvalues(fn)
+      local upvalues = {}
+      for i = 1, math.huge do
+        local name, value = debug.getupvalue(fn, i)
+        if not name then break end
+        upvalues[name] = value
+      end
+      return upvalues
+    end
+
+    return child.api.nvim_exec_lua('local handler = ...; return assert(loadstring(handler))(select(2, ...))', {
+      string.dump(function(...)
+        local function setupvalues(fn, upvalues)
+          for i = 1, math.huge do
+            local name = debug.getupvalue(fn, i)
+            if not name then break end
+            if upvalues[name] ~= nil then debug.setupvalue(fn, i, upvalues[name]) end
+          end
+        end
+
+        return (function(fn, upvalues, ...)
+          fn = assert(loadstring(fn))
+          setupvalues(fn, upvalues)
+          return fn(...)
+        end)(...)
+      end),
+      string.dump(f),
+      getupvalues(f),
+      ...,
+    })
   end
 
   --- Check whether child process is blocked.
@@ -1719,7 +1745,6 @@ end
 ---   for |nvim_exec_lua()| but prepends string code with `return`.
 ---@field lua_func function Execute Lua function and return it's result.
 ---   Function will be called with all extra parameters (second one and later).
----   Note: usage of upvalues (data from outside function scope) is not allowed.
 ---
 ---@field is_blocked function Check whether child process is blocked.
 ---@field is_running function Check whether child process is currently running.
