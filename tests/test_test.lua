@@ -1367,6 +1367,16 @@ T['child']['lua_func()'] = function()
   local b = { c = 2 }
   eq(child.lua_func(function() return a + b.c end), 3)
 
+  -- Supports upvalue functions
+  local function t(v1, v2) return v1 + v2 end
+  eq(child.lua_func(function() return t(2, 4) end), 6)
+
+  -- Upvalue functions are recursive
+  local v1, v2, v3, v4 = 1, 2, 3, 4
+  local function add() return v1 + v2 end
+  local function adder() return add() + v3 end
+  eq(child.lua_func(function() return adder() + v4 end), 10)
+
   validate_child_method(method, { name = 'lua_func' })
 end
 

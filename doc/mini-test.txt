@@ -809,7 +809,10 @@ Fields ~
 {lua_get} `(function)` Execute Lua code and return result. A wrapper
   for |nvim_exec_lua()| but prepends string code with `return`.
 {lua_func} `(function)` Execute Lua function and return it's results.
-  Function will be called with all extra arguments.
+  The function will be called with all extra arguments.
+  Upvalues are also transferred, but currently _not_ copyed back,
+  so any changes to upvalues are not reflected on the caller side.
+  Upvalue functions are supported, but not in tables.
   Every `nil` is returned as `vim.NIL`.
 
 {is_blocked} `(function)` Check whether child process is blocked.

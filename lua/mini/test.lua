@@ -1528,7 +1528,10 @@ MiniTest.new_child_neovim = function()
   end
 
   --- Execute lua function and return its results.
-  --- Function will be called with all extra arguments.
+  --- The function will be called with all extra arguments.
+  --- Upvalues are also transferred, but currently _not_ copyed back,
+  --- so any changes to upvalues are not reflected on the caller side.
+  --- Upvalue functions are supported, but not in tables.
   --- Every `nil` is returned as `vim.NIL`.
   ---@generic T: MiniTest.child.RPC_types, T1, T2, T3, T4, T5, T6
   ---@param f fun(...: T): T1?, T2?, T3?, T4?, T5?, T6?
@@ -1543,6 +1546,9 @@ MiniTest.new_child_neovim = function()
       for i = 1, math.huge do
         local name, value = debug.getupvalue(fn, i)
         if not name then break end
+        if type(value) == 'function' then
+          value = { ____type_ = 'function', fn = string.dump(value), upvalues = getupvalues(value) }
+        end
         upvalues[name] = value
       end
       return upvalues
@@ -1555,7 +1561,15 @@ MiniTest.new_child_neovim = function()
             for i = 1, math.huge do
               local name = debug.getupvalue(fn, i)
               if not name then break end
-              if upvalues[name] ~= nil then debug.setupvalue(fn, i, upvalues[name]) end
+              local value = upvalues[name]
+              if value ~= nil then
+                if type(value) == 'table' and value.____type_ == 'function' then
+                  local fun = assert(loadstring(value.fn))
+                  setupvalues(fun, value.upvalues)
+                  value = fun
+                end
+                debug.setupvalue(fn, i, value)
+              end
             end
           end
 
@@ -1753,7 +1767,10 @@ end
 ---@field lua_get function Execute Lua code and return result. A wrapper
 ---   for |nvim_exec_lua()| but prepends string code with `return`.
 ---@field lua_func function Execute Lua function and return it's results.
----   Function will be called with all extra arguments.
+---   The function will be called with all extra arguments.
+---   Upvalues are also transferred, but currently _not_ copyed back,
+---   so any changes to upvalues are not reflected on the caller side.
+---   Upvalue functions are supported, but not in tables.
 ---   Every `nil` is returned as `vim.NIL`.
 ---
 ---@field is_blocked function Check whether child process is blocked.
