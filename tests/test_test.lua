@@ -1340,6 +1340,15 @@ T['child']['lua_func()'] = function()
   -- Can take arguments
   eq(child.lua_func(function(a, b) return a + b end, 1, 2), 3)
 
+  -- Can return multiple values
+  eq({ child.lua_func(function() return false, {}, 'a' end) }, { false, {}, 'a' })
+
+  -- Returns vim.NIL instead of nil
+  eq(child.lua_func(function() end), nil)
+  eq(child.lua_func(function() return nil end), vim.NIL)
+  local x, y, z = child.lua_func(function() return nil, 10, nil end)
+  eq({ x, y, z }, { vim.NIL, 10, vim.NIL })
+
   -- Has no side effects
   child.lua_func(function() end)
   eq(child.lua_get('getupvalues'), vim.NIL)

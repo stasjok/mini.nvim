@@ -1527,12 +1527,13 @@ MiniTest.new_child_neovim = function()
     return child.api.nvim_exec_lua('return ' .. str, args or {})
   end
 
-  --- Execute lua function and return its result.
+  --- Execute lua function and return its results.
   --- Function will be called with all extra arguments.
-  ---@generic T: MiniTest.child.RPC_types, U: MiniTest.child.RPC_types
-  ---@param f fun(...: U): T?
-  ---@param ... U
-  ---@return T
+  --- Every `nil` is returned as `vim.NIL`.
+  ---@generic T: MiniTest.child.RPC_types, T1, T2, T3, T4, T5, T6
+  ---@param f fun(...: T): T1?, T2?, T3?, T4?, T5?, T6?
+  ---@param ... T
+  ---@return T1, T2, T3, T4, T5, T6
   child.lua_func = function(f, ...)
     ensure_running()
     prevent_hanging('lua_func')
@@ -1547,26 +1548,34 @@ MiniTest.new_child_neovim = function()
       return upvalues
     end
 
-    return child.api.nvim_exec_lua('local handler = ...; return assert(loadstring(handler))(select(2, ...))', {
-      string.dump(function(...)
-        local function setupvalues(fn, upvalues)
-          for i = 1, math.huge do
-            local name = debug.getupvalue(fn, i)
-            if not name then break end
-            if upvalues[name] ~= nil then debug.setupvalue(fn, i, upvalues[name]) end
+    local n, ret =
+      unpack(child.api.nvim_exec_lua('local handler = ...; return assert(loadstring(handler))(select(2, ...))', {
+        string.dump(function(...)
+          local function setupvalues(fn, upvalues)
+            for i = 1, math.huge do
+              local name = debug.getupvalue(fn, i)
+              if not name then break end
+              if upvalues[name] ~= nil then debug.setupvalue(fn, i, upvalues[name]) end
+            end
           end
-        end
 
-        return (function(fn, upvalues, ...)
-          fn = assert(loadstring(fn))
-          setupvalues(fn, upvalues)
-          return fn(...)
-        end)(...)
-      end),
-      string.dump(f),
-      getupvalues(f),
-      ...,
-    })
+          return (function(fn, upvalues, ...)
+            fn = assert(loadstring(fn))
+            setupvalues(fn, upvalues)
+            -- Store the number of return values in the first item of the list
+            return (function(...) return { select('#', ...), { ... } } end)(fn(...))
+          end)(...)
+        end),
+        string.dump(f),
+        getupvalues(f),
+        ...,
+      }))
+    -- Set nils to vim.NILs explicitly
+    -- This is done for backward compatibility and consistency with other methods
+    for i = 1, n do
+      if ret[i] == nil then ret[i] = vim.NIL end
+    end
+    return unpack(ret)
   end
 
   --- Check whether child process is blocked.
@@ -1743,8 +1752,9 @@ end
 ---@field lua_notify function Execute Lua code without waiting for output.
 ---@field lua_get function Execute Lua code and return result. A wrapper
 ---   for |nvim_exec_lua()| but prepends string code with `return`.
----@field lua_func function Execute Lua function and return it's result.
----   Function will be called with all extra parameters (second one and later).
+---@field lua_func function Execute Lua function and return it's results.
+---   Function will be called with all extra arguments.
+---   Every `nil` is returned as `vim.NIL`.
 ---
 ---@field is_blocked function Check whether child process is blocked.
 ---@field is_running function Check whether child process is currently running.
