@@ -855,6 +855,8 @@ Fields ~
 {bo} `(table)` Redirection table for |vim.bo|.
 {wo} `(table)` Redirection table for |vim.wo|.
 
+{inspect_pos} `(function)` Redirection for |vim.inspect_pos()|.
+
 ------------------------------------------------------------------------------
                                                  *MiniTest-child-neovim.start()*
 child.start(args, opts) ~

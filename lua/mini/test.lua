@@ -1431,6 +1431,18 @@ MiniTest.new_child_neovim = function()
     return child.lua_get('vim.cmd(...)', { ... })
   end
 
+  local supported_callables = {
+    'inspect_pos',
+  }
+
+  for _, v in ipairs(supported_callables) do
+    child[v] = function(...)
+      ensure_running()
+      prevent_hanging(v)
+      return child.api.nvim_exec_lua(string.format('return vim[%s](...)', vim.inspect(v)), { ... })
+    end
+  end
+
   -- Convenience wrappers
 
   --- Basically a wrapper for `nvim_input()` applied inside child process.
@@ -1707,6 +1719,8 @@ MiniTest.new_child_neovim = function()
     child.treesitter = vim.treesitter
     child.ui = vim.ui
     child.uv = vim.uv
+    -- Callables
+    child.inspect_pos = vim.inspect_pos
   end
 
   return child
@@ -1812,6 +1826,8 @@ end
 ---@field go table Redirection table for |vim.go|.
 ---@field bo table Redirection table for |vim.bo|.
 ---@field wo table Redirection table for |vim.wo|.
+---
+---@field inspect_pos function Redirection for |vim.inspect_pos()|.
 ---@tag MiniTest-child-neovim
 
 --- child.start(args, opts) ~

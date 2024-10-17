@@ -1211,6 +1211,25 @@ T['child']['redirected method tables']['field'] = function(tbl_name, field_name,
   validate_child_field(tbl_name, field_name, true)
 end
 
+T['child']['redirected callables'] = new_set({
+  parametrize = {
+    {
+      'inspect_pos',
+      { 1, 0, 0, {} },
+      { buffer = 1, row = 0, col = 0, extmarks = {}, semantic_tokens = {}, syntax = {}, treesitter = {} },
+    },
+  },
+})
+
+T['child']['redirected callables']['method'] = function(fn_name, args)
+  local method = function() return child[fn_name](unpack(args)) end
+  validate_child_method(method, { name = fn_name })
+end
+
+T['child']['redirected callables']['value'] = function(fn_name, args, expectation)
+  if expectation then eq(child[fn_name](unpack(args)), expectation) end
+end
+
 T['child']['ui'] = function()
   -- Nothing to actually test due to mandatory function argument
   eq(type(child.ui), 'table')
