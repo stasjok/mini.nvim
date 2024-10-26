@@ -885,6 +885,9 @@ do
   --- Array of line numbers to ignore during compare.
   --- Default: `nil` to check all lines.
   ---@field ignore_lines? integer[]
+  --- Directory where automatically constructed `path` is located.
+  --- Default: "tests/screenshots".
+  ---@field directory? string
 end
 
 --- Expect equality to reference screenshot
