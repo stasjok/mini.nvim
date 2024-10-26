@@ -2,7 +2,15 @@
 
 ## mini.hues
 
-FEATURE: add `'lowmedium'` and `'mediumhigh'` saturation levels.
+- FEATURE: add `'lowmedium'` and `'mediumhigh'` saturation levels.
+
+## mini.pick
+
+- FEATURE: update `grep` and `grep_live` pickers to allow `globs` local option which restricts search to files that match any of its glob patterns (for example, `{ '*.lua', 'lua/**' }` will only search in Lua files and files in 'lua' directory). The `grep_live` picker also has custom `<C-o>` mapping to add globs interactively after picker is opened.
+
+## mini.surround
+
+- BREAKING: created mappings for `find`, `find_left`, and `highlight` are now *not* dot-repeatable. Dot-repeat should repeat last text change but neither of those actions change text. Having them dot-repeatable breaks the common "move cursor -> press dot" workflow. Initially making them dot-repeatable was a "you can but you should not" type of mistake.
 
 ## mini.test
 
@@ -10,6 +18,7 @@ FEATURE: add `'lowmedium'` and `'mediumhigh'` saturation levels.
 - FEATURE: add `hooks.pre_source` and `hooks.post_source` fields to collected cases. They can be either `'once'` or `'case'` and allow a more granular control over case execution.
 - FEATURE: `finally()` now can be called several times inside a single function with callbacks executed in order of how they were registered.
 - BREAKING FEATURE: now calling `skip()` in set's `pre_case` hook results in skipping all test cases in a set. Calling in other hooks has no effect. This enables a more structured skipping of all test cases inside a set. To skip inside hooks, use `add_note()` followed by `return`.
+- FEATURE: update `expect.reference_screenshot()` to allow `directory` option pointing to a directory where automatically constructed reference path is located.
 
 
 # Version 0.14.0
