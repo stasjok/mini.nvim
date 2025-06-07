@@ -39,17 +39,53 @@ end
 
 local validate_next_region = function(keys, next_region)
   type_keys(keys)
-  eq({ { child.fn.line('.'), child.fn.col('.') }, { child.fn.line('v'), child.fn.col('v') } }, next_region)
+  -- Should put cursor at the right edge of selection (as it is done for
+  -- built-in textobjects in Visual mode)
+  eq({ { child.fn.line('v'), child.fn.col('v') }, { child.fn.line('.'), child.fn.col('.') } }, next_region)
 end
 
 local validate_next_region1d = function(keys, next_region)
   type_keys(keys)
-  eq({ child.fn.col('.'), child.fn.col('v') }, next_region)
+  eq({ child.fn.col('v'), child.fn.col('.') }, next_region)
 end
+
+local validate_tobj = function(lines, cursor, keys, expected, vis_mode)
+  vis_mode = vim.api.nvim_replace_termcodes(vis_mode or 'v', true, true, true)
+
+  child.ensure_normal_mode()
+  set_lines(lines)
+  set_cursor(unpack(cursor))
+  type_keys(vis_mode, keys)
+  eq(get_mode(), vis_mode)
+
+  -- Allow supplying number items to verify linewise selection
+  local expected_from = type(expected[1]) == 'number' and expected[1] or { expected[1][1], expected[1][2] - 1 }
+  local expected_to = type(expected[2]) == 'number' and expected[2] or { expected[2][1], expected[2][2] - 1 }
+  child.expect_visual_marks(expected_from, expected_to)
+end
+
+local validate_tobj1d = function(line, column, keys, expected)
+  validate_tobj({ line }, { 1, column }, keys, { { 1, expected[1] }, { 1, expected[2] } })
+end
+
+local validate_no_tobj = function(lines, cursor, keys, vis_mode)
+  vis_mode = vim.api.nvim_replace_termcodes(vis_mode or 'v', true, true, true)
+
+  child.ensure_normal_mode()
+  set_lines(lines)
+  set_cursor(unpack(cursor))
+
+  type_keys(vis_mode, keys)
+  eq(get_mode(), 'n')
+  eq(get_cursor(), cursor)
+  expect.match(get_latest_message(), 'No textobject')
+end
+
+local validate_no_tobj1d = function(line, column, keys) validate_no_tobj({ line }, { 1, column }, keys) end
 
 local mock_treesitter_builtin = function() child.cmd('source tests/dir-ai/mock-lua-treesitter.lua') end
 
-local mock_treesitter_plugin = function() child.cmd('set rtp+=tests/dir-ai') end
+local mock_treesitter_plugin = function() child.cmd('noautocmd set rtp+=tests/dir-ai') end
 
 -- Time constants
 local helper_message_delay = 1000
@@ -551,6 +587,21 @@ T['move_cursor()']['opens just enough folds'] = function()
   eq(child.fn.foldclosed(3), 3)
 end
 
+T['move_cursor()']['adds jumplist entry'] = function()
+  set_lines({ '(aa', 'b)' })
+
+  local validate = function(init_pos, direction, ref_pos)
+    set_cursor(unpack(init_pos))
+    child.lua('MiniAi.move_cursor("' .. direction .. '", "a", ")")')
+    eq(get_cursor(), ref_pos)
+    type_keys('``')
+    eq(get_cursor(), init_pos)
+  end
+
+  validate({ 1, 1 }, 'right', { 2, 1 })
+  validate({ 2, 1 }, 'left', { 1, 0 })
+end
+
 T['move_cursor()']['handles function as textobject spec'] = function()
   -- Should call it only once
   child.lua('_G.n = 0')
@@ -721,6 +772,10 @@ T['gen_spec']['treesitter()']['works'] = function()
 
   -- Should prefer match on current line over multiline covering
   validate_find(lines, { 4, 0 }, { 'a', 'F' }, { { 4, 10 }, { 4, 37 } })
+
+  -- Should prefer range from metadata instead of node itself. This is useful,
+  -- for example, with `#offset!` directive to create more precise captures.
+  validate_find(lines, { 9, 0 }, { 'i', 'F' }, { { 8, 3 }, { 10, 13 } })
 end
 
 T['gen_spec']['treesitter()']['allows array of captures'] = function()
@@ -747,23 +802,24 @@ T['gen_spec']['treesitter()']['respects `opts.use_nvim_treesitter`'] = function(
     o = MiniAi.gen_spec.treesitter({ a = '@plugin_other', i = '@plugin_other' }),
     O = MiniAi.gen_spec.treesitter(
       { a = '@plugin_other', i = '@plugin_other' },
-      { use_nvim_treesitter = false }
+      { use_nvim_treesitter = true }
     )
   }]])
   local lines = get_lines()
 
-  -- By default it should be `true` but fall back to builtin if no
-  -- 'nvim-treesitter' is found
+  -- By default it should be `false`
   validate_find(lines, { 1, 0 }, { 'a', 'F' }, { { 3, 1 }, { 5, 3 } })
   validate_find(lines, { 1, 0 }, { 'a', 'o' }, nil)
   validate_find(lines, { 1, 0 }, { 'a', 'O' }, nil)
 
   mock_treesitter_plugin()
   validate_find(lines, { 1, 0 }, { 'a', 'F' }, { { 3, 1 }, { 5, 3 } })
-  validate_find(lines, { 1, 0 }, { 'a', 'o' }, { { 1, 1 }, { 1, 12 } })
+  validate_find(lines, { 1, 0 }, { 'a', 'o' }, nil)
+  validate_find(lines, { 1, 0 }, { 'a', 'O' }, { { 1, 1 }, { 1, 12 } })
 
-  -- Should respect `false` value
-  validate_find(lines, { 1, 0 }, { 'a', 'O' }, nil)
+  -- Should prefer range from metadata instead of node itself. This is useful,
+  -- for example, with `#offset!` directive to create more precise captures.
+  validate_find(lines, { 9, 0 }, { 'i', 'F' }, { { 8, 3 }, { 10, 13 } })
 end
 
 T['gen_spec']['treesitter()']['respects plugin options'] = function()
@@ -813,15 +869,53 @@ T['gen_spec']['treesitter()']['validates builtin treesitter presence'] = functio
 
   expect.error(
     function() child.lua([[MiniAi.find_textobject('a', 'F')]]) end,
-    vim.pesc([[(mini.ai) Can not get query for buffer 1 and language 'lua'.]])
+    vim.pesc([[(mini.ai) Can not get query for buffer 1 and language "lua".]])
   )
 
   -- Parser
   child.bo.filetype = 'aaa'
   expect.error(
     function() child.lua([[MiniAi.find_textobject('a', 'F')]]) end,
-    vim.pesc([[(mini.ai) Can not get parser for buffer 1 and language 'aaa'.]])
+    vim.pesc([[(mini.ai) Can not get parser for buffer 1 and language "aaa".]])
   )
+
+  -- - Should respect registered language for a filetype
+  child.lua([[
+    vim.treesitter.language.register('my_aaa', 'aaa')
+  ]])
+  expect.error(
+    function() child.lua([[MiniAi.find_textobject('a', 'F')]]) end,
+    vim.pesc([[(mini.ai) Can not get parser for buffer 1 and language "my_aaa".]])
+  )
+end
+
+T['gen_spec']['user_prompt()'] = new_set()
+
+-- More tests are done in `T['Builtin']['User prompt']`
+T['gen_spec']['user_prompt()']['works'] = function()
+  -- Define custom "user prompt" textobject
+  child.lua('MiniAi.config.custom_textobjects = { ["/"] = MiniAi.gen_spec.user_prompt() }')
+
+  -- Single character edges
+  validate_tobj1d('__e__o__', 0, 'a/e<CR>o<CR>', { 3, 6 })
+  validate_tobj1d('__e__o__', 0, 'i/e<CR>o<CR>', { 4, 5 })
+
+  -- Multiple character edges
+  validate_tobj1d('__ef__op__', 0, 'a/ef<CR>op<CR>', { 3, 8 })
+  validate_tobj1d('__ef__op__', 0, 'i/ef<CR>op<CR>', { 5, 6 })
+
+  -- Supports dot-repeat
+  set_lines({ '_e--o_', '+e---o+' })
+  set_cursor(1, 0)
+  type_keys('da', '/', 'e<CR>', 'o<CR>')
+  eq(get_lines(), { '__', '+e---o+' })
+  type_keys('j', '.')
+  eq(get_lines(), { '__', '++' })
+
+  set_lines({ '_r--t_' })
+  set_cursor(1, 0)
+  type_keys('di', '/', 'r<CR>', 't<CR>')
+  eq(get_lines(), { '_rt_' })
 end
 
 local validate_select = function(lines, cursor, args, expected)
@@ -870,9 +964,10 @@ end
 T['select_textobject()']['works with empty region'] = function() validate_select1d('a()', 0, { 'i', ')' }, { 3, 3 }) end
 
 T['select_textobject()']['allows selecting past line end'] = function()
-  child.o.virtualedit = 'block'
+  child.o.virtualedit, child.o.whichwrap = 'block', 'b,s'
   validate_select({ '(', 'a', ')' }, { 2, 0 }, { 'i', ')' }, { { 1, 2 }, { 2, 2 } })
   eq(child.o.virtualedit, 'block')
+  eq(child.o.whichwrap, 'b,s')
 end
 
 T['select_textobject()']["respects 'selection=exclusive'"] = function()
@@ -1372,40 +1467,6 @@ T['Search method']['works with "nearest" in Operator-pending mode'] = function()
 end
 
 -- Integration tests ==========================================================
-local validate_tobj = function(lines, cursor, keys, expected, vis_mode)
-  vis_mode = vim.api.nvim_replace_termcodes(vis_mode or 'v', true, true, true)
-
-  child.ensure_normal_mode()
-  set_lines(lines)
-  set_cursor(unpack(cursor))
-  type_keys(vis_mode, keys)
-  eq(get_mode(), vis_mode)
-
-  -- Allow supplying number items to verify linewise selection
-  local expected_from = type(expected[1]) == 'number' and expected[1] or { expected[1][1], expected[1][2] - 1 }
-  local expected_to = type(expected[2]) == 'number' and expected[2] or { expected[2][1], expected[2][2] - 1 }
-  child.expect_visual_marks(expected_from, expected_to)
-end
-
-local validate_tobj1d = function(line, column, keys, expected)
-  validate_tobj({ line }, { 1, column }, keys, { { 1, expected[1] }, { 1, expected[2] } })
-end
-
-local validate_no_tobj = function(lines, cursor, keys, vis_mode)
-  vis_mode = vim.api.nvim_replace_termcodes(vis_mode or 'v', true, true, true)
-
-  child.ensure_normal_mode()
-  set_lines(lines)
-  set_cursor(unpack(cursor))
-
-  type_keys(vis_mode, keys)
-  eq(get_mode(), 'n')
-  eq(get_cursor(), cursor)
-  expect.match(get_latest_message(), 'No textobject')
-end
-
-local validate_no_tobj1d = function(line, column, keys) validate_no_tobj({ line }, { 1, column }, keys) end
-
 T['Textobject'] = new_set()
 
 T['Textobject']['works in Visual mode'] = function()
@@ -1483,9 +1544,16 @@ T['Textobject']['collapses multiline textobject'] = function()
   local lines = { '(', 'a', ')' }
   validate_edit(lines, { 2, 0 }, { '' }, { 1, 0 }, 'da)')
 
-  validate_edit(lines, { 1, 0 }, { '()' }, { 1, 1 }, 'di)')
-  validate_edit(lines, { 2, 0 }, { '()' }, { 1, 1 }, 'di)')
-  validate_edit(lines, { 3, 0 }, { '()' }, { 1, 1 }, 'di)')
+  local validate = function()
+    validate_edit(lines, { 1, 0 }, { '()' }, { 1, 1 }, 'di)')
+    validate_edit(lines, { 2, 0 }, { '()' }, { 1, 1 }, 'di)')
+    validate_edit(lines, { 3, 0 }, { '()' }, { 1, 1 }, 'di)')
+  end
+
+  child.o.selection = 'inclusive'
+  validate()
+  child.o.selection = 'exclusive'
+  validate()
 end
 
 T['Textobject']['works with multibyte characters'] = function()
@@ -1656,6 +1724,42 @@ T['Textobject']['works with empty output region'] = function()
   validate(1)
 end
 
+T['Textobject']['handles horizontal view for out of view textobjects'] = function()
+  child.o.wrap = false
+  child.set_size(10, 25)
+
+  local validate = function(line, cursor_col, leftcol, keys, ref_leftcol)
+    set_lines({ line })
+    set_cursor(1, cursor_col)
+    child.fn.winrestview({ leftcol = leftcol })
+    type_keys(keys)
+    eq(child.fn.winsaveview().leftcol, ref_leftcol)
+
+    child.ensure_normal_mode()
+  end
+
+  -- Should try to do as least horizontal scroll as possible
+  local partially_visible_right = 'abcdefghijklmnopqrst "xxxxx"'
+  validate(partially_visible_right, 0, 0, { 'c', 'i', '"' }, 0)
+  validate(partially_visible_right, 0, 0, { 'v', 'i', '"' }, 2)
+
+  local completely_to_right = 'abcdefghijklmnopqrst        "xxxxx"'
+  validate(completely_to_right, 0, 0, { 'c', 'i', '"' }, 5)
+  validate(completely_to_right, 0, 0, { 'v', 'i', '"' }, 9)
+
+  local partially_visible_left = '"xxxxx" abcdefghijklmnopqrst'
+  validate(partially_visible_left, 8, 3, { 'c', 'il', '"' }, 1)
+  validate(partially_visible_left, 8, 3, { 'v', 'il', '"' }, 3)
+
+  local completely_to_left = '"xxxxx"        abcdefghijklmnopqrst'
+  validate(completely_to_left, 34, 10, { 'c', 'il', '"' }, 1)
+  validate(completely_to_left, 34, 10, { 'v', 'il', '"' }, 5)
+
+  local outside_left_right = '"xxxxx abcdefghijklmnopqrst xxxxx"'
+  validate(outside_left_right, 12, 4, { 'c', 'i', '"' }, 1)
+  validate(outside_left_right, 12, 4, { 'v', 'i', '"' }, 8)
+end
+
 T['Textobject']['works in command-line window'] = function()
   child.set_size(20, 40)
 
@@ -1689,7 +1793,7 @@ T['Textobject']['ensures that output is not covered by reference'] = function()
   set_lines({ 'aa(bb)cc(dd)' })
   set_cursor(1, 3)
   type_keys('vl', 'i)')
-  eq({ child.fn.col('.'), child.fn.col('v') }, { 10, 11 })
+  eq({ child.fn.col('v'), child.fn.col('.') }, { 10, 11 })
 
   -- Empty region
   validate_tobj1d('a()b(c)', 2, 'i)', { 6, 6 })
@@ -1699,6 +1803,28 @@ T['Textobject']['ensures that output is not covered by reference'] = function()
   -- `ci)` <=> `vi)c` equivalence.
   validate_edit1d('a()b(c)', 2, 'a()b()', 5, 'di)')
   validate_edit1d('a()b(c)', 2, 'a()b()', 5, 'ci)')
+end
+
+T['Textobject']['opens just enough folds'] = function()
+  set_lines({ '(a', 'b', 'c', 'd', 'e', 'f)' })
+
+  -- Manually create two nested closed folds
+  set_cursor(1, 0)
+  type_keys('zf', 'j')
+  set_cursor(3, 0)
+  type_keys('zf', 'j')
+  set_cursor(5, 0)
+  type_keys('zf', 'j')
+  eq(child.fn.foldclosed(2), 1)
+  eq(child.fn.foldclosed(4), 3)
+  eq(child.fn.foldclosed(6), 5)
+
+  -- Selecting textobject should open just enough folds
+  set_cursor(1, 0)
+  type_keys('v', 'i', ')')
+  eq(child.fn.foldclosed(2), -1)
+  eq(child.fn.foldclosed(4), 3)
+  eq(child.fn.foldclosed(6), -1)
 end
 
 T['Textobject']['prompts helper message after one idle second'] = new_set({ parametrize = { { 'a' }, { 'i' } } }, {
@@ -1996,7 +2122,10 @@ T['Motion']['works with multibyte characters'] = function()
   validate_motion1d(' (ыыы) ', 0, 'g])', 8)
 end
 
-T['Motion']['works with special textobject id'] = function() validate_motion1d([[aa\bb\cc]], 4, [[g[\]], 3) end
+T['Motion']['works with special textobject id'] = function()
+  validate_motion1d([[aa\bb\cc]], 4, [[g[\]], 3)
+  validate_motion({ 'aa', 'bb', 'cc' }, { 1, 0 }, 'g[<C-j>', { 2, 0 })
+end
 
 T['Motion']['respects `vim.{g,b}.miniai_disable`'] = new_set({
   parametrize = { { 'g' }, { 'b' } },
@@ -2744,7 +2873,7 @@ T['Builtin']['User prompt']['can not be covering'] = function()
   -- Can't result into covering, so no more matches
   type_keys(keys)
   eq(get_mode(), 'n')
-  eq(get_cursor(), { 1, 2 })
+  eq(get_cursor(), { 1, 4 })
   expect.match(get_latest_message(), 'a%?')
 end
 
@@ -2817,11 +2946,11 @@ end
 T['Builtin']['Default'] = new_set()
 
 T['Builtin']['Default']['works'] = function()
-  -- Should allow only punctuation, digits, space, or tab
+  -- Should allow all possible `getcharstr()` output (but not Latin letters)
   -- Should include only right edge
 
-  local good_keys = { ',', '.', '_', '*', '-', '0', '1', ' ', '\t', '\\' }
-  for _, key in ipairs(good_keys) do
+  local chars = { ',', '.', '_', '*', '-', '0', '1', ' ', '\t', '\\', '\r' }
+  for _, key in ipairs(chars) do
     -- Single line
     validate_tobj1d('a' .. key .. 'bb' .. key, 0, 'a' .. key, { 3, 5 })
     validate_tobj1d('a' .. key .. 'bb' .. key, 0, 'i' .. key, { 3, 4 })
@@ -2830,17 +2959,14 @@ T['Builtin']['Default']['works'] = function()
     validate_tobj({ key, 'aa', key }, { 2, 0 }, 'a' .. key, { { 1, 2 }, { 3, 1 } })
     validate_tobj({ key, 'aa', key }, { 2, 0 }, 'i' .. key, { { 1, 2 }, { 2, 3 } })
   end
+end
 
-  -- Should stop with message on bad keys
-  child.set_size(10, 80)
-  child.o.cmdheight = 5
-  local bad_keys = { '\n', '\r', '\1', child.api.nvim_replace_termcodes('<BS>', true, true, true) }
-  for _, key in ipairs(bad_keys) do
-    set_lines({ 'aaa' })
-    type_keys('d', 'a', key)
-    expect.match(child.cmd_capture('1messages'), 'alphanumeric, punctuation, space, or tab')
-    child.cmd('messages clear')
-  end
+T['Builtin']['Default']['supports any identifier which can be `getcharstr()` output'] = function()
+  -- - <C-j> is '\n'
+  validate_edit({ 'aaa', 'bbb', 'ccc' }, { 2, 0 }, { 'aaa', 'ccc' }, { 2, 0 }, 'd', 'a', '<C-j>')
+  -- - Actually used multibyte (not like `<BS>`)
+  validate_edit1d('aыbbы', 0, 'aы', 1, 'd', 'a', 'ы')
+  validate_edit1d('a“bb“', 0, 'a“', 1, 'd', 'a', '“')
 end
 
 T['Builtin']['Default']['includes maximum right edge characters'] = function()
@@ -2890,7 +3016,7 @@ T['Builtin']['Default']['can not be covering'] = function()
   -- Can't result into covering, so no more matches
   type_keys('a_')
   eq(get_mode(), 'n')
-  eq(get_cursor(), { 1, 4 })
+  eq(get_cursor(), { 1, 6 })
   expect.match(get_latest_message(), 'a_')
 end
 
@@ -2915,6 +3041,20 @@ T['Custom textobject']['works'] = function()
   child.b.miniai_config = { custom_textobjects = { x = { 'y()y()y' } } }
   validate_tobj1d('aayyybb', 0, 'ax', { 3, 5 })
   validate_tobj1d('aayyybb', 0, 'ix', { 4, 4 })
+end
+
+T['Custom textobject']['supports any identifier which can be `getcharstr()` output'] = function()
+  child.lua([[
+    MiniAi.config.custom_textobjects = {
+      ['\22'] = { '@().-()#' },
+      ['ы']   = { 'Ы().-()Ы' },
+      ['「']  = { '「().-()」' },
+    }
+  ]])
+
+  validate_edit({ '@aaa#' }, { 1, 3 }, { '@#' }, { 1, 1 }, 'd', 'i', '<C-v>')
+  validate_edit({ 'ЫaaaЫ' }, { 1, 3 }, { 'ЫЫ' }, { 1, 2 }, 'd', 'i', 'ы')
+  validate_edit({ '「aaa」' }, { 1, 3 }, { '「」' }, { 1, 3 }, 'd', 'i', '「')
 end
 
 T['Custom textobject']['overrides module builtin'] = function()

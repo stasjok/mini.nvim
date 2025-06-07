@@ -13,7 +13,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to generate help files, run tests
 - Use module's `H.get_config()` and `H.is_disabled()` helpers. They both should respect buffer local configuration.
 - From time to time some test cases will break on Neovim Nightly. This is usually due to the following reasons:
     - There was an intended change in Neovim Nightly to which affected module(s) should adapt. Update module and/or tests.
-    - There was a change in Neovim Nightly disrupting only tests (usually screenshots due to changed way of how highlight attributes are computed). Update test: ideally so that it passes on all versions, but testing some parts only on Nightly is allowed if needed (usually by regenerating screenshot on Nightly and verifying it only on versions starting from it).
+    - There was a change in Neovim Nightly disrupting only tests (usually screenshots due to changed way of how highlight attributes are computed). Update test: ideally so that it passes on all versions (by adjusting test logic or by selectively ignoring attributes / text of not matching lines with `ignore_text` / `ignore_attr` *behind narrowest Neovim version check*), but testing some parts only on Nightly is allowed if needed (regenerate screenshot on Nightly and verify it only on versions starting from it).
     - There was an unintended change in Neovim Nightly which breaks functionality it should not break. Create an issue in ['neovim/neovim' repo](https://github.com/neovim/neovim). If the issue is not resolved for a long-ish time (i.e. more than a week) try to make tests pass and/or adapt the code to new behavior.
 
 ## Maintainer setup
@@ -111,15 +111,21 @@ Begin the process of stopping official support for outdated Neovim version short
     end
     ```
 
-    - Modify CI to not test on Neovim 0.x.
+    - Modify CI to not test on old Neovim version.
+    - Update issue template to not include old Neovim version.
     - Update README and repo description to indicate new oldest supported Neovim version.
     - Wait for a considerable amount of time (at least about a month) *and* a new 'mini.nvim' stable release (so that there is no actual deprecation in the stable release).
 
 - Stage 2, deprecation:
     - Remove all notification snippets added in Stage 1.
-    - Adjust code that is conditioned on `vim.fn.has('nvim-0.x')`.
+    - Adjust code that is conditioned on `vim.fn.has('nvim-0.x')` and `vim.fn.exists('+option')` (if the option is present in all currently supported Neovim versions).
     - Adjust code/comments/documentation that contains any combination of `Neovim{<,<=,=,>=,>}{0.x,0.(x+1)}` (like `Neovim<0.x`, `Neovim>=0.(x+1)`, etc.).
     - Add entry "Stop official support of Neovim 0.x." in 'CHANGELOG.md' at the start of current development version block.
+
+## Reacting to new minor Neovim version
+
+- Modify CI to test on new Neovim version.
+- Update issue template to mention new Neovim version as released one, make it default choice, and bump Nightly version.
 
 ## Adding new config settings
 
@@ -145,8 +151,13 @@ Begin the process of stopping official support for outdated Neovim version short
 - Add Lua source code in 'lua' directory.
 - Add tests in 'tests' directory. Use 'tests/dir-xxx' name for module-specific non-test helpers.
 - Update 'lua/init.lua' to mention new module: both in initial table of contents and list of modules.
-- Update 'scripts/dual_sync.sh' to include new module.
-- Update 'scripts/minidoc.lua' to generate separate help file.
+- Add new module to the following files:
+    - 'scripts/minidoc.lua' to generate separate help file.
+    - 'scripts/dual_sync.sh' to include new module.
+    - 'scripts/dual_release.sh' to include new module.
+    - '.github/ISSUE_TEMPLATE/bug-report.yml' to be included in a dropdown menu.
+    - '.github/ISSUE_TEMPLATE/feature-request.yml' to be included in a dropdown menu.
+    - '.github/DISCUSSION_TEMPLATE/q-a.yml' to be included in a dropdown menu.
 - Generate help files.
 - Add README to 'readmes' directory. NOTE: comment out mentions of `stable` branch, as it won't work during beta-testing.
 - Update main README to mention new module in table of contents.
@@ -155,12 +166,15 @@ Begin the process of stopping official support for outdated Neovim version short
 - Commit changes with message 'feat(xxx): add NEW MODULE'. NOTE: it is cleaner to synchronize standalone repositories prior to this commit.
 - If there are new highlight groups, follow up with adding explicit support in color scheme modules.
 - Make standalone plugin:
-    - Create new empty GitHub repository. Disable Issues and limit PRs.
-    - Synchronize standalone repositories. It should have created new git repository with single initial commit.
+    - Create new empty GitHub repository. Disable Issues, limit PRs.
+    - Clone the repo manually. Copy 'LICENSE' file to it, stage, and commit ("docs: add license"). Push.
+    - Add the following GitHub tags: "lua", "neovim", "neovim-plugin", "mini-nvim".
+- Push `main` and sync dual distribution.
+- Check that standalone repo doesn't have some known issues:
     - Make sure that all tracked files are synchronized. For list of tracked files see 'scripts/dual_sync.sh'. Initially they are 'doc/mini-xxx.txt', 'lua/mini/xxx.lua', 'LICENSE', and 'readmes/mini-xxx.md' (copied to be 'README.md' in standalone repository).
     - Make sure that 'README.md' in standalone repository has appropriate relative links (see patch script).
-    - **Amend** initial commit and push.
-- Push `main` and sync dual distribution.
+    - If there are issues, manually adjust in the repo, amend to latest commit, and force push.
+- Create a beta-testing issue and pin it.
 
 ## Making stable release
 
@@ -169,13 +183,12 @@ There is no clear guidelines for when a stable (minor) release should be made. M
 Checklist:
 
 - Check for `TODO`s about actions to be done *before* release.
-- Update READMEs of new modules to mention `stable` branch.
+- Update READMEs of new modules to mention `stable` branch. Commit.
 - Bump version in 'CHANGELOG.md'. Commit.
 - Checkout to `new_release` branch and push to check in CI. **Proceed only if it is successful**.
-- Merge `new_release` to `main` and push it.
+- Merge `new_release` to `main` and push it. Check that CI has passed.
 - Synchronize standalone repositories.
 - Make annotated tag: `git tag -a v0.xx.0 -m 'Version 0.xx.0'`. Push it.
-- Check that all CI has passed.
 - Make GitHub release. Get description from copying entries of version's 'CHANGELOG.md' section.
 - Move `stable` branch to point at new tag (`git branch --force stable` when on latest tag's commit). Push it.
 - Release standalone repositories. It should be enough to use 'scripts/dual_release.sh' like so:
@@ -183,5 +196,7 @@ Checklist:
     # REPLACE `xx` with your version number
     TAG_NAME="v0.xx.0" TAG_MESSAGE="Version 0.xx.0" make dual_release
     ```
+- Check that standalone repositories actually got updates (tag + `stable`): manually visit some of them (at least new modules) on GitHub.
+- Close all beta-testing issues for new plugins.
 - Use development version in 'CHANGELOG.md' ('0.xx.0.9000'). Commit.
 - Check for `TODO`s about actions to be done *after* release.

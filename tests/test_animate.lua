@@ -509,6 +509,18 @@ T['gen_path']['line()']['respects `opts.predicate`'] = function()
   validate_path({ 3, 3 }, { { 0, 0 }, { 1, 1 }, { 2, 2 } })
 end
 
+--stylua: ignore
+T['gen_path']['line()']['respects `opts.max_output_steps`'] = function()
+  child.lua('_G.test_path = MiniAnimate.gen_path.line({ max_output_steps = 4 })')
+  validate_path({ 0, 0 }, {})
+  validate_path({ 2, 3 }, { { 0, 0 }, { 1, 1 }, {  1, 2 } })
+
+  validate_path({  2,  5 }, { { 0, 0 }, { 1,  1 }, {  1,  3 }, {  2,  4 } })
+  validate_path({ -2,  5 }, { { 0, 0 }, { 0,  1 }, { -1,  3 }, { -1,  4 } })
+  validate_path({  2, -5 }, { { 0, 0 }, { 1, -1 }, {  1, -2 }, {  2, -4 } })
+  validate_path({ -2, -5 }, { { 0, 0 }, { 0, -1 }, { -1, -2 }, { -1, -4 } })
+end
+
 T['gen_path']['angle()'] = new_set()
 
 --stylua: ignore
@@ -539,6 +551,18 @@ T['gen_path']['angle()']['respects `opts.predicate`'] = function()
   validate_path({ -1, 3 }, { { 0, 0 }, { 0, 1 }, {  0, 2 }, { 0, 3 } })
 
   validate_path({  3,  3 }, { { 0, 0 }, { 0,  1 }, { 0,  2 }, { 0,  3 }, {  1,  3 }, {  2,  3 }})
+end
+
+--stylua: ignore
+T['gen_path']['angle()']['respects `opts.max_output_steps`'] = function()
+  child.lua('_G.test_path = MiniAnimate.gen_path.angle({ max_output_steps = 3 })')
+  validate_path({ 0, 0 }, {})
+  validate_path({ 2, 3 }, { { 0, 0 }, { 0, 1 }, { 0, 2 }, { 0, 3 }, { 1, 3 } })
+
+  validate_path({  2,  4 }, { { 0, 0 }, { 0,  1 }, { 0,  3 }, { 0,  4 }, {  1,  4 } })
+  validate_path({ -2,  4 }, { { 0, 0 }, { 0,  1 }, { 0,  3 }, { 0,  4 }, { -1,  4 } })
+  validate_path({  2, -4 }, { { 0, 0 }, { 0, -1 }, { 0, -3 }, { 0, -4 }, {  1, -4 } })
+  validate_path({ -2, -4 }, { { 0, 0 }, { 0, -1 }, { 0, -3 }, { 0, -4 }, { -1, -4 } })
 end
 
 --stylua: ignore
@@ -910,8 +934,16 @@ local validate_winconfig = function(win_id, ref_position_data)
         height    = ref_position_data[step].height,
         focusable = false,
         zindex    = 1,
+        border    = 'none',
         style     = 'minimal',
       })
+  end
+end
+
+local validate_same_border = function(ref_border)
+  local output = child.lua_get('_G.test_winconfig(0)')
+  for _, step in ipairs(output) do
+    eq(step.border, ref_border)
   end
 end
 
@@ -969,6 +1001,13 @@ T['gen_winconfig']['static()']['respects `opts.n_steps`'] = function()
   })
 end
 
+T['gen_winconfig']['static()']["should not respect 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.o.winborder = 'rounded'
+  child.lua('_G.test_winconfig = MiniAnimate.gen_winconfig.static()')
+  validate_same_border('none')
+end
+
 T['gen_winconfig']['center()'] = new_set()
 
 T['gen_winconfig']['center()']['works'] = function()
@@ -1023,6 +1062,13 @@ T['gen_winconfig']['center()']['respects `opts.direction`'] = function()
       { col = 0, row = 0, width = 6, height = 3 },
     }
   )
+end
+
+T['gen_winconfig']['center()']["should not respect 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.o.winborder = 'rounded'
+  child.lua('_G.test_winconfig = MiniAnimate.gen_winconfig.center()')
+  validate_same_border('none')
 end
 
 T['gen_winconfig']['wipe()'] = new_set()
@@ -1133,6 +1179,13 @@ T['gen_winconfig']['wipe()']['respects `opts.direction`'] = function()
     { col = 0, row = 5, width = 12, height = 3 },
     { col = 0, row = 4, width = 12, height = 4 },
   })
+end
+
+T['gen_winconfig']['wipe()']["should not respect 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.o.winborder = 'rounded'
+  child.lua('_G.test_winconfig = MiniAnimate.gen_winconfig.wipe()')
+  validate_same_border('none')
 end
 
 T['gen_winblend'] = new_set()
@@ -1257,8 +1310,6 @@ T['Cursor']['does not stop if mark should be placed outside of range'] = functio
 end
 
 T['Cursor']['stops on buffer change'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10.') end
-
   child.set_size(12, 24)
   child.o.winwidth = 1
   child.cmd('vertical botright new')
@@ -1552,7 +1603,6 @@ T['Scroll']["respects 'virtualedit'"] = function()
 end
 
 T['Scroll']["respects 'scrolloff' in presence of folds"] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10') end
   set_cursor(6, 0)
   type_keys('zf5j')
   set_cursor(1, 0)
@@ -1565,7 +1615,7 @@ T['Scroll']["respects 'scrolloff' in presence of folds"] = function()
   sleep(small_time)
   for _ = 1, 4 do
     sleep(step_time)
-    child.expect_screenshot()
+    child.expect_screenshot({ ignore_text = { 7 } })
   end
 end
 
@@ -1593,10 +1643,6 @@ T['Scroll']['places cursor proportionally to scroll step'] = function()
 end
 
 T['Scroll']['correctly places cursor in presence of multibyte characters'] = function()
-  if child.lua_get('vim.fn.exists("*virtcol2col") == 0') then
-    MiniTest.skip('`vim.fn.virt2col()` is needed for this to work.')
-  end
-
   local validate = function(topline_ref, cursor_ref)
     eq(child.fn.line('w0'), topline_ref)
     eq(get_cursor(), cursor_ref)
@@ -1626,10 +1672,6 @@ T['Scroll']['correctly places cursor in presence of multibyte characters'] = fun
 end
 
 T['Scroll']['correctly places cursor in presence of tabs'] = function()
-  if child.lua_get('vim.fn.exists("*virtcol2col") == 0') then
-    MiniTest.skip('`vim.fn.virt2col()` is needed for this to work.')
-  end
-
   local validate = function(topline_ref, cursor_ref)
     eq(child.fn.line('w0'), topline_ref)
     eq(get_cursor(), cursor_ref)
@@ -2133,7 +2175,7 @@ T['Resize']['does not flicker due to high cursor column'] = function()
   sleep(small_time)
   for _ = 1, 5 do
     sleep(step_time)
-    child.expect_screenshot()
+    child.expect_screenshot({ ignore_text = { 4 } })
   end
 end
 
@@ -2313,30 +2355,30 @@ T['Open'] = new_set({
 
 --stylua: ignore
 T['Open']['works'] = function()
-  local win_id = child.fn.has('nvim-0.10') == 1 and 1002 or 1003
   child.cmd('topleft vertical new')
   sleep(small_time)
   validate_floats({
-    [win_id] = {
+    [1003] = {
       anchor = 'NW', external = false, focusable = false, relative = 'editor', zindex = 1,
       row = 0, col = 0, width = 6, height = 6, winblend = 80,
     },
   })
-  eq(child.api.nvim_win_get_option(win_id, 'winhighlight'), 'Normal:MiniAnimateNormalFloat')
+  eq(child.api.nvim_win_get_option(1003, 'winhighlight'), 'Normal:MiniAnimateNormalFloat')
+  local win_buf = child.api.nvim_win_get_buf(1003)
+  eq(child.api.nvim_buf_get_name(win_buf), 'minianimate://' .. win_buf .. '/open-close-scratch')
 
   sleep(step_time)
-  validate_floats({ [win_id] = { row = 0, col = 0, width = 3, height = 3, winblend = 90 } })
+  validate_floats({ [1003] = { row = 0, col = 0, width = 3, height = 3, winblend = 90 } })
 
   sleep(step_time)
-  validate_floats({ [win_id] = false })
+  validate_floats({ [1003] = false })
 end
 
 T['Open']['works for a new tabpage'] = function()
-  local win_id = child.fn.has('nvim-0.10') == 1 and 1002 or 1003
   child.cmd('tabedit')
   sleep(small_time)
   validate_floats({
-    [win_id] = { relative = 'editor', row = 1, col = 0, width = 12, height = 5, winblend = 80 },
+    [1003] = { relative = 'editor', row = 1, col = 0, width = 12, height = 5, winblend = 80 },
   })
   sleep(2 * small_time)
   child.cmd('tabclose')
@@ -2344,24 +2386,23 @@ T['Open']['works for a new tabpage'] = function()
   -- Should also work second time (testing correct usage of tabpage number)
   child.cmd('tabedit')
   validate_floats({
-    [win_id + 2] = { relative = 'editor', row = 1, col = 0, width = 12, height = 5, winblend = 80 },
+    [1005] = { relative = 'editor', row = 1, col = 0, width = 12, height = 5, winblend = 80 },
   })
 end
 
 T['Open']['allows only one active animation'] = function()
-  local win_id = child.fn.has('nvim-0.10') == 1 and 1002 or 1003
   child.cmd('topleft vertical new')
   sleep(small_time)
   validate_floats({
-    [win_id] = { relative = 'editor', row = 0, col = 0, width = 6, height = 6, winblend = 80 },
+    [1003] = { relative = 'editor', row = 0, col = 0, width = 6, height = 6, winblend = 80 },
   })
 
   child.cmd('botright new')
   sleep(step_time + small_time)
   --stylua: ignore
   validate_floats({
-    [win_id] = false,
-    [win_id + 2] = {
+    [1003] = false,
+    [1005] = {
       -- It is already a second step with quarter coverage
       relative = 'editor', row = 3, col = 0, width = 6, height = 2, winblend = 90,
     },
@@ -2369,11 +2410,10 @@ T['Open']['allows only one active animation'] = function()
 end
 
 T['Open']['reopens floating window if it was closed manually'] = function()
-  local win_id = child.fn.has('nvim-0.10') == 1 and 1002 or 1003
   child.cmd('topleft vertical new')
   sleep(small_time)
   validate_floats({
-    [win_id] = { relative = 'editor', row = 0, col = 0, width = 6, height = 6, winblend = 80 },
+    [1003] = { relative = 'editor', row = 0, col = 0, width = 6, height = 6, winblend = 80 },
   })
   child.cmd('only')
   eq(child.api.nvim_list_wins(), { 1001 })
@@ -2381,7 +2421,7 @@ T['Open']['reopens floating window if it was closed manually'] = function()
   sleep(step_time)
   validate_floats({
     -- It is already a second step with quarter coverage
-    [win_id + 1] = { relative = 'editor', row = 0, col = 0, width = 3, height = 3, winblend = 90 },
+    [1004] = { relative = 'editor', row = 0, col = 0, width = 3, height = 3, winblend = 90 },
   })
 end
 
@@ -2414,6 +2454,20 @@ T['Open']['correctly calls `winconfig`'] = function()
   child.cmd('wincmd v')
   sleep(step_time * 2 + small_time)
   eq(child.lua_get('_G.args_history'), { 1001 })
+end
+
+T['Open']["does not respect 'winborder' option by default"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+
+  -- Reset to default `config.open.winconfig`
+  unload_module()
+  load_module()
+
+  child.o.winborder = 'rounded'
+  local default_winconfig_steps = child.lua_get('MiniAnimate.config.open.winconfig(0)')
+  for _, step in ipairs(default_winconfig_steps) do
+    eq(step.border, 'none')
+  end
 end
 
 T['Open']['correctly calls `winblend`'] = function()
@@ -2451,7 +2505,6 @@ T['Open']['respects `vim.{g,b}.minianimate_disable`'] = new_set({
   parametrize = { { 'g' }, { 'b' } },
 }, {
   test = function(var_type)
-    local win_id = child.fn.has('nvim-0.10') == 1 and 1003 or 1004
     child[var_type].minianimate_disable = true
     child.cmd('wincmd v')
     -- Should open without animation
@@ -2461,7 +2514,7 @@ T['Open']['respects `vim.{g,b}.minianimate_disable`'] = new_set({
     child.cmd('wincmd v')
     -- Should open with animation
     sleep(small_time)
-    validate_floats({ [win_id] = { relative = 'editor' } })
+    validate_floats({ [1004] = { relative = 'editor' } })
   end,
 })
 
@@ -2501,23 +2554,24 @@ T['Close'] = new_set({
 
 --stylua: ignore
 T['Close']['works'] = function()
-  local win_id = child.fn.has('nvim-0.10') == 1 and 1002 or 1003
   child.cmd('topleft vertical new')
   child.cmd('close')
   sleep(small_time)
   validate_floats({
-    [win_id] = {
+    [1003] = {
       anchor = 'NW', external = false, focusable = false, relative = 'editor', zindex = 1,
       row = 0, col = 0, width = 6, height = 6, winblend = 80,
     },
   })
-  eq(child.api.nvim_win_get_option(win_id, 'winhighlight'), 'Normal:MiniAnimateNormalFloat')
+  eq(child.api.nvim_win_get_option(1003, 'winhighlight'), 'Normal:MiniAnimateNormalFloat')
+  local win_buf = child.api.nvim_win_get_buf(1003)
+  eq(child.api.nvim_buf_get_name(win_buf), 'minianimate://' .. win_buf .. '/open-close-scratch')
 
   sleep(step_time)
-  validate_floats({ [win_id] = { row = 0, col = 0, width = 3, height = 3, winblend = 90 } })
+  validate_floats({ [1003] = { row = 0, col = 0, width = 3, height = 3, winblend = 90 } })
 
   sleep(step_time)
-  validate_floats({ [win_id] = false })
+  validate_floats({ [1003] = false })
 end
 
 T['Close']['respects `enable` config setting'] = function()
@@ -2552,6 +2606,20 @@ T['Close']['correctly calls `winconfig`'] = function()
   child.cmd('close')
   sleep(step_time * 2 + small_time)
   eq(child.lua_get('_G.args_history'), { 1001 })
+end
+
+T['Close']["does not respect 'winborder' option by default"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+
+  -- Reset to default `config.open.winconfig`
+  unload_module()
+  load_module()
+
+  child.o.winborder = 'rounded'
+  local default_winconfig_steps = child.lua_get('MiniAnimate.config.close.winconfig(0)')
+  for _, step in ipairs(default_winconfig_steps) do
+    eq(step.border, 'none')
+  end
 end
 
 T['Close']['correctly calls `winblend`'] = function()

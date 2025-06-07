@@ -91,7 +91,7 @@
 ---     - All triggers are disabled during macro recording due to technical
 ---       reasons.
 ---     - The `@` and `Q` keys are specially mapped inside |MiniClue.setup()|
----       to temporarily disable triggers.
+---       (if the key is not already mapped) to temporarily disable triggers.
 ---
 --- # Setup ~
 ---
@@ -342,6 +342,14 @@
 ---     }
 ---   })
 --- <
+--- # Triggers in special buffers ~
+---
+--- By default triggers are automatically created in listed ('buflisted') and some
+--- special non-listed buffers. Use |MiniClue.ensure_buf_triggers()| to manually
+--- enable in when you need them. For example: >vim
+---
+---   au FileType special_ft lua MiniClue.ensure_buf_triggers()
+--- <
 ---                                                     *MiniClue-examples-submodes*
 --- # Submodes ~
 ---
@@ -482,6 +490,15 @@ local H = {}
 ---                                  -- needs `triggers` field present
 --- <
 MiniClue.setup = function(config)
+  -- TODO: Remove after Neovim=0.8 support is dropped
+  if vim.fn.has('nvim-0.9') == 0 then
+    vim.notify(
+      '(mini.clue) Neovim<0.9 is soft deprecated (module works but not supported).'
+        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
+        .. ' Please update your Neovim version.'
+    )
+  end
+
   -- Export module
   _G.MiniClue = MiniClue
 
@@ -524,8 +541,8 @@ end
 --- - <keys> `(string)` - key combination for which clue will be shown.
 ---   "Human-readable" key names as in |key-notation| (like "<Leader>", "<Space>",
 ---   "<Tab>", etc.) are allowed.
---- - <desc> `(string|nil)` - optional key combination description which will
----   be shown in clue window.
+--- - <desc> `(string|function|nil)` - optional key combination description which is
+---   shown in clue window. If function, should return string description.
 --- - <postkeys> `(string|nil)` - optional postkeys which will be executed
 ---   automatically after `keys`. Allows creation of submodes
 ---   (see |MiniClue-examples-submodes|).
@@ -1096,12 +1113,12 @@ H.state = {
 -- Default window config
 H.default_win_config = {
   anchor = 'SE',
-  border = 'single',
   focusable = false,
   relative = 'editor',
   style = 'minimal',
   width = 30,
-  zindex = 99,
+  -- Use high enough value to be on top of built-in windows (pmenu, etc.)
+  zindex = 251,
 }
 
 -- Precomputed raw keys
@@ -1124,24 +1141,19 @@ H.undo_autocommand = 'au ModeChanged * ++once undo!'
 -- Helper functionality =======================================================
 -- Settings -------------------------------------------------------------------
 H.setup_config = function(config)
-  -- General idea: if some table elements are not present in user-supplied
-  -- `config`, take them from default config
-  vim.validate({ config = { config, 'table', true } })
+  H.check_type('config', config, 'table', true)
   config = vim.tbl_deep_extend('force', vim.deepcopy(H.default_config), config or {})
 
-  vim.validate({
-    clues = { config.clues, 'table' },
-    triggers = { config.triggers, 'table' },
-    window = { config.window, 'table' },
-  })
+  H.check_type('clues', config.clues, 'table')
+  H.check_type('triggers', config.triggers, 'table')
 
-  local is_table_or_callable = function(x) return type(x) == 'table' or vim.is_callable(x) end
-  vim.validate({
-    ['window.delay'] = { config.window.delay, 'number' },
-    ['window.config'] = { config.window.config, is_table_or_callable, 'table or callable' },
-    ['window.scroll_down'] = { config.window.scroll_down, 'string' },
-    ['window.scroll_up'] = { config.window.scroll_up, 'string' },
-  })
+  H.check_type('window', config.window, 'table')
+  if not (type(config.window.config) == 'table' or vim.is_callable(config.window.config)) then
+    H.error('`window.config` should be table or callable, not ' .. type(config.window.config))
+  end
+  H.check_type('window.delay', config.window.delay, 'number')
+  H.check_type('window.scroll_down', config.window.scroll_down, 'string')
+  H.check_type('window.scroll_up', config.window.scroll_up, 'string')
 
   return config
 end
@@ -1161,14 +1173,14 @@ H.apply_config = function(config)
     vim.schedule(MiniClue.enable_all_triggers)
     pcall(vim.api.nvim_feedkeys, vim.v.count1 .. '@' .. register, 'nx', false)
   end
-  vim.keymap.set('n', '@', exec_macro, macro_keymap_opts)
+  if vim.fn.maparg('@', 'n') == '' then vim.keymap.set('n', '@', exec_macro, macro_keymap_opts) end
 
   local exec_latest_macro = function(keys)
     MiniClue.disable_all_triggers()
     vim.schedule(MiniClue.enable_all_triggers)
     vim.api.nvim_feedkeys(vim.v.count1 .. 'Q', 'nx', false)
   end
-  vim.keymap.set('n', 'Q', exec_latest_macro, macro_keymap_opts)
+  if vim.fn.maparg('Q', 'n') == '' then vim.keymap.set('n', 'Q', exec_latest_macro, macro_keymap_opts) end
 end
 
 H.is_disabled = function(buf_id)
@@ -1193,6 +1205,10 @@ H.create_autocommands = function()
   -- - Respect `LspAttach` as it is a common source of buffer-local mappings
   local events = { 'BufAdd', 'LspAttach' }
   au(events, '*', ensure_triggers, 'Ensure buffer-local trigger keymaps')
+  -- - Respect common interactive not listed filetypes. NOTE: no 'minifiles' as
+  --   `'` trigger conflicts with its local `'`. Plus it pollutes `g?` content.
+  local special_ft = { 'help', 'git' }
+  au('Filetype', special_ft, ensure_triggers, 'Ensure buffer-local trigger keymaps')
 
   -- Disable all triggers when recording macro as they interfere with what is
   -- actually recorded
@@ -1451,7 +1467,8 @@ H.compute_exec_keys = function()
     res = operator_tweak(vim.v.operator .. H.get_forced_submode() .. res)
   elseif not vim.startswith(cur_mode, 'i') and H.get_default_register() ~= vim.v.register then
     -- Force non-default register but not in Insert mode
-    res = '"' .. vim.v.register .. res
+    local expr_reg_keys = vim.v.register == '=' and (vim.fn.getreginfo('=').regcontents[1] .. '\r') or ''
+    res = '"' .. vim.v.register .. expr_reg_keys .. res
   end
 
   -- `feedkeys()` inside "temporary" Normal mode is executed **after** it is
@@ -1510,8 +1527,6 @@ H.operator_tweaks = {
 }
 
 H.query_to_keys = function(query) return table.concat(query, '') end
-
-H.query_to_title = function(query) return H.keytrans(H.query_to_keys(query)) end
 
 -- Window ---------------------------------------------------------------------
 H.window_update = vim.schedule_wrap(function(same_content)
@@ -1597,20 +1612,21 @@ H.window_get_config = function()
   local has_tabline = vim.o.showtabline == 2 or (vim.o.showtabline == 1 and #vim.api.nvim_list_tabpages() > 1)
   -- Remove 2 from maximum height to account for top and bottom borders
   local max_height = vim.o.lines - vim.o.cmdheight - (has_tabline and 1 or 0) - (has_statusline and 1 or 0) - 2
+  max_height = math.max(max_height, 1)
 
   local buf_id = H.state.buf_id
   local cur_config_fields = {
     row = vim.o.lines - vim.o.cmdheight - (has_statusline and 1 or 0),
     col = vim.o.columns,
     height = math.min(vim.api.nvim_buf_line_count(buf_id), max_height),
-    title = H.query_to_title(H.state.query),
+    title = ' ' .. H.keytrans(H.query_to_keys(H.state.query)) .. ' ',
+    border = (vim.fn.exists('+winborder') == 1 and vim.o.winborder ~= '') and vim.o.winborder or 'single',
   }
   local user_config = H.expand_callable(H.get_config().window.config, buf_id) or {}
   local res = vim.tbl_deep_extend('force', H.default_win_config, cur_config_fields, user_config)
 
   -- Tweak "auto" fields
   if res.width == 'auto' then res.width = H.buffer_get_width() + 1 end
-  res.width = math.min(res.width, vim.o.columns)
 
   if res.row == 'auto' then
     local is_on_top = res.anchor == 'NW' or res.anchor == 'NE'
@@ -1622,8 +1638,10 @@ H.window_get_config = function()
     res.col = is_on_left and 0 or cur_config_fields.col
   end
 
-  -- Ensure it works on Neovim<0.9
+  -- Ensure proper config
+  if type(res.title) == 'string' then res.title = H.fit_to_width(res.title, res.width) end
   if vim.fn.has('nvim-0.9') == 0 then res.title = nil end
+  res.width = math.min(math.max(res.width, 1), vim.o.columns)
 
   return res
 end
@@ -1631,7 +1649,10 @@ end
 -- Buffer ---------------------------------------------------------------------
 H.buffer_update = function()
   local buf_id = H.state.buf_id
-  if not H.is_valid_buf(buf_id) then buf_id = vim.api.nvim_create_buf(false, true) end
+  if not H.is_valid_buf(buf_id) then
+    buf_id = vim.api.nvim_create_buf(false, true)
+    H.set_buf_name(buf_id, 'content')
+  end
 
   -- Compute content data
   local keys = H.query_to_keys(H.state.query)
@@ -1872,7 +1893,14 @@ H.is_array_of = function(x, predicate)
 end
 
 -- Utilities ------------------------------------------------------------------
-H.error = function(msg) error(string.format('(mini.clue) %s', msg), 0) end
+H.error = function(msg) error('(mini.clue) ' .. msg, 0) end
+
+H.check_type = function(name, val, ref, allow_nil)
+  if type(val) == ref or (ref == 'callable' and vim.is_callable(val)) or (allow_nil and val == nil) then return end
+  H.error(string.format('`%s` should be %s, not %s', name, ref, type(val)))
+end
+
+H.set_buf_name = function(buf_id, name) vim.api.nvim_buf_set_name(buf_id, 'miniclue://' .. buf_id .. '/' .. name) end
 
 H.map = function(mode, lhs, rhs, opts)
   if lhs == '' then return end
@@ -1888,8 +1916,8 @@ H.replace_termcodes = function(x)
 end
 
 H.keytrans = function(x)
-  local res = vim.fn.keytrans(x):gsub('<lt>', '<')
-  return res
+  local res = vim.fn.keytrans(x):gsub('<NL>', '<C-J>'):gsub('<S%-NL>', '<C-S-J>'):gsub('<M%-NL>', '<C-M-J>')
+  return (res:gsub('<lt>', '<'))
 end
 
 H.get_forced_submode = function()
@@ -1908,6 +1936,11 @@ end
 H.is_valid_buf = function(buf_id) return type(buf_id) == 'number' and vim.api.nvim_buf_is_valid(buf_id) end
 
 H.is_valid_win = function(win_id) return type(win_id) == 'number' and vim.api.nvim_win_is_valid(win_id) end
+
+H.fit_to_width = function(text, width)
+  local t_width = vim.fn.strchars(text)
+  return t_width <= width and text or ('…' .. vim.fn.strcharpart(text, t_width - width + 1, width - 1))
+end
 
 H.expand_callable = function(x, ...)
   if vim.is_callable(x) then return x(...) end

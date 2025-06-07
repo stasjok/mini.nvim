@@ -53,6 +53,7 @@ T['setup()']['validates `config` argument'] = function()
 
   expect_config_error('a', 'config', 'table')
   expect_config_error({ cutoff = 'a' }, 'cutoff', 'number')
+  expect_config_error({ cutoff = 0 }, 'cutoff', 'not less than 1')
 end
 
 T['match()'] = new_set()
@@ -71,7 +72,7 @@ T['match()']['handles cases when match is impossible'] = function()
   eq(child.lua_get([[MiniFuzzy.match('ab', 'a')]]), { score = -1 })
 
   -- Empty word
-  eq(child.lua_get([[MiniFuzzy.match('', 'abc')]]), { score = -1 })
+  eq(child.lua_get([[MiniFuzzy.match('', 'abc')]]), { positions = {}, score = -1 })
 end
 
 local validate_match = function(word, candidate, positions)
@@ -188,43 +189,37 @@ T['filtersort()']['preserves original order with equal matching score'] = functi
 end
 
 T['filtersort()']['works with empty arguments'] = function()
-  validate_filtersort('', { 'a', 'b', '_a' }, {})
+  validate_filtersort('', { 'a', 'b', '_a' }, { 'a', 'b', '_a' })
   validate_filtersort('a', {}, {})
 end
 
 T['process_lsp_items()'] = new_set()
 
-local new_item = function(newText, insertText, label)
-  return { textEdit = { newText = newText }, insertText = insertText, label = label }
+local new_item = function(filterText, label, newText, insertText)
+  return { filterText = filterText, label = label, textEdit = { newText = newText }, insertText = insertText }
 end
 
 local process_lsp_items = function(...) return child.lua_get('MiniFuzzy.process_lsp_items(...)', { ... }) end
 
 T['process_lsp_items()']['works'] = function()
-  local items
+  local validate = function(items) eq(process_lsp_items(items, 'a'), { items[3], items[2], items[1] }) end
+  validate({ new_item('___a'), new_item('__a'), new_item('_a') })
+  validate({ new_item(nil, '___a'), new_item(nil, '__a'), new_item(nil, '_a') })
 
-  items = { new_item('___a', nil, nil), new_item('__a', nil, nil), new_item('_a', nil, nil) }
-  eq(process_lsp_items(items, 'a'), { items[3], items[2], items[1] })
-
-  items = { new_item(nil, '___a', nil), new_item(nil, '__a', nil), new_item(nil, '_a', nil) }
-  eq(process_lsp_items(items, 'a'), { items[3], items[2], items[1] })
-
-  items = { new_item(nil, nil, '___a'), new_item(nil, nil, '__a'), new_item(nil, nil, '_a') }
-  eq(process_lsp_items(items, 'a'), { items[3], items[2], items[1] })
+  -- Should match all as is for empty string `base`
+  local items = { new_item(nil, '___a'), new_item(nil, '__a'), new_item(nil, '_a') }
+  eq(process_lsp_items(items, ''), items)
 end
 
 T['process_lsp_items()']['correctly extracts candidate from fields'] = function()
-  local items
+  -- filterText > label; no other fields should matter
+  local validate = function(items) eq(process_lsp_items(items, 'a'), { items[2], items[1] }) end
 
-  -- textEdit.newText > insertText > label
-  items = { new_item('__a', '_a', nil), new_item('_a', '__a', nil) }
-  eq(process_lsp_items(items, 'a'), { items[2], items[1] })
-
-  items = { new_item('__a', nil, '_a'), new_item('_a', nil, '__a') }
-  eq(process_lsp_items(items, 'a'), { items[2], items[1] })
-
-  items = { new_item(nil, '__a', '_a'), new_item(nil, '_a', '__a') }
-  eq(process_lsp_items(items, 'a'), { items[2], items[1] })
+  validate({ new_item('__a', '_a'), new_item('_a', '__a') })
+  validate({ new_item('__a', nil, '_a'), new_item('_a', nil, '__a') })
+  validate({ new_item(nil, '__a', '_a'), new_item(nil, '_a', '__a') })
+  validate({ new_item('__a', nil, nil, '_a'), new_item('_a', nil, nil, '__a') })
+  validate({ new_item(nil, '__a', nil, '_a'), new_item(nil, '_a', nil, '__a') })
 end
 
 T['get_telescope_sorter()'] = new_set()

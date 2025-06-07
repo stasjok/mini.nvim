@@ -1,17 +1,19 @@
 -- Mock treesitter for 'lua'
-vim.treesitter.get_parser = function(_, lang, _)
-  if lang ~= 'lua' then
+vim.treesitter.get_parser = function(_, _, _)
+  if vim.bo.filetype ~= 'lua' then
     -- On Neovim>=0.12 `nil` is silently returned if there is no parser
     if vim.fn.has('nvim-0.12') == 1 then return nil end
     error([[There is parser only for 'lua' language.]])
   end
 
-  return {
+  local lang_tree = {
     trees = function(_)
       return { { root = function(_) return {} end } }
     end,
-    lang = function(_) return lang end,
+    lang = function(_) return 'lua' end,
   }
+  lang_tree.language_for_range = function(_, _) return lang_tree end
+  return lang_tree
 end
 
 local new_node = function(range, id)
@@ -22,12 +24,6 @@ local new_node = function(range, id)
     -- `node:range()` should return 0-based numbers (row1, col1, row2, col2)
     -- for end-exclusive region
     range = function(_) return unpack(range) end,
-
-    -- Return start row, start col, and number of bytes from buffer start
-    start = function(_) return range[1], range[2], vim.fn.line2byte(range[1] + 1) + range[2] - 1 end,
-
-    -- Return end row, end col, and number of bytes from buffer start
-    end_ = function(_) return range[3], range[4] - 1, vim.fn.line2byte(range[3] + 1) + range[4] - 2 end,
   }
 end
 
@@ -48,7 +44,9 @@ local get_query = function(lang, _)
     { 1, new_node({ 3,  9,  3,  37 }, 5),  {} },
     { 2, new_node({ 3,  20, 3,  33 }, 6),  {} },
     { 1, new_node({ 6,  6,  10, 3 },  7),  {} },
-    { 2, new_node({ 7,  2,  9,  13 }, 8),  {} },
+    -- Mock presence of something like `(#offset! @table.inner 1 -4 -1 10)`
+    -- which would result in third `metadata` value being like this
+    { 2, new_node({ 6,  6,  10, 3 },  8),  { [2] = { range = { 7,  2,  9,  13 } } } },
     { 3, new_node({ 9,  2,  9,  8 },  9),  {} },
     { 3, new_node({ 12, 0,  12, 8 }, 10),  {} },
     { 4, new_node({ 12, 7,  12, 8 }, 11),  {} },

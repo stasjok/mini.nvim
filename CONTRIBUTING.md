@@ -6,7 +6,9 @@ You can make contributions in the following ways:
 
 - **Mention it** somehow to help reach broader audience. This helps a lot.
 - **Create a GitHub issue**. It can be one of the following types:
-    - **Bug report**. Describe your actions in a reproducible way along with their effect and what you expected should happen. Before making one, please make your best efforts to make sure that it is not an intended behavior (not described in documentation as such).
+    - **Bug report**. Describe your actions in a reproducible way along with their effect and what you expected should happen. Before making one, please make your best efforts to:
+        - Make sure that it is not an intended behavior, i.e. not described in documentation as such.
+        - Make sure that it was not reported before, i.e. there is no bug report already created (no matter open or closed).
     - **Feature request**. A concise and justified description of what one or several modules should be able to do. Before making one, please make your best efforts to make sure that it is not a feature that won't get implemented (these should be described in documentation; for example: block comments in 'mini.comment').
 - **Create a pull request (PR)**. It can be one of the following types:
     - **Code related**. For example, fix a bug or implement a feature. **Before even starting one, please make sure that it is aligned with project vision and goals**. The best way to do so is to receive positive feedback from maintainer on your initiative in one of the GitHub issues (existing or created by you). Please, make sure to regenerate latest help file and that all tests pass (see later sections).
@@ -137,16 +139,17 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
     - `MiniAnimateNormalFloat`
 
 - 'mini.clue':
-    -  `MiniClueBorder`
-    -  `MiniClueDescGroup`
-    -  `MiniClueDescSingle`
-    -  `MiniClueNextKey`
-    -  `MiniClueNextKeyWithPostkeys`
-    -  `MiniClueSeparator`
-    -  `MiniClueTitle`
+    - `MiniClueBorder`
+    - `MiniClueDescGroup`
+    - `MiniClueDescSingle`
+    - `MiniClueNextKey`
+    - `MiniClueNextKeyWithPostkeys`
+    - `MiniClueSeparator`
+    - `MiniClueTitle`
 
 - 'mini.completion':
     - `MiniCompletionActiveParameter`
+    - `MiniCompletionInfoBorderOutdated`
 
 - 'mini.cursorword':
     - `MiniCursorword`
@@ -170,7 +173,9 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
     - `MiniDiffSignDelete`
     - `MiniDiffOverAdd`
     - `MiniDiffOverChange`
+    - `MiniDiffOverChangeBuf`
     - `MiniDiffOverContext`
+    - `MiniDiffOverContextBuf`
     - `MiniDiffOverDelete`
 
 - 'mini.files':
@@ -221,6 +226,7 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
 
 - 'mini.notify':
     - `MiniNotifyBorder`
+    - `MiniNotifyLspProgress`
     - `MiniNotifyNormal`
     - `MiniNotifyTitle`
 
@@ -228,7 +234,6 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
     - `MiniOperatorsExchangeFrom`
 
 - 'mini.pick':
-
     - `MiniPickBorder`
     - `MiniPickBorderBusy`
     - `MiniPickBorderText`
@@ -243,6 +248,15 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
     - `MiniPickPreviewLine`
     - `MiniPickPreviewRegion`
     - `MiniPickPrompt`
+    - `MiniPickPromptCaret`
+    - `MiniPickPromptPrefix`
+
+- 'mini.snippets':
+    - `MiniSnippetsCurrent`
+    - `MiniSnippetsCurrentReplace`
+    - `MiniSnippetsFinal`
+    - `MiniSnippetsUnvisited`
+    - `MiniSnippetsVisited`
 
 - 'mini.starter':
     - `MiniStarterCurrent`
@@ -278,6 +292,7 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
     - `MiniTablineModifiedHidden`
     - `MiniTablineModifiedVisible`
     - `MiniTablineTabpagesection`
+    - `MiniTablineTrunc`
     - `MiniTablineVisible`
 
 - 'mini.test':

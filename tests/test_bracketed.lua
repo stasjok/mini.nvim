@@ -1226,6 +1226,12 @@ T['file()']['works'] = function()
   validate_works(validate_file, #test_files)
 end
 
+T['file()']['opens path in relative form'] = function()
+  edit_test_file('file-a')
+  child.lua('MiniBracketed.file("forward")')
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]tests/dir%-bracketed/file%-b')
+end
+
 T['file()']['reuses buffer if file is already opened'] = function()
   edit_test_file('file-a')
   local buf_a = child.api.nvim_get_current_buf()
@@ -1242,13 +1248,13 @@ T['file()']['works with non-file current buffer'] = function()
   -- current working directory
   child.fn.chdir(dir_bracketed_path)
 
-  local buf_id_nonfile = child.api.nvim_get_current_buf()
-  eq(child.api.nvim_buf_get_name(0), '')
+  local setup_nonfile_buf = function() child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false)) end
 
+  setup_nonfile_buf()
   forward('file')
   validate_test_file('file-a')
 
-  child.api.nvim_set_current_buf(buf_id_nonfile)
+  setup_nonfile_buf()
   backward('file')
   validate_test_file('file-e')
 end
@@ -1694,6 +1700,25 @@ T['jump()']['works'] = function()
   validate_works(validate, #cur_jump_inds)
 end
 
+T['jump()']['works in a buffers without jumplist entries'] = function()
+  child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false))
+
+  local validate = function(direction, opts)
+    local cur_pos = get_cursor()
+    child.lua('MiniBracketed.jump(...)', { direction, opts })
+    eq(get_cursor(), cur_pos)
+  end
+
+  validate('first', { n_times = 1 })
+  validate('first', { n_times = 2 })
+  validate('backward', { n_times = 1 })
+  validate('backward', { n_times = 2 })
+  validate('forward', { n_times = 1 })
+  validate('forward', { n_times = 2 })
+  validate('last', { n_times = 1 })
+  validate('last', { n_times = 2 })
+end
+
 T['jump()']['works when currently moved after latest jump'] = function()
   local cur_jump_inds, _, jump_list = setup_jumplist()
   local n = #cur_jump_inds
@@ -1950,20 +1975,28 @@ T['oldfile()']['works'] = function()
   validate('last', n)
 end
 
+T['oldfile()']['opens path in relative form'] = function()
+  setup_oldfile()
+  child.cmd('%bwipeout')
+  local n_bufs = #child.api.nvim_list_bufs()
+  child.lua('MiniBracketed.oldfile("backward")')
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]tests/dir%-bracketed/file%-c')
+  -- Should mimic `:h buffer-reuse` similar to how `:edit` does it
+  eq(#child.api.nvim_list_bufs(), n_bufs)
+end
+
 T['oldfile()']['works in not appropriate buffers'] = function()
   local files = setup_oldfile()
   local n = #files
 
   -- When in buffer without name should still go recent buffers
-  local buf_id_normal_nonfile = child.api.nvim_create_buf(true, false)
-  child.api.nvim_set_current_buf(buf_id_normal_nonfile)
-  eq(get_bufname(), '')
-  eq(child.bo.buftype, '')
+  local setup_nonfile_buf = function() child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false)) end
 
+  setup_nonfile_buf()
   backward('oldfile')
   validate_test_file(files[n])
 
-  child.api.nvim_set_current_buf(buf_id_normal_nonfile)
+  setup_nonfile_buf()
   forward('oldfile')
   validate_test_file(files[1])
 
@@ -2015,6 +2048,19 @@ T['oldfile()']['is initialized with `v:oldfiles`'] = function()
   eq(get_bufname(), files[n - 1])
 
   child.o.shadafile = 'NONE'
+end
+
+T['oldfile()']['traverses only readable files'] = function()
+  child.lua([[
+    vim.fn.filereadable = function(path) return vim.endswith(path, 'file-a') and 0 or 1 end
+  ]])
+  setup_oldfile()
+
+  child.cmd('enew')
+
+  child.lua('MiniBracketed.oldfile("forward")')
+  -- Choose next file after the (first) 'file-a' as it is nor readable
+  validate_test_file('file-e')
 end
 
 T['oldfile()']['validates `direction`'] = function()
@@ -3397,7 +3443,9 @@ T['yank()']['replaces region based on `[` marks `]`'] = function()
   type_keys('yl')
 
   backward('yank')
-  eq(get_lines(), { '_two_' })
+  -- Neovim>=0.11 has more correct behavior for setting `[`/`]` marks here
+  local ref = child.fn.has('nvim-0.11') == 1 and '_two__' or '_two_'
+  eq(get_lines(), { ref })
 end
 
 T['yank()']['respects `register_put_region()` to determine region boundaries'] = function()

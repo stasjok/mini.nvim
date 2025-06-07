@@ -94,10 +94,11 @@ local validate_fs_entry = function(x)
   eq(type(x.path), 'string')
 end
 
-local validate_confirm_args = function(ref_msg_pattern)
+local validate_confirm_args = function(ref_msg_pattern, can_cancel)
+  if can_cancel == nil then can_cancel = true end
   local args = child.lua_get('_G.confirm_args')
   expect.match(args[1], ref_msg_pattern)
-  if args[2] ~= nil then eq(args[2], '&Yes\n&No') end
+  if args[2] ~= nil then eq(args[2], '&Yes\n&No' .. (can_cancel and '\n&Cancel' or '')) end
   if args[3] ~= nil then eq(args[3], 1) end
   if args[4] ~= nil then eq(args[4], 'Question') end
 end
@@ -201,6 +202,8 @@ local T = new_set({
 
       -- Make more robust screenshots
       child.o.laststatus = 0
+      child.o.showtabline = 0
+
       -- - Hide intro
       child.cmd('vsplit')
       child.cmd('quit')
@@ -401,7 +404,8 @@ T['open()']['uses icon provider'] = function()
   --stylua: ignore
   eq(get_extmarks_hl(), {
     'MiniIconsAzure', 'MiniFilesDirectory',
-    'MiniIconsAzure', 'MiniFilesDirectory',
+    -- 'lua' directory has special highlighting
+    'MiniIconsBlue', 'MiniFilesDirectory',
     'MiniIconsAzure', 'MiniFilesDirectory',
     'MiniIconsAzure', 'MiniFilesDirectory',
     'MiniIconsAzure', 'MiniFilesFile',
@@ -914,7 +918,7 @@ T['open()']['properly closes currently opened explorer'] = function()
   child.expect_screenshot()
 end
 
-T['open()']['properly closes currently opened explorer with modified buffers'] = function()
+T['open()']['properly closes currently opened explorer with pending file system actions'] = function()
   child.cmd('au User MiniFilesExplorerClose lua _G.had_close_event = true')
   child.set_size(100, 100)
 
@@ -925,10 +929,19 @@ T['open()']['properly closes currently opened explorer with modified buffers'] =
   -- Should mention modified buffers and ask for confirmation
   mock_confirm(1)
   open(path_2)
-  validate_confirm_args('modified buffer.*close without sync')
+  validate_confirm_args('pending file system actions.*Close without sync', false)
 
   -- Should trigger proper event for closing explorer
   eq(child.lua_get('_G.had_close_event'), true)
+  close()
+  child.ensure_normal_mode()
+
+  -- Should not confirm if there are no actionable pending file system actions
+  child.lua('_G.confirm_args = nil')
+  open(path_1)
+  type_keys('o')
+  open(path_2)
+  eq(child.lua_get('_G.confirm_args'), vim.NIL)
 end
 
 T['open()']['tracks lost focus'] = function()
@@ -957,6 +970,15 @@ T['open()']['tracks lost focus'] = function()
   -- Should still be possible to open same explorer afterwards
   open(test_dir_path)
   eq(is_explorer_active(), true)
+end
+
+T['open()']['can display entries with newline character'] = function()
+  if helpers.is_windows() then MiniTest.skip('Newline characters in names are not supported on Windows') end
+  local temp_dir = make_temp_dir('temp', { 'di\nr/', 'fi\nl\ne' })
+  open(temp_dir, true, { windows = { preview = true } })
+  child.expect_screenshot()
+  type_keys('j')
+  child.expect_screenshot()
 end
 
 T['open()']['validates input'] = function()
@@ -1041,7 +1063,7 @@ T['refresh()']['updates buffers with non-empty `content`'] = function()
   child.expect_screenshot()
 end
 
-T['refresh()']['handles presence of modified buffers'] = function()
+T['refresh()']['handles presence of pending file system actions'] = function()
   child.set_size(10, 60)
   child.lua([[_G.hide_dotfiles = function(fs_entry) return not vim.startswith(fs_entry.name, '.') end ]])
 
@@ -1056,7 +1078,7 @@ T['refresh()']['handles presence of modified buffers'] = function()
   child.lua('MiniFiles.refresh({ content = { filter = _G.hide_dotfiles }, windows = { width_focus = 30 } })')
   child.expect_screenshot()
 
-  validate_confirm_args('modified buffer.*Confirm buffer updates without sync')
+  validate_confirm_args('pending file system actions.*Update buffers without sync', false)
 
   -- On no confirm should not update buffers, but still apply other changes
   type_keys('o', 'new-file-2', '<Esc>')
@@ -1065,6 +1087,17 @@ T['refresh()']['handles presence of modified buffers'] = function()
   mock_confirm(2)
   child.lua('MiniFiles.refresh({ content = { filter = function() return true end }, windows = { width_focus = 15 } })')
   if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
+
+  mock_confirm(1)
+  close()
+  child.ensure_normal_mode()
+
+  -- Should not confirm if there are no actionable pending file system actions
+  child.lua('_G.confirm_args = nil')
+  open(temp_dir)
+  type_keys('o')
+  refresh()
+  eq(child.lua_get('_G.confirm_args'), vim.NIL)
 end
 
 T['refresh()']['works when no explorer is opened'] = function() expect.no_error(refresh) end
@@ -1081,7 +1114,7 @@ T['synchronize()']['can update external file system changes'] = function()
   validate_cur_line(1)
 
   vim.fn.mkdir(join_path(temp_dir, 'aaa'))
-  synchronize()
+  eq(synchronize(), true)
   child.expect_screenshot()
 
   -- Cursor should be "sticked" to current entry
@@ -1094,12 +1127,29 @@ T['synchronize()']['can apply file system actions'] = function()
   open(temp_dir)
   type_keys('i', 'new-file', '<Esc>')
 
-  local new_file_path = join_path(temp_dir, 'new-file')
   mock_confirm(1)
 
   validate_tree(temp_dir, {})
-  synchronize()
+  eq(synchronize(), true)
   validate_tree(temp_dir, { 'new-file' })
+end
+
+T['synchronize()']['can cancel synchronization'] = function()
+  local temp_dir = make_temp_dir('temp', {})
+
+  open(temp_dir)
+  type_keys('i', 'new-file', '<Esc>')
+
+  child.fn.writefile({ '' }, join_path(temp_dir, 'aaa'))
+
+  mock_confirm(3)
+
+  validate_tree(temp_dir, { 'aaa' })
+  eq(synchronize(), false)
+  -- Should not apply file system changes, not sync external changes, and keep
+  -- buffers as is
+  validate_tree(temp_dir, { 'aaa' })
+  eq(get_lines(), { 'new-file' })
 end
 
 T['synchronize()']['should follow cursor on current entry path'] = function()
@@ -1216,7 +1266,7 @@ T['close()']['works per tabpage'] = function()
   child.expect_screenshot()
 end
 
-T['close()']['checks for modified buffers'] = function()
+T['close()']['checks for pending file system actions'] = function()
   child.cmd('au User MiniFilesExplorerClose lua _G.had_close_event = true')
   open(test_dir_path)
   type_keys('o', 'new', '<Esc>')
@@ -1226,7 +1276,7 @@ T['close()']['checks for modified buffers'] = function()
   mock_confirm(2)
   eq(close(), false)
   child.expect_screenshot()
-  validate_confirm_args('modified buffer.*Confirm close without sync')
+  validate_confirm_args('pending file system actions.*Close without sync', false)
 
   -- - Should not trigger close event (as there was no closing)
   eq(child.lua_get('_G.had_close_event'), vim.NIL)
@@ -1235,6 +1285,13 @@ T['close()']['checks for modified buffers'] = function()
   mock_confirm(1)
   eq(close(), true)
   child.expect_screenshot()
+
+  -- Should not confirm if there are no actionable pending file system actions
+  child.lua('_G.confirm_args = nil')
+  open(test_dir_path)
+  type_keys('o')
+  close()
+  eq(child.lua_get('_G.confirm_args'), vim.NIL)
 end
 
 T['close()']['results into focus on target window'] = function()
@@ -1263,8 +1320,6 @@ end
 
 T['close()']['handles invalid target window'] = function()
   child.set_size(15, 60)
-  child.o.showtabline = 0
-  child.o.laststatus = 0
 
   child.cmd('wincmd v')
   local target_win_id = child.api.nvim_get_current_win()
@@ -1293,8 +1348,47 @@ T['go_in()']['works on file'] = function()
   expect.match(child.api.nvim_buf_get_name(0), '%.a%-file$')
   eq(get_lines(), { '.a-file' })
 
-  -- Should open with relative path to have better view in `:buffers`
-  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '"' .. vim.pesc(test_dir_path))
+  -- Should open path in relative form for nicer `:buffers`
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]' .. vim.pesc(test_dir_path))
+end
+
+T['go_in()']['mimics empty buffer reuse'] = function()
+  local validate = function(ref_n_bufs)
+    open(test_dir_path)
+    type_keys('/', [[\.a-file]], '<CR>')
+    go_in()
+    close()
+
+    eq(#child.api.nvim_list_bufs(), ref_n_bufs)
+    child.cmd('%bwipeout!')
+  end
+
+  -- Should mimic `:h buffer-reuse` similar to how `:edit` does it
+  eq(child.api.nvim_get_current_buf() == 1, true)
+  validate(1)
+
+  eq(child.api.nvim_get_current_buf() ~= 1, true)
+  validate(1)
+
+  child.cmd('tabnew')
+  validate(2)
+
+  -- Should reuse only for strict set of conditions
+  child.api.nvim_buf_set_name(0, 'named-buf')
+  validate(2)
+
+  child.bo.buftype = 'quickfix'
+  validate(2)
+
+  child.cmd('split')
+  eq(#child.fn.win_findbuf(child.api.nvim_get_current_buf()), 2)
+  validate(2)
+
+  child.api.nvim_buf_set_lines(0, 0, -1, false, { ' ' })
+  validate(2)
+
+  child.bo.modified = true
+  validate(2)
 end
 
 T['go_in()']['respects `opts.close_on_file`'] = function()
@@ -1378,6 +1472,15 @@ T['go_in()']['works on directory'] = function()
   go_out()
   go_in()
   child.expect_screenshot()
+end
+
+T['go_in()']['works on file with newline character'] = function()
+  if helpers.is_windows() then MiniTest.skip('Newline characters in names are not supported on Windows') end
+  local temp_dir = make_temp_dir('temp', { 'fi\nl\ne' })
+  open(temp_dir)
+  go_in()
+  close()
+  expect.match(child.api.nvim_buf_get_name(0), 'fi\nl\ne$')
 end
 
 T['go_in()']['works when no explorer is opened'] = function() expect.no_error(go_in) end
@@ -1601,13 +1704,17 @@ T['show_help()']['works'] = function()
   type_keys('2j')
 
   show_help()
+  local buf_help = child.api.nvim_get_current_buf()
+  eq(child.api.nvim_buf_get_name(0), 'minifiles://' .. buf_help .. '/help')
   child.expect_screenshot()
 
   -- Should focus on help window
   eq(child.api.nvim_get_current_win() ~= win_id_explorer, true)
 
-  -- Pressing `q` should close help window and focus on explorer at same line
+  -- Pressing `q` should close help window, delete buffer, and focus on
+  -- explorer at same line
   type_keys('q')
+  eq(child.api.nvim_buf_is_valid(buf_help), false)
   child.expect_screenshot()
 end
 
@@ -1839,36 +1946,6 @@ T['get_explorer_state()']['ensures valid target window'] = function()
   child.api.nvim_win_close(ref_win_id, true)
   eq(get_explorer_state().target_window, init_win_id)
 end
-
-T['get_target_window()'] = new_set()
-
-local get_target_window = forward_lua('MiniFiles.get_target_window')
-
-T['get_target_window()']['works'] = function()
-  child.o.laststatus = 0
-
-  child.cmd('belowright vertical split')
-  local ref_win_id = child.api.nvim_get_current_win()
-
-  local temp_dir = make_temp_dir('temp', {})
-  open(temp_dir)
-  eq(get_target_window(), ref_win_id)
-end
-
-T['get_target_window()']['ensures valid window'] = function()
-  local init_win_id = child.api.nvim_get_current_win()
-  child.cmd('belowright vertical split')
-  local ref_win_id = child.api.nvim_get_current_win()
-
-  open(test_dir_path)
-
-  eq(get_target_window(), ref_win_id)
-
-  child.api.nvim_win_close(ref_win_id, true)
-  eq(get_target_window(), init_win_id)
-end
-
-T['get_target_window()']['works when no explorer is opened'] = function() expect.no_error(get_target_window) end
 
 T['set_target_window()'] = new_set()
 
@@ -2358,13 +2435,15 @@ T['Windows']['works with too small dimensions'] = function()
 end
 
 T['Windows']['respects tabline when computing position'] = function()
-  child.o.showtabline = 2
+  child.o.showtabline, child.o.tabline = 2, '%#TabLineSel#My tabline%#TabLineFill#'
   open(test_dir_path)
   child.expect_screenshot()
 end
 
 T['Windows']['respects tabline and statusline when computing height'] = function()
   child.set_size(8, 60)
+  child.o.tabline = '%#TabLineSel#My tabline%#TabLineFill#'
+  child.o.statusline = 'My statusline'
 
   local validate = function()
     open(test_dir_path)
@@ -2447,6 +2526,7 @@ end
 
 T['Windows']['can be closed manually'] = function()
   open(test_dir_path)
+  type_keys('G', '<CR>')
   child.cmd('wincmd l | only')
   validate_n_wins(1)
 
@@ -2455,6 +2535,13 @@ T['Windows']['can be closed manually'] = function()
 
   close(test_dir_path)
   validate_n_wins(1)
+
+  open(test_dir_path)
+  child.cmd('quit!')
+  validate_n_wins(1)
+
+  open(test_dir_path)
+  validate_n_wins(2)
 end
 
 T['Windows']['never shows past end of buffer'] = function()
@@ -2513,6 +2600,31 @@ T['Windows']["do not evaluate 'foldexpr' too much"] = function()
   go_in()
   go_out()
   eq(child.lua_get('_G.n'), 0)
+end
+
+T['Windows']["respect 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.set_size(15, 40)
+
+  child.o.winborder = 'rounded'
+  open(test_dir_path)
+  child.expect_screenshot()
+  close()
+
+  -- Should prefer explicitly configured value over 'winborder'
+  child.lua([[
+    vim.api.nvim_create_autocmd('User', {
+      pattern = 'MiniFilesWindowOpen',
+      callback = function(args)
+        local win_id = args.data.win_id
+        local config = vim.api.nvim_win_get_config(win_id)
+        config.border = 'double'
+        vim.api.nvim_win_set_config(win_id, config)
+      end,
+    })
+  ]])
+  open(test_dir_path)
+  child.expect_screenshot()
 end
 
 T['Preview'] = new_set({
@@ -2588,6 +2700,8 @@ T['Preview']['does not highlight big files'] = function()
   -- Has limit per line
   child.fn.writefile({ string.format('local a = "%s"', string.rep('a', 1000)) }, big_file)
   open(big_file)
+  -- NOTE: there is no visible right pad because it got truncated by Neovim,
+  -- as 'MOCK_ROOT' doesn't account for initial truncation from left
   child.expect_screenshot()
   close()
 
@@ -2775,9 +2889,6 @@ T['Mappings']['`go_in` works'] = function()
 end
 
 T['Mappings']['`go_in` works in linewise Visual mode'] = function()
-  -- DIsable statusline for more portable screenshots
-  child.o.laststatus = 0
-
   local has_opened_buffer = function(name)
     local path = join_path(test_dir_path, name)
     for _, buf_id in ipairs(child.api.nvim_list_bufs()) do
@@ -2842,7 +2953,6 @@ end
 
 T['Mappings']['`go_in` supports <count>'] = function()
   child.set_size(15, 60)
-  child.o.laststatus = 0
   child.lua('MiniFiles.config.windows.width_focus = 20')
   child.lua('MiniFiles.config.windows.width_nofocus = 10')
 
@@ -2859,9 +2969,6 @@ T['Mappings']['`go_in` supports <count>'] = function()
 end
 
 T['Mappings']['`go_in_plus` works'] = function()
-  -- Disable statusline for more portable screenshots
-  child.o.laststatus = 0
-
   -- On directories should be the same as `go_in`
   -- Default
   open(test_dir_path)
@@ -2910,7 +3017,6 @@ end
 
 T['Mappings']['`go_in_plus` supports <count>'] = function()
   child.set_size(10, 50)
-  child.o.laststatus = 0
   child.lua('MiniFiles.config.windows.width_focus = 20')
   child.lua('MiniFiles.config.windows.width_nofocus = 10')
 
@@ -3578,6 +3684,9 @@ T['File manipulation']['rename file renames opened buffers'] = function()
   mock_confirm(1)
   synchronize()
   eq(is_file_in_buffer(buf_id, join_path(temp_dir, 'new-file')), true)
+
+  -- Should open path in relative form for nicer `:buffers`
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]tests/dir%-files/temp/new%-file')
 end
 
 T['File manipulation']['rename directory renames opened buffers'] = function()
@@ -4773,6 +4882,19 @@ T['File manipulation']['special cases']['into affected directory']['copy into re
   validate_tree(temp_dir, { 'file', 'new-dir/', 'new-dir/file' })
 end
 
+T['File manipulation']['entry with newline'] = function()
+  if helpers.is_windows() then MiniTest.skip('Newline characters in names are not supported on Windows') end
+  local temp_dir = make_temp_dir('temp', { 'di\nr/', 'fi\nl\ne' })
+  open(temp_dir)
+  -- NOTE: copy/move/rename *will* replace '\n' with escaped version, though
+  type_keys('cc', 'new-dir/', '<Esc>')
+  mock_confirm(1)
+  synchronize()
+  validate_confirm_args('DELETE │ di<NL>r')
+
+  validate_tree(temp_dir, { 'new-dir/', 'fi\nl\ne' })
+end
+
 T['File manipulation']['special cases']['nested move'] = new_set()
 
 T['File manipulation']['special cases']['nested move']['works'] = function()
@@ -4890,19 +5012,12 @@ end
 T['Events'] = new_set()
 
 local track_event = function(event_name)
-  local lua_cmd = string.format(
-    [[
+  child.lua('_G.event_name = ' .. vim.inspect(event_name))
+  local lua_cmd = [[
     _G.callback_args_data = {}
-    vim.api.nvim_create_autocmd(
-      'User',
-      {
-        pattern = '%s',
-        callback = function(args) table.insert(_G.callback_args_data, args.data or {}) end,
-      }
-    )
-    ]],
-    event_name
-  )
+    local f = function(args) table.insert(_G.callback_args_data, args.data or {}) end
+    vim.api.nvim_create_autocmd('User', { pattern = _G.event_name, callback = f })
+  ]]
   child.lua(lua_cmd)
 end
 
@@ -4960,13 +5075,24 @@ end
 
 T['Events']['`MiniFilesBufferCreate` triggers'] = function()
   track_event('MiniFilesBufferCreate')
+  child.lua([[
+    local f = function(args) _G.buf_name = vim.api.nvim_buf_get_name(args.data.buf_id) end
+    vim.api.nvim_create_autocmd('User', { pattern = 'MiniFilesBufferCreate', callback = f })
+  ]])
 
-  open(test_dir_path)
-  validate_event_track({ { buf_id = child.api.nvim_get_current_buf() } })
+  local open_path = full_path(test_dir_path)
+
+  open(open_path)
+  local buf_cur = child.api.nvim_get_current_buf()
+  validate_event_track({ { buf_id = buf_cur } })
+  -- - Should be already properly named
+  eq(child.lua_get('_G.buf_name'), 'minifiles://' .. buf_cur .. '/' .. open_path)
   clear_event_track()
 
   go_in()
-  validate_event_track({ { buf_id = child.api.nvim_get_current_buf() } })
+  buf_cur = child.api.nvim_get_current_buf()
+  validate_event_track({ { buf_id = buf_cur } })
+  eq(child.lua_get('_G.buf_name'), 'minifiles://' .. buf_cur .. '/' .. join_path(open_path, '.a-dir'))
   clear_event_track()
 
   -- No event should be triggered if buffer is reused
@@ -5158,7 +5284,11 @@ T['Events']['`MiniFilesWindowUpdate` is triggered after current buffer is set'] 
 end
 
 T['Events']['`MiniFilesWindowUpdate` can customize internally set window config parts'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.9') end
+  local expect_screenshot = child.expect_screenshot
+  if child.fn.has('nvim-0.10') == 0 then
+    local expect_orig = expect_screenshot
+    expect_screenshot = function() child.expect_screenshot({ ignore_attr = true }) end
+  end
   child.set_size(15, 80)
 
   load_module({
@@ -5179,8 +5309,8 @@ T['Events']['`MiniFilesWindowUpdate` can customize internally set window config 
         config.height = 5
         -- Ensure title padding
         local n = #config.title
-        if config.title[n][1] ~= ' ' then table.insert(config.title, { ' ', 'NormalFloat' }) end
-        if config.title[1][1] ~= ' ' then table.insert(config.title, 1, { ' ', 'NormalFloat' }) end
+        config.title[1][1] = config.title[1][1]:gsub('^ ', '')
+        config.title[n][1] = config.title[n][1]:gsub(' $', '')
         vim.api.nvim_win_set_config(args.data.win_id, config)
       end
     })
@@ -5188,27 +5318,27 @@ T['Events']['`MiniFilesWindowUpdate` can customize internally set window config 
 
   open(test_dir_path)
   go_in()
-  child.expect_screenshot()
+  expect_screenshot()
 
   -- Works in Insert mode when number of entries is less than height
   type_keys('o', 'a', 'b', 'c')
-  child.expect_screenshot()
+  expect_screenshot()
   child.ensure_normal_mode()
 
   -- Works in Insert mode when number of entries is more than height
   go_out()
   type_keys('o', 'd', 'e', 'f')
-  child.expect_screenshot()
+  expect_screenshot()
   child.ensure_normal_mode()
 
   -- Works when modifying below last visible line
   type_keys('3j', 'o', 'a')
-  child.expect_screenshot()
+  expect_screenshot()
 
   -- Works even if completion menu (like from 'mini.completion') is triggered
   child.cmd('set iskeyword+=-')
   type_keys('<C-n>')
-  child.expect_screenshot()
+  expect_screenshot()
 end
 
 T['Events']['`MiniFilesActionCreate` triggers'] = function()
@@ -5428,14 +5558,11 @@ T['Default explorer']['respects `options.use_as_default_explorer`'] = function()
 end
 
 T['Default explorer']['works in `:edit .`'] = function()
-  child.o.laststatus = 0
   child.cmd('edit ' .. test_dir_path)
   child.expect_screenshot()
 end
 
 T['Default explorer']['works in `:vsplit .`'] = function()
-  child.o.laststatus = 0
-
   child.cmd('vsplit ' .. test_dir_path)
   child.expect_screenshot()
 
@@ -5464,7 +5591,6 @@ T['Default explorer']['works in `:tabfind .`'] = function()
 end
 
 T['Default explorer']['handles close without opening file'] = function()
-  child.o.laststatus = 0
   child.cmd('wincmd v')
   child.cmd('edit ' .. test_dir_path)
   child.expect_screenshot()

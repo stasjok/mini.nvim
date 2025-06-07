@@ -612,8 +612,12 @@ Parameters ~
 {opts} `(optional)` MiniTest.expect.reference_screenshot.opts Options:
   - <force> `(boolean)` - whether to forcefully create reference screenshot.
     Temporary useful during test writing. Default: `false`.
-  - <ignore_lines> `(table)` - array of line numbers to ignore during compare.
-    Default: `nil` to check all lines.
+  - <ignore_text> `(boolean|table)` - whether to ignore all or some text lines.
+    If `true` - ignore all, if number array - ignore text of those lines,
+    if `false` - do not ignore any. Default: `false`.
+  - <ignore_attr> `(boolean|table)` - whether to ignore all or some attr lines.
+    If `true` - ignore all, if number array - ignore attr of those lines,
+    if `false` - do not ignore any. Default: `false`.
   - <directory> `(string)` - directory where automatically constructed `path`
     is located. Default: "tests/screenshots".
 
@@ -727,7 +731,7 @@ interact with it through |RPC| messages.
 For more information see |MiniTest-child-neovim|.
 
 Return ~
-MiniTest.child Object of |MiniTest-child-neovim|.
+`(MiniTest.child)` Object of |MiniTest-child-neovim|.
 
 Usage ~
 >lua
@@ -834,6 +838,7 @@ Fields ~
 {diagnostic} `(table)` Redirection table for |vim.diagnostic|.
 {fn} `(table)` Redirection table for |vim.fn|.
 {highlight} `(table)` Redirection table for `vim.highlight` (|lua-highlight)|.
+{hl} `(table)` Redirection table for |vim.hl|.
 {json} `(table)` Redirection table for `vim.json`.
 {loop} `(table)` Redirection table for |vim.loop|.
 {lsp} `(table)` Redirection table for `vim.lsp` (|lsp-core)|.

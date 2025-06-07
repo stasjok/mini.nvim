@@ -76,7 +76,7 @@
 ---     allowed_windows = { not_current = false },
 ---   })
 --- <
---- - Jump to word start using combination of options supplied in
+--- - Jump to line start using combination of options supplied in
 ---   |MiniJump2d.config| and |MiniJump2d.builtin_opts.line_start|: >vim
 ---
 ---   :lua MiniJump2d.start(MiniJump2d.builtin_opts.line_start)
@@ -160,6 +160,15 @@ local H = {}
 ---   require('mini.jump2d').setup({}) -- replace {} with your config table
 --- <
 MiniJump2d.setup = function(config)
+  -- TODO: Remove after Neovim=0.8 support is dropped
+  if vim.fn.has('nvim-0.9') == 0 then
+    vim.notify(
+      '(mini.jump2d) Neovim<0.9 is soft deprecated (module works but not supported).'
+        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
+        .. ' Please update your Neovim version.'
+    )
+  end
+
   -- Export module
   _G.MiniJump2d = MiniJump2d
 
@@ -204,7 +213,7 @@ end
 --- ## View ~
 ---
 --- Option `view.n_steps_ahead` controls how many steps ahead to show along
---- with the currently required label. Those future steps are showed with
+--- with the currently required label. Those future steps are shown with
 --- different (less visible) highlight group ("MiniJump2dSpotAhead"). Usually
 --- it is a good idea to use this with a spotter which doesn't result into many
 --- jump spots (like, for example, |MiniJump2d.builtin_opts.word_start|).
@@ -278,6 +287,8 @@ MiniJump2d.config = {
   },
 
   -- Whether to disable showing non-error feedback
+  -- This also affects (purely informational) helper messages shown after
+  -- idle time if user input is required.
   silent = false,
 }
 --minidoc_afterlines_end
@@ -330,7 +341,7 @@ MiniJump2d.config = {
 --- default spotter function. Rarely 3 steps are needed with several windows.
 ---
 ---@param opts table|nil Configuration of jumping, overriding global and buffer
----   local values.config|. Has the same structure as |MiniJump2d.config|
+---   local values. Has the same structure as |MiniJump2d.config|
 ---   without <mappings> field. Extra allowed fields:
 ---     - <hl_group> - which highlight group to use for first step.
 ---       Default: "MiniJump2dSpot".
@@ -352,7 +363,7 @@ MiniJump2d.config = {
 ---   -- Jump to first character of punctuation group only inside current window
 ---   -- which is placed at cursor line; visualize with `Search`
 ---   MiniJump2d.start({
----     spotter = MiniJump2d.gen_pattern_spotter('%p+'),
+---     spotter = MiniJump2d.gen_spotter.pattern('%p+'),
 ---     allowed_lines = { cursor_before = false, cursor_after = false },
 ---     allowed_windows = { not_current = false },
 ---     hl_group = 'Search'
@@ -408,6 +419,11 @@ MiniJump2d.stop = function()
   if H.cache.is_in_getcharstr then vim.api.nvim_input('<C-c>') end
 end
 
+--- Generate spotter
+---
+--- This is a table with function elements. Call to actually get a spotter.
+MiniJump2d.gen_spotter = {}
+
 --- Generate spotter for Lua pattern
 ---
 ---@param pattern string|nil Lua pattern. Default: `'[^%s%p]+'` which matches group
@@ -422,19 +438,19 @@ end
 ---
 ---@usage >lua
 ---   -- Match any punctuation
----   MiniJump2d.gen_pattern_spotter('%p')
+---   MiniJump2d.gen_spotter.pattern('%p')
 ---
 ---   -- Match first from line start non-whitespace character
----   MiniJump2d.gen_pattern_spotter('^%s*%S', 'end')
+---   MiniJump2d.gen_spotter.pattern('^%s*%S', 'end')
 ---
 ---   -- Match start of last word
----   MiniJump2d.gen_pattern_spotter('[^%s%p]+[%s%p]-$', 'start')
+---   MiniJump2d.gen_spotter.pattern('[^%s%p]+[%s%p]-$', 'start')
 ---
 ---   -- Match letter followed by another letter (example of manual matching
 ---   -- inside pattern)
----   MiniJump2d.gen_pattern_spotter('%a()%a', 'none')
+---   MiniJump2d.gen_spotter.pattern('%a()%a', 'none')
 --- <
-MiniJump2d.gen_pattern_spotter = function(pattern, side)
+MiniJump2d.gen_spotter.pattern = function(pattern, side)
   -- Don't use `%w` to account for multibyte characters
   pattern = pattern or '[^%s%p]+'
   side = side or 'start'
@@ -474,12 +490,54 @@ MiniJump2d.gen_pattern_spotter = function(pattern, side)
       spot = math.min(math.max(spot, 0), line:len())
 
       -- Unify how spot is chosen in case of multibyte characters
-      -- Use `+-1` to make sure that result it at start of multibyte character
+      -- Use `+-1` to make sure that result is at start of multibyte character
       local utf_index = vim.str_utfindex(line, spot) - 1
       spot = vim.str_byteindex(line, utf_index) + 1
 
       -- Add spot only if it referces new actually visible column
       if spot ~= res[#res] then table.insert(res, spot) end
+    end
+    return res
+  end
+end
+
+-- TODO: Remove after releasing 'mini.nvim' 0.17.0
+MiniJump2d.gen_pattern_spotter = function(pattern, side)
+  local msg = '`gen_pattern_spotter` is moved to `gen_spotter.pattern` for consistency with other modules.'
+    .. ' It still works for now, but will stop working after the next release.'
+    .. ' Sorry for the inconvenience.'
+  H.notify(msg, 'WARN')
+  return MiniJump2d.gen_spotter.pattern(pattern, side)
+end
+
+--- Generate spotter for Vimscript pattern
+---
+---@param pattern string|nil Vimscript |pattern|. Default: `\k\+` to match group
+---   of "keyword characters" (see 'iskeyword').
+---
+---@return function Spotter function.
+---
+---@usage >lua
+---   -- Match start of a keyword
+---   MiniJump2d.gen_spotter.vimpattern('\\k\\+')
+---
+---   -- Match end of a keyword
+---   MiniJump2d.gen_spotter.vimpattern('\\k*\\zs\\k')
+--- <
+MiniJump2d.gen_spotter.vimpattern = function(pattern)
+  pattern = pattern or '\\k\\+'
+  if type(pattern) ~= 'string' then H.error('`pattern` should be string') end
+  local r = vim.regex(pattern)
+  local is_anchored = pattern:sub(1, 1) == '^' or pattern:sub(-1, -1) == '$'
+
+  return function(line_num, _)
+    local res, l, start = {}, vim.fn.getline(line_num), 1
+    local n = is_anchored and 1 or (l:len() + 1)
+    for _ = 1, n do
+      local from, to = r:match_str(l)
+      if from == nil then break end
+      table.insert(res, from + start)
+      l, start = l:sub(to + 1), start + to
     end
     return res
   end
@@ -494,11 +552,11 @@ end
 ---
 ---@usage >lua
 ---   -- Match start and end of non-blank character groups:
----   local nonblank_start = MiniJump2d.gen_pattern_spotter('%S+', 'start')
----   local nonblank_end = MiniJump2d.gen_pattern_spotter('%S+', 'end')
----   local spotter = MiniJump2d.gen_union_spotter(nonblank_start, nonblank_end)
+---   local nonblank_start = MiniJump2d.gen_spotter.pattern('%S+', 'start')
+---   local nonblank_end = MiniJump2d.gen_spotter.pattern('%S+', 'end')
+---   local spotter = MiniJump2d.gen_spotter.union(nonblank_start, nonblank_end)
 --- <
-MiniJump2d.gen_union_spotter = function(...)
+MiniJump2d.gen_spotter.union = function(...)
   local spotters = { ... }
   if #spotters == 0 then return function() return {} end end
 
@@ -507,7 +565,7 @@ MiniJump2d.gen_union_spotter = function(...)
     if not vim.is_callable(x) then is_all_callable = false end
   end
 
-  if not is_all_callable then H.error('All `gen_union_spotter()` arguments should be callable elements.') end
+  if not is_all_callable then H.error('All `gen_spotter.union()` arguments should be callable elements.') end
 
   return function(line_num, args)
     local res = spotters[1](line_num, args)
@@ -516,6 +574,15 @@ MiniJump2d.gen_union_spotter = function(...)
     end
     return res
   end
+end
+
+-- TODO: Remove after releasing 'mini.nvim' 0.17.0
+MiniJump2d.gen_union_spotter = function(...)
+  local msg = '`gen_union_spotter` is moved to `gen_spotter.union` for consistency with other modules.'
+    .. ' It still works for now, but will stop working after the next release.'
+    .. ' Sorry for the inconvenience.'
+  H.notify(msg, 'WARN')
+  return MiniJump2d.gen_spotter.union(...)
 end
 
 --- Default spotter function
@@ -533,15 +600,15 @@ end
 ---
 --- Usually takes from 2 to 3 keystrokes to get to destination.
 MiniJump2d.default_spotter = (function()
-  -- NOTE: not using `MiniJump2d.gen_union_spotter()` due to slightly better
+  -- NOTE: not using `MiniJump2d.gen_spotter.union()` due to slightly better
   -- algorithmic complexity merging small arrays first.
-  local nonblank_start = MiniJump2d.gen_pattern_spotter('%S+', 'start')
-  local nonblank_end = MiniJump2d.gen_pattern_spotter('%S+', 'end')
+  local nonblank_start = MiniJump2d.gen_spotter.pattern('%S+', 'start')
+  local nonblank_end = MiniJump2d.gen_spotter.pattern('%S+', 'end')
   -- Use `[^%s%p]` as "alphanumeric" to allow working with multibyte characters
-  local alphanum_before_punct = MiniJump2d.gen_pattern_spotter('[^%s%p]%p', 'start')
-  local alphanum_after_punct = MiniJump2d.gen_pattern_spotter('%p[^%s%p]', 'end')
+  local alphanum_before_punct = MiniJump2d.gen_spotter.pattern('[^%s%p]%p', 'start')
+  local alphanum_after_punct = MiniJump2d.gen_spotter.pattern('%p[^%s%p]', 'end')
   -- NOTE: works only with Latin alphabet
-  local upper_start = MiniJump2d.gen_pattern_spotter('%u+', 'start')
+  local upper_start = MiniJump2d.gen_spotter.pattern('%u+', 'start')
 
   return function(line_num, args)
     local res_1 = H.merge_unique(nonblank_start(line_num, args), nonblank_end(line_num, args))
@@ -598,8 +665,10 @@ MiniJump2d.builtin_opts.line_start = {
 
 --- Jump to word start
 ---
+--- Respects 'iskeyword' when computing word start.
+---
 --- Defines `spotter`.
-MiniJump2d.builtin_opts.word_start = { spotter = MiniJump2d.gen_pattern_spotter('[^%s%p]+') }
+MiniJump2d.builtin_opts.word_start = { spotter = MiniJump2d.gen_spotter.vimpattern('\\k\\+') }
 
 -- Produce `opts` which modifies spotter based on user input
 local function user_input_opts(input_fun)
@@ -608,17 +677,13 @@ local function user_input_opts(input_fun)
     allowed_lines = { blank = false, fold = false },
   }
 
-  res.hooks = {
-    before_start = function()
-      local input = input_fun()
-      if input == nil then
-        res.spotter = function() return {} end
-      else
-        local pattern = vim.pesc(input)
-        res.spotter = MiniJump2d.gen_pattern_spotter(pattern)
-      end
-    end,
-  }
+  local before_start = function()
+    local input = input_fun()
+    -- Allow user to cancel input and not show any jumping spots
+    if input == nil then return end
+    res.spotter = MiniJump2d.gen_spotter.pattern(vim.pesc(input))
+  end
+  res.hooks = { before_start = before_start }
 
   return res
 end
@@ -670,40 +735,36 @@ H.keys = {
 -- Helper functionality =======================================================
 -- Settings -------------------------------------------------------------------
 H.setup_config = function(config)
-  -- General idea: if some table elements are not present in user-supplied
-  -- `config`, take them from default config
-  vim.validate({ config = { config, 'table', true } })
+  H.check_type('config', config, 'table', true)
   config = vim.tbl_deep_extend('force', vim.deepcopy(H.default_config), config or {})
 
-  vim.validate({
-    spotter = { config.spotter, 'function', true },
-    labels = { config.labels, 'string' },
-    view = { config.view, 'table' },
-    allowed_lines = { config.allowed_lines, 'table' },
-    allowed_windows = { config.allowed_windows, 'table' },
-    hooks = { config.hooks, 'table' },
-    mappings = { config.mappings, 'table' },
-    silent = { config.silent, 'boolean' },
-  })
+  H.check_type('spotter', config.spotter, 'function', true)
+  H.check_type('labels', config.labels, 'string')
 
-  vim.validate({
-    ['view.dim'] = { config.view.dim, 'boolean' },
-    ['view.n_steps_ahead'] = { config.view.n_steps_ahead, 'number' },
+  H.check_type('view', config.view, 'table')
+  H.check_type('view.dim', config.view.dim, 'boolean')
+  H.check_type('view.n_steps_ahead', config.view.n_steps_ahead, 'number')
 
-    ['allowed_lines.blank'] = { config.allowed_lines.blank, 'boolean' },
-    ['allowed_lines.cursor_before'] = { config.allowed_lines.cursor_before, 'boolean' },
-    ['allowed_lines.cursor_at'] = { config.allowed_lines.cursor_at, 'boolean' },
-    ['allowed_lines.cursor_after'] = { config.allowed_lines.cursor_after, 'boolean' },
-    ['allowed_lines.fold'] = { config.allowed_lines.fold, 'boolean' },
+  H.check_type('allowed_lines', config.allowed_lines, 'table')
+  H.check_type('allowed_lines.blank', config.allowed_lines.blank, 'boolean')
+  H.check_type('allowed_lines.cursor_before', config.allowed_lines.cursor_before, 'boolean')
+  H.check_type('allowed_lines.cursor_at', config.allowed_lines.cursor_at, 'boolean')
+  H.check_type('allowed_lines.cursor_after', config.allowed_lines.cursor_after, 'boolean')
+  H.check_type('allowed_lines.fold', config.allowed_lines.fold, 'boolean')
 
-    ['allowed_windows.current'] = { config.allowed_windows.current, 'boolean' },
-    ['allowed_windows.not_current'] = { config.allowed_windows.not_current, 'boolean' },
+  H.check_type('allowed_windows', config.allowed_windows, 'table')
+  H.check_type('allowed_windows.current', config.allowed_windows.current, 'boolean')
+  H.check_type('allowed_windows.not_current', config.allowed_windows.not_current, 'boolean')
 
-    ['hooks.before_start'] = { config.hooks.before_start, 'function', true },
-    ['hooks.after_jump'] = { config.hooks.after_jump, 'function', true },
+  H.check_type('hooks', config.hooks, 'table')
+  H.check_type('hooks.before_start', config.hooks.before_start, 'function', true)
+  H.check_type('hooks.after_jump', config.hooks.after_jump, 'function', true)
 
-    ['mappings.start_jumping'] = { config.mappings.start_jumping, 'string' },
-  })
+  H.check_type('mappings', config.mappings, 'table')
+  H.check_type('mappings.start_jumping', config.mappings.start_jumping, 'string')
+
+  H.check_type('silent', config.silent, 'boolean')
+
   return config
 end
 
@@ -1022,7 +1083,16 @@ H.perform_jump = function(spot, after_hook)
 end
 
 -- Utilities ------------------------------------------------------------------
-H.error = function(msg) error(string.format('(mini.jump2d) %s', msg), 0) end
+H.error = function(msg) error('(mini.jump2d) ' .. msg, 0) end
+
+H.check_type = function(name, val, ref, allow_nil)
+  if type(val) == ref or (ref == 'callable' and vim.is_callable(val)) or (allow_nil and val == nil) then return end
+  H.error(string.format('`%s` should be %s, not %s', name, ref, type(val)))
+end
+
+H.notify = function(msg, level_name, silent)
+  if not silent then vim.notify('(mini.jump2d) ' .. msg, vim.log.levels[level_name]) end
+end
 
 H.echo = function(msg, is_important)
   if H.get_config().silent then return end

@@ -25,7 +25,7 @@
 ---     - Argument.
 ---     - Tag.
 ---     - Derived from user prompt.
----     - Default for punctuation, digit, space, or tab.
+---     - Default for anything but Latin letters (to fall back to |text-objects|).
 ---
 ---     For more textobjects see |MiniExtra.gen_ai_spec|.
 ---
@@ -85,8 +85,7 @@
 ---       textobjects. 'mini.ai' does it via |MiniAi.find_textobject()|.
 ---     - Has no implementation of "moving to edge of textobject". 'mini.ai'
 ---       does it via |MiniAi.move_cursor()| and `g[` and `g]` default mappings.
----     - Has elaborate ways to control searching of the next textobject.
----       'mini.ai' relies on handful of 'config.search_method'.
+---     - Both implement the notion of manual "next"/"last" search directions.
 ---     - Implements `A`, `I` operators. 'mini.ai' does not by design: it is
 ---       assumed to be a property of textobject, not operator.
 ---     - Doesn't implement "function call" and "user prompt" textobjects.
@@ -98,8 +97,8 @@
 ---     - Along with textobject functionality provides a curated and maintained
 ---       set of popular textobject queries for many languages (which can power
 ---       |MiniAi.gen_spec.treesitter()| functionality).
----     - Operates with custom treesitter directives (see
----       |lua-treesitter-directives|) allowing more fine-tuned textobjects.
+---     - Both support working with |lua-treesitter-directives| allowing more
+---       fine-tuned textobjects.
 ---     - Implements only textobjects based on treesitter.
 ---     - Doesn't support |v:count|.
 ---     - Doesn't support multiple search method (basically, only 'cover').
@@ -117,8 +116,8 @@
 ---
 --- This table describes all builtin textobjects along with what they
 --- represent. Explanation:
---- - `Key` represents the textobject identifier: single alphanumeric,
----   punctuation, space, or tab character which should be typed after `a`/`i`.
+--- - `Key` represents the textobject identifier: single character which should
+---   be typed after `a`/`i`.
 --- - `Name` is a description of textobject.
 --- - `Example line` contains a string for which examples are constructed. The
 ---   `*` denotes the cursor position.
@@ -133,47 +132,46 @@
 --- visual selection, any |operator| can be used or `g[`/`g]` motions to move
 --- to left/right edge of `a` textobject.
 --- >
----  |Key|     Name      |   Example line   |   a    |   i    |   2a   |   2i   |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | ( |  Balanced ()  | (( *a (bb) ))    |        |        |        |        |
----  | [ |  Balanced []  | [[ *a [bb] ]]    | [2;12] | [4;10] | [1;13] | [2;12] |
----  | { |  Balanced {}  | {{ *a {bb} }}    |        |        |        |        |
----  | < |  Balanced <>  | << *a <bb> >>    |        |        |        |        |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | ) |  Balanced ()  | (( *a (bb) ))    |        |        |        |        |
----  | ] |  Balanced []  | [[ *a [bb] ]]    |        |        |        |        |
----  | } |  Balanced {}  | {{ *a {bb} }}    | [2;12] | [3;11] | [1;13] | [2;12] |
----  | > |  Balanced <>  | << *a <bb> >>    |        |        |        |        |
----  | b |  Alias for    | [( *a {bb} )]    |        |        |        |        |
----  |   |  ), ], or }   |                  |        |        |        |        |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | " |  Balanced "   | "*a" " bb "      |        |        |        |        |
----  | ' |  Balanced '   | '*a' ' bb '      |        |        |        |        |
----  | ` |  Balanced `   | `*a` ` bb `      | [1;4]  | [2;3]  | [6;11] | [7;10] |
----  | q |  Alias for    | '*a' " bb "      |        |        |        |        |
----  |   |  ", ', or `   |                  |        |        |        |        |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | ? |  User prompt  | e*e o e o o      | [3;5]  | [4;4]  | [7;9]  | [8;8]  |
----  |   |(typed e and o)|                  |        |        |        |        |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | t |      Tag      | <x><y>*a</y></x> | [4;12] | [7;8]  | [1;16] | [4;12] |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | f | Function call | f(a, g(*b, c) )  | [6;13] | [8;12] | [1;15] | [3;14] |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  | a |   Argument    | f(*a, g(b, c) )  | [3;5]  | [3;4]  | [5;14] | [7;13] |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
----  |   |    Default    |                  |        |        |        |        |
----  |   |   (digits,    | aa_*b__cc___     | [4;7]  | [4;5]  | [8;12] | [8;9]  |
----  |   | punctuation,  | (example for _)  |        |        |        |        |
----  |   | or whitespace)|                  |        |        |        |        |
----  |---|---------------|-1234567890123456-|--------|--------|--------|--------|
+---  ┌───┬───────────────┬──────────────────┬────────┬────────┬────────┬────────┐
+---  │Key│     Name      │   Example line   │   a    │   i    │   2a   │   2i   │
+---  ├───┴───────────────┴──────────────────┴────────┴────────┴────────┴────────┤
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ ( │  Balanced ()  │ (( *a (bb) ))    │        │        │        │        │
+---  │ [ │  Balanced []  │ [[ *a [bb] ]]    │ [2;12] │ [4;10] │ [1;13] │ [2;12] │
+---  │ { │  Balanced {}  │ {{ *a {bb} }}    │        │        │        │        │
+---  │ < │  Balanced <>  │ << *a <bb> >>    │        │        │        │        │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ ) │  Balanced ()  │ (( *a (bb) ))    │        │        │        │        │
+---  │ ] │  Balanced []  │ [[ *a [bb] ]]    │        │        │        │        │
+---  │ } │  Balanced {}  │ {{ *a {bb} }}    │ [2;12] │ [3;11] │ [1;13] │ [2;12] │
+---  │ > │  Balanced <>  │ << *a <bb> >>    │        │        │        │        │
+---  │ b │  Alias for    │ [( *a {bb} )]    │        │        │        │        │
+---  │   │  ), ], or }   │                  │        │        │        │        │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ " │  Balanced "   │ "*a" " bb "      │        │        │        │        │
+---  │ ' │  Balanced '   │ '*a' ' bb '      │        │        │        │        │
+---  │ ` │  Balanced `   │ `*a` ` bb `      │ [1;4]  │ [2;3]  │ [6;11] │ [7;10] │
+---  │ q │  Alias for    │ '*a' " bb "      │        │        │        │        │
+---  │   │  ", ', or `   │                  │        │        │        │        │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ ? │  User prompt  │ e*e o e o o      │ [3;5]  │ [4;4]  │ [7;9]  │ [8;8]  │
+---  │   │(typed e and o)│                  │        │        │        │        │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ t │      Tag      │ <x><y>*a</y></x> │ [4;12] │ [7;8]  │ [1;16] │ [4;12] │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ f │ Function call │ f(a, g(*b, c) )  │ [6;13] │ [8;12] │ [1;15] │ [3;14] │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │ a │   Argument    │ f(*a, g(b, c) )  │ [3;5]  │ [3;4]  │ [5;14] │ [7;13] │
+---  ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈1234567890123456┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+---  │   │    Default    │ aa_*b__cc___     │ [4;7]  │ [4;5]  │ [8;12] │ [8;9]  │
+---  │   │   (typed _)   │                  │        │        │        │        │
+---  └───┴───────────────┴──────────────────┴────────┴────────┴────────┴────────┘
 --- <
 --- Notes:
 --- - All examples assume default `config.search_method`.
 --- - Open brackets differ from close brackets by how they treat inner edge
 ---   whitespace for `i` textobject: open ignores it, close - includes.
---- - Default textobject is activated for identifiers from digits (0, ..., 9),
----   punctuation (like `_`, `*`, `,`, etc.), whitespace (space, tab, etc.).
+--- - Default textobject is activated for identifiers which are not Latin letters.
 ---   They are designed to be treated as separators, so include only right edge
 ---   in `a` textobject. To include both edges, use custom textobjects
 ---   (see |MiniAi-textobject-specification| and |MiniAi.config|). Note:
@@ -414,6 +412,15 @@ local H = {}
 ---   require('mini.ai').setup({}) -- replace {} with your config table
 --- <
 MiniAi.setup = function(config)
+  -- TODO: Remove after Neovim=0.8 support is dropped
+  if vim.fn.has('nvim-0.9') == 0 then
+    vim.notify(
+      '(mini.ai) Neovim<0.9 is soft deprecated (module works but not supported).'
+        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
+        .. ' Please update your Neovim version.'
+    )
+  end
+
   -- Export module
   _G.MiniAi = MiniAi
 
@@ -432,11 +439,17 @@ end
 ---
 --- ## Custom textobjects ~
 ---
---- Each named entry of `config.custom_textobjects` is a textobject with
---- that identifier and specification (see |MiniAi-textobject-specification|).
---- They are also used to override builtin ones (|MiniAi-textobject-builtin|).
---- Supply non-valid input (not in specification format) to disable module's
---- builtin textobject in favor of external or Neovim's builtin mapping.
+--- User can define own textobjects by supplying `config.custom_textobjects`.
+--- It should be a table with keys being single character textobject identifier
+--- (supported by |getcharstr()|) and values - textobject specification
+--- (see |MiniAi-textobject-specification|).
+---
+--- General recommendations:
+--- - This can be used to override builtin ones (|MiniAi-textobject-builtin|).
+---   Supply non-valid input (not in specification format) to disable module's
+---   builtin textobject in favor of external or Neovim's builtin mapping.
+--- - Keys should use character representation which can be |getcharstr()| output.
+---   For example, `'\r'` and not `'<CR>'`.
 ---
 --- Examples:
 --- >lua
@@ -551,6 +564,8 @@ MiniAi.config = {
   search_method = 'cover_or_next',
 
   -- Whether to disable showing non-error feedback
+  -- This also affects (purely informational) helper messages shown after
+  -- idle time if user input is required.
   silent = false,
 }
 --minidoc_afterlines_end
@@ -645,6 +660,7 @@ MiniAi.move_cursor = function(side, ai_type, id, opts)
   end
 
   -- Move cursor and open enough folds
+  vim.cmd("normal! m'")
   vim.api.nvim_win_set_cursor(0, { pos.line, pos.col - 1 })
   vim.cmd('normal! zv')
 end
@@ -928,10 +944,11 @@ end
 ---   })
 --- <
 --- Notes:
---- - By default query is done using 'nvim-treesitter' plugin if it is present
----   (falls back to builtin methods otherwise). This allows for a more
----   advanced features (like multiple buffer languages, custom directives, etc.).
----   See `opts.use_nvim_treesitter` for how to disable this.
+--- - Be sure that query files don't contain unknown |treesitter-directives|
+---   (like `#make-range!`, for example). Otherwise textobject for such capture
+---   might not be found as |vim.treesitter| won't treat them as captures. Verify
+---   with `:=vim.treesitter.query.get('lang', 'textobjects')` and see if the
+---   target capture is recognized as one.
 --- - It uses buffer's |filetype| to determine query language.
 --- - On large files it is slower than pattern-based textobjects. Still very
 ---   fast though (one search should be magnitude of milliseconds or tens of
@@ -943,9 +960,11 @@ end
 ---   array of such captures (best among all matches will be chosen).
 ---@param opts table|nil Options. Possible values:
 ---   - <use_nvim_treesitter> - whether to try to use 'nvim-treesitter' plugin
----     (if present) to do the query. It implements more advanced behavior at
----     cost of increased execution time. Provides more coherent experience if
----     'nvim-treesitter-textobjects' queries are used. Default: `true`.
+---     (if present) to do the query. It used to implement more advanced behavior
+---     and more coherent experience if 'nvim-treesitter-textobjects' queries are
+---     used. However, as |lua-treesitter-core| methods are more capable now,
+---     the option will soon be removed. Only present for backward compatibility.
+---     Default: `false`.
 ---
 ---@return function Function with |MiniAi.find_textobject()| signature which
 ---   returns array of current buffer regions representing matches for
@@ -953,27 +972,56 @@ end
 ---
 ---@seealso |MiniAi-textobject-specification| for how this type of textobject
 ---   specification is processed.
---- |get_query()| for how query is fetched in case of no 'nvim-treesitter'.
+--- |vim.treesitter.get_query()| for how query is fetched.
 --- |Query:iter_captures()| for how all query captures are iterated in case of
 ---   no 'nvim-treesitter'.
 MiniAi.gen_spec.treesitter = function(ai_captures, opts)
-  opts = vim.tbl_deep_extend('force', { use_nvim_treesitter = true }, opts or {})
+  -- TODO: Remove after releasing 'mini.nvim' 0.17.0
+  opts = vim.tbl_deep_extend('force', { use_nvim_treesitter = false }, opts or {})
   ai_captures = H.prepare_ai_captures(ai_captures)
 
   return function(ai_type, _, _)
     -- Get array of matched treesitter nodes
     local target_captures = ai_captures[ai_type]
     local has_nvim_treesitter = pcall(require, 'nvim-treesitter') and pcall(require, 'nvim-treesitter.query')
-    local node_querier = (has_nvim_treesitter and opts.use_nvim_treesitter) and H.get_matched_nodes_plugin
-      or H.get_matched_nodes_builtin
-    local matched_nodes = node_querier(target_captures)
+    local range_querier = (has_nvim_treesitter and opts.use_nvim_treesitter) and H.get_matched_ranges_plugin
+      or H.get_matched_ranges_builtin
+    local matched_ranges = range_querier(target_captures)
 
     -- Return array of regions
-    return vim.tbl_map(function(node)
-      local line_from, col_from, line_to, col_to = node:range()
-      -- `node:range()` returns 0-based numbers for end-exclusive region
-      return { from = { line = line_from + 1, col = col_from + 1 }, to = { line = line_to + 1, col = col_to } }
-    end, matched_nodes)
+    return vim.tbl_map(function(range)
+      -- Ranges are 0-based numbers for end-exclusive region
+      return { from = { line = range[1] + 1, col = range[2] + 1 }, to = { line = range[3] + 1, col = range[4] } }
+    end, matched_ranges)
+  end
+end
+
+--- Specification from user prompt
+---
+--- - Ask user for left and right textobject edges as raw strings (no pattern).
+--- - Construct specification for a textobject that matches from left edge string
+---   to right edge string: `a` includes both strings, `i` only insides.
+---
+--- Used for |MiniAi-textobject-builtin| with identifier `?`.
+---
+---@return function Textobject specification as function.
+MiniAi.gen_spec.user_prompt = function()
+  return function()
+    -- Using cache allows for a dot-repeat without another user input
+    if H.cache.prompted_textobject ~= nil then return H.cache.prompted_textobject end
+
+    local left = H.user_input('Left edge')
+    if left == nil or left == '' then return end
+    local right = H.user_input('Right edge')
+    if right == nil or right == '' then return end
+
+    -- Clean command line from prompt messages (does not work in Visual mode)
+    vim.cmd([[echo '' | redraw]])
+
+    local left_esc, right_esc = vim.pesc(left), vim.pesc(right)
+    local res = { string.format('%s().-()%s', left_esc, right_esc) }
+    H.cache.prompted_textobject = res
+    return res
   end
 end
 
@@ -992,6 +1040,7 @@ MiniAi.select_textobject = function(ai_type, id, opts)
   if H.is_disabled() then return end
 
   opts = opts or {}
+  local operator_pending = opts.operator_pending
 
   -- Exit to Normal before getting textobject id. This way invalid id doesn't
   -- result into staying in current mode (which seems to be more convenient).
@@ -1014,38 +1063,50 @@ MiniAi.select_textobject = function(ai_type, id, opts)
     vis_mode = opts.vis_mode and vim.api.nvim_replace_termcodes(opts.vis_mode, true, true, true) or prev_vis_mode
   end
 
-  -- Allow going past end of line in order to collapse multiline regions
-  local cache_virtualedit = vim.o.virtualedit
   local cache_eventignore = vim.o.eventignore
+  -- Allow going past end of line in order to collapse multiline regions
+  local cache_virtualedit, cache_whichwrap = vim.o.virtualedit, vim.o.whichwrap
+
+  -- Cache window horizontal view data to possibly counter unwanted side scroll
+  local leftcol = vim.fn.winsaveview().leftcol
 
   pcall(function()
     -- Do nothing in Operator-pending mode for empty region (except `c`, `d`,
-    -- or "replace" from 'mini.operators'). These are hand picked because they
+    -- or selected "replace" operators). These are hand picked because they
     -- completely remove selected text, which is necessary for currently only
     -- possible empty region selection implementation.
     local is_empty_opending = tobj_is_empty and opts.operator_pending
-    local is_minioperators_replace = vim.v.operator == 'g@' and vim.o.operatorfunc:find('MiniOperators%.replace') ~= nil
-    local is_allowed_empty_opending = vim.v.operator == 'c' or vim.v.operator == 'd' or is_minioperators_replace
-    if is_empty_opending and not is_allowed_empty_opending then
-      H.message('Textobject region is empty. Nothing is done.')
-      return
+    if is_empty_opending then
+      local is_allowed_empty_opending = vim.v.operator == 'c'
+        or vim.v.operator == 'd'
+        or (vim.v.operator == 'g@' and vim.o.operatorfunc:find('MiniOperators%.replace') ~= nil)
+        or (vim.v.operator == 'g@' and vim.o.operatorfunc:find('substitute') ~= nil)
+      if not is_allowed_empty_opending then return H.message('Textobject region is empty. Nothing is done.') end
     end
 
     -- Allow setting cursor past line end (allows collapsing multiline region)
+    -- NOTE: This doesn't work for 'virtualedit=all' and 'selection=inclusive'
+    -- (default). The reason is that later option restoring is done immediately
+    -- leading to a selection obey 'virtualedit=all' rules and thus won't treat
+    -- end-of-line as '\n' and collapse multiline region. The solution is to
+    -- `vim.schedule()` option restore, but it feels too much for a niche case.
     vim.o.virtualedit = 'onemore'
 
-    -- Open enough folds to show left and right edges
+    -- Select region:
+    -- - Go from start to end stay at range end in Visual mode (as done in
+    --   built-in visual selection).
+    -- - Open just enough folds to have both ends visible.
+    -- - Respect exclusive selection (including when selecting end of line)
     set_cursor(tobj.from)
     vim.cmd('normal! zv')
-    set_cursor(tobj.to)
-    vim.cmd('normal! zv')
-
-    -- Respect exclusive selection
-    if vim.o.selection == 'exclusive' then vim.cmd('normal! l') end
-
-    -- Start selection
     vim.cmd('normal! ' .. vis_mode)
-    set_cursor(tobj.from)
+    set_cursor(tobj.to)
+    if vim.o.selection == 'exclusive' then vim.cmd('set whichwrap=l | normal! l') end
+    vim.cmd('normal! zv')
+
+    -- Restore horizontal view which was possibly affected by moving cursor
+    -- NOTE: It seems to not affect cursor if it is outside of restored view
+    vim.fn.winrestview({ leftcol = leftcol })
 
     if is_empty_opending then
       -- Add single space (without triggering events) and visually select it.
@@ -1059,8 +1120,8 @@ MiniAi.select_textobject = function(ai_type, id, opts)
   end)
 
   -- Restore options
-  vim.o.virtualedit = cache_virtualedit
   vim.o.eventignore = cache_eventignore
+  vim.o.virtualedit, vim.o.whichwrap = cache_virtualedit, cache_whichwrap
 end
 
 -- Helper data ================================================================
@@ -1087,23 +1148,7 @@ H.builtin_textobjects = {
   ['"'] = { '%b""', '^.().*().$' },
   ['`'] = { '%b``', '^.().*().$' },
   -- Derived from user prompt
-  ['?'] = function()
-    -- Using cache allows for a dot-repeat without another user input
-    if H.cache.prompted_textobject ~= nil then return H.cache.prompted_textobject end
-
-    local left = H.user_input('Left edge')
-    if left == nil or left == '' then return end
-    local right = H.user_input('Right edge')
-    if right == nil or right == '' then return end
-
-    -- Clean command line from prompt messages (does not work in Visual mode)
-    vim.cmd([[echo '' | redraw]])
-
-    local left_esc, right_esc = vim.pesc(left), vim.pesc(right)
-    local res = { string.format('%s().-()%s', left_esc, right_esc) }
-    H.cache.prompted_textobject = res
-    return res
-  end,
+  ['?'] = MiniAi.gen_spec.user_prompt(),
   -- Argument
   ['a'] = MiniAi.gen_spec.argument(),
   -- Brackets
@@ -1125,29 +1170,24 @@ H.ns_id = {
 -- Helper functionality =======================================================
 -- Settings -------------------------------------------------------------------
 H.setup_config = function(config)
-  -- General idea: if some table elements are not present in user-supplied
-  -- `config`, take them from default config
-  vim.validate({ config = { config, 'table', true } })
+  H.check_type('config', config, 'table', true)
   config = vim.tbl_deep_extend('force', vim.deepcopy(H.default_config), config or {})
 
-  vim.validate({
-    custom_textobjects = { config.custom_textobjects, 'table', true },
-    mappings = { config.mappings, 'table' },
-    n_lines = { config.n_lines, 'number' },
-    search_method = { config.search_method, H.is_search_method },
-    silent = { config.silent, 'boolean' },
-  })
+  H.check_type('custom_textobjects', config.custom_textobjects, 'table', true)
 
-  vim.validate({
-    ['mappings.around'] = { config.mappings.around, 'string' },
-    ['mappings.inside'] = { config.mappings.inside, 'string' },
-    ['mappings.around_next'] = { config.mappings.around_next, 'string' },
-    ['mappings.inside_next'] = { config.mappings.inside_next, 'string' },
-    ['mappings.around_last'] = { config.mappings.around_last, 'string' },
-    ['mappings.inside_last'] = { config.mappings.inside_last, 'string' },
-    ['mappings.goto_left'] = { config.mappings.goto_left, 'string' },
-    ['mappings.goto_right'] = { config.mappings.goto_right, 'string' },
-  })
+  H.check_type('mappings', config.mappings, 'table')
+  H.check_type('mappings.around', config.mappings.around, 'string')
+  H.check_type('mappings.inside', config.mappings.inside, 'string')
+  H.check_type('mappings.around_next', config.mappings.around_next, 'string')
+  H.check_type('mappings.inside_next', config.mappings.inside_next, 'string')
+  H.check_type('mappings.around_last', config.mappings.around_last, 'string')
+  H.check_type('mappings.inside_last', config.mappings.inside_last, 'string')
+  H.check_type('mappings.goto_left', config.mappings.goto_left, 'string')
+  H.check_type('mappings.goto_right', config.mappings.goto_right, 'string')
+
+  H.check_type('n_lines', config.n_lines, 'number')
+  H.validate_search_method(config.search_method, 'search_method')
+  H.check_type('silent', config.silent, 'boolean')
 
   return config
 end
@@ -1253,10 +1293,10 @@ H.expr_textobject = function(mode, ai_type, opts)
   -- Make expression
   return '<Cmd>lua '
     .. string.format(
-      [[MiniAi.select_textobject('%s', '%s', { search_method = '%s', n_times = %d, reference_region = %s, operator_pending = %s, vis_mode = %s })]],
+      [[MiniAi.select_textobject('%s', %s, { search_method = %s, n_times = %d, reference_region = %s, operator_pending = %s, vis_mode = %s })]],
       ai_type,
-      vim.fn.escape(tobj_id, "'\\"),
-      opts.search_method,
+      vim.inspect(tobj_id),
+      vim.inspect(opts.search_method),
       vim.v.count1,
       reference_region_field,
       operator_pending_field,
@@ -1279,12 +1319,7 @@ H.expr_motion = function(side)
 
   -- Make expression for moving cursor
   return '<Cmd>lua '
-    .. string.format(
-      [[MiniAi.move_cursor('%s', 'a', '%s', { n_times = %d })]],
-      side,
-      vim.fn.escape(tobj_id, "'\\"),
-      vim.v.count1
-    )
+    .. string.format([[MiniAi.move_cursor('%s', 'a', %s, { n_times = %d })]], side, vim.inspect(tobj_id), vim.v.count1)
     .. '<CR>'
 end
 
@@ -1294,11 +1329,11 @@ H.make_textobject_table = function()
   -- because only top level keys should be merged.
   local textobjects = vim.tbl_extend('force', H.builtin_textobjects, H.get_config().custom_textobjects or {})
 
-  -- Use default textobject pattern only for some characters: punctuation,
-  -- whitespace, digits.
+  -- Use default textobject pattern for anything excluding Latin characters, as
+  -- they are needed to fall back to Neovim's built-in textobjects (like `aw`)
   return setmetatable(textobjects, {
     __index = function(_, key)
-      if not (type(key) == 'string' and string.find(key, '^[%p%s%d]$')) then return end
+      if type(key) == 'string' and string.find(key, '^%a$') ~= nil then return end
       local key_esc = vim.pesc(key)
       -- Use `%f[]` to ensure maximum stretch in both directions. Include only
       -- right edge in `a` textobject.
@@ -1497,40 +1532,50 @@ H.prepare_ai_captures = function(ai_captures)
   return { a = prepare(ai_captures.a), i = prepare(ai_captures.i) }
 end
 
-H.get_matched_nodes_plugin = function(captures)
+H.get_matched_ranges_plugin = function(captures)
   local ts_queries = require('nvim-treesitter.query')
-  return vim.tbl_map(
-    function(match) return match.node end,
-    -- This call should handle multiple languages in buffer
-    ts_queries.get_capture_matches_recursively(0, captures, 'textobjects')
-  )
+  local matches = ts_queries.get_capture_matches_recursively(0, captures, 'textobjects')
+  return vim.tbl_map(function(m) return H.get_match_range(m.node, m.metadata) end, matches)
 end
 
-H.get_matched_nodes_builtin = function(captures)
-  -- Fetch treesitter data for buffer
-  local lang = vim.bo.filetype
+H.get_matched_ranges_builtin = function(captures)
+  -- Get buffer's parser (LanguageTree)
   -- TODO: Remove `opts.error` after compatibility with Neovim=0.11 is dropped
-  local has_parser, parser = pcall(vim.treesitter.get_parser, 0, lang, { error = false })
-  if not has_parser or parser == nil then H.error_treesitter('parser', lang) end
+  local has_parser, parser = pcall(vim.treesitter.get_parser, 0, nil, { error = false })
+  if not has_parser or parser == nil then H.error_treesitter('parser') end
 
+  -- Get parser (LanguageTree) at cursor (important for injected languages)
+  local pos = vim.api.nvim_win_get_cursor(0)
+  local lang_tree = parser:language_for_range({ pos[1] - 1, pos[2], pos[1] - 1, pos[2] })
+  local lang = lang_tree:lang()
+
+  -- Get query file depending on the local language
   local get_query = vim.fn.has('nvim-0.9') == 1 and vim.treesitter.query.get or vim.treesitter.get_query
   local query = get_query(lang, 'textobjects')
-  if query == nil then H.error_treesitter('query', lang) end
+  if query == nil then H.error_treesitter('query') end
 
-  -- Compute matched captures
-  captures = vim.tbl_map(function(x) return x:sub(2) end, captures)
+  -- Compute ranges of matched captures
+  local capture_is_requested = vim.tbl_map(function(c) return vim.tbl_contains(captures, '@' .. c) end, query.captures)
+
   local res = {}
-  for _, tree in ipairs(parser:trees()) do
-    for capture_id, node, _ in query:iter_captures(tree:root(), 0) do
-      if vim.tbl_contains(captures, query.captures[capture_id]) then table.insert(res, node) end
+  for _, tree in ipairs(lang_tree:trees()) do
+    for capture_id, node, metadata in query:iter_captures(tree:root(), 0) do
+      if capture_is_requested[capture_id] then
+        metadata = (metadata or {})[capture_id] or {}
+        table.insert(res, H.get_match_range(node, metadata))
+      end
     end
   end
   return res
 end
 
-H.error_treesitter = function(failed_get, lang)
-  local bufnr = vim.api.nvim_get_current_buf()
-  local msg = string.format([[Can not get %s for buffer %d and language '%s'.]], failed_get, bufnr, lang)
+H.get_match_range = function(node, metadata) return (metadata or {}).range and metadata.range or { node:range() } end
+
+H.error_treesitter = function(failed_get)
+  local buf_id, ft = vim.api.nvim_get_current_buf(), vim.bo.filetype
+  local has_lang, lang = pcall(vim.treesitter.language.get_lang, ft)
+  lang = has_lang and lang or ft
+  local msg = string.format('Can not get %s for buffer %d and language "%s".', failed_get, buf_id, lang)
   H.error(msg)
 end
 
@@ -1890,12 +1935,6 @@ H.user_textobject_id = function(ai_type)
 
   -- Terminate if couldn't get input (like with <C-c>) or it is `<Esc>`
   if not ok or char == '\27' then return nil end
-
-  if char:find('^[%w%p \t]$') == nil then
-    H.message('Input must be single character: alphanumeric, punctuation, space, or tab.')
-    return nil
-  end
-
   return char
 end
 
@@ -1954,6 +1993,13 @@ H.get_visual_region = function()
 end
 
 -- Utilities ------------------------------------------------------------------
+H.error = function(msg) error('(mini.ai) ' .. msg, 0) end
+
+H.check_type = function(name, val, ref, allow_nil)
+  if type(val) == ref or (ref == 'callable' and vim.is_callable(val)) or (allow_nil and val == nil) then return end
+  H.error(string.format('`%s` should be %s, not %s', name, ref, type(val)))
+end
+
 H.echo = function(msg, is_important)
   if H.get_config().silent then return end
 
@@ -1981,8 +2027,6 @@ H.unecho = function()
 end
 
 H.message = function(msg) H.echo(msg, true) end
-
-H.error = function(msg) error(string.format('(mini.ai) %s', msg), 0) end
 
 H.map = function(mode, lhs, rhs, opts)
   if lhs == '' then return end

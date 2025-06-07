@@ -41,9 +41,11 @@ local ns_id = vim.api.nvim_create_namespace('hello_lines')
 M.set_lines = function(buf_id, lines)
   buf_id = buf_id or 0
   lines = lines or { 'world' }
+  vim.api.nvim_buf_clear_namespace(buf_id, ns_id, 0, -1)
   vim.api.nvim_buf_set_lines(buf_id or 0, 0, -1, true, M.compute(lines))
   for i = 1, #lines do
-    vim.highlight.range(buf_id, ns_id, 'Special', { i - 1, 0 }, { i - 1, 5 }, {})
+    local extmark_opts = { end_row = i - 1, end_col = 5, hl_group = 'Special' }
+    vim.api.nvim_buf_set_extmark(buf_id, ns_id, i - 1, 0, extmark_opts)
   end
 end
 
@@ -987,3 +989,7 @@ return Helpers
 -- Some code setting up `child`
 local set_lines = function(lines) child.api.nvim_buf_set_lines(0, 0, -1, true, lines) end
 ```
+
+- When working with automatically named screenshots, beware of the following caveats:
+    - Some systems are case insensitive (like usually Windows and MacOS). So having two different file names which are the same ignoring case will introduce problems for users to properly install plugin.
+    - Some system setups have restrictions on full path length (like 260 bytes on some Git+Windows combinations) or file name length (like 255 bytes on ext4 Windows partitions and 143 bytes on eCryptfs Linux partitions). Restriction on full path is hard to accommodate for (apart from limiting file name size to some reasonable number), but trying to not have file names longer than 143 bytes (by having shorter test case names) should be reasonable.

@@ -355,6 +355,8 @@ T['open()']['sets important map buffer options'] = function()
   eq(#all_bufs, 2)
   local map_buf_id = all_bufs[1] == init_buf and all_bufs[2] or all_bufs[1]
 
+  eq(child.api.nvim_buf_get_name(map_buf_id), 'minimap://' .. map_buf_id .. '/content')
+
   local validate_option = function(name, value) eq(child.api.nvim_buf_get_option(map_buf_id, name), value) end
 
   validate_option('filetype', 'minimap')
@@ -589,8 +591,6 @@ T['open()']['shows appropriate integration counts'] = function()
 end
 
 T['open()']['respects `MiniMapNormal` highlight group'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshot is generated for Neovim>=0.10.') end
-
   set_lines(example_lines)
   child.cmd('hi MiniMapNormal ctermfg=black')
   map_open({ window = { winblend = 0 } })
@@ -998,18 +998,15 @@ T['gen_integration'] = new_set({
   },
 })
 
-T['gen_integration']['builtin_search()'] = new_set({
-  hooks = {
-    pre_case = function() end,
-  },
-})
+T['gen_integration']['builtin_search()'] = new_set()
 
 T['gen_integration']['builtin_search()']['works'] = function()
+  local screen_opts = child.fn.has('nvim-0.12') == 1 and {} or { ignore_text = { 30 }, ignore_attr = { 30 } }
   map_open_with_integration('builtin_search')
 
   -- It should show counts for actual matches, not matched lines
   type_keys('/', ' a', '<CR>')
-  child.expect_screenshot()
+  child.expect_screenshot(screen_opts)
 
   -- Should not affect cursor
   local cur_pos = get_cursor()
@@ -1019,7 +1016,7 @@ T['gen_integration']['builtin_search()']['works'] = function()
   -- Should respect 'hlsearch' option
   child.o.hlsearch = false
   map_refresh()
-  child.expect_screenshot()
+  child.expect_screenshot(screen_opts)
 end
 
 T['gen_integration']['builtin_search()']['respects `hl_groups` argument'] = function()
@@ -1037,17 +1034,18 @@ T['gen_integration']['builtin_search()']['respects `hl_groups` argument'] = func
 end
 
 T['gen_integration']['builtin_search()']['updates when appropriate'] = function()
+  local screen_opts = child.fn.has('nvim-0.12') == 1 and {} or { ignore_text = { 30 }, ignore_attr = { 30 } }
   map_open_with_integration('builtin_search')
 
   type_keys('/', ' a', '<CR>')
-  child.expect_screenshot()
+  child.expect_screenshot(screen_opts)
 
   -- Should update when 'hlsearch' option is changed
   child.o.hlsearch = false
-  child.expect_screenshot()
+  child.expect_screenshot(screen_opts)
 
   child.o.hlsearch = true
-  child.expect_screenshot()
+  child.expect_screenshot(screen_opts)
 
   -- Ideally, it should also update when starting highlight search with other
   -- methods (like after `n/N/*`, etc.), but it currently doesn't seem possible
@@ -1055,6 +1053,7 @@ T['gen_integration']['builtin_search()']['updates when appropriate'] = function(
 end
 
 T['gen_integration']['builtin_search()']['respects documented keymaps'] = function()
+  local screen_opts = child.fn.has('nvim-0.12') == 1 and {} or { ignore_text = { 30 }, ignore_attr = { 30 } }
   map_open_with_integration('builtin_search')
 
   child.lua([[
@@ -1073,7 +1072,7 @@ T['gen_integration']['builtin_search()']['respects documented keymaps'] = functi
 
     -- Should update map highlighting
     type_keys(key)
-    child.expect_screenshot()
+    child.expect_screenshot(screen_opts)
   end
 
   validate('n')
@@ -1405,6 +1404,14 @@ T['Window']['ensures target window is valid'] = function()
   child.api.nvim_win_close(target_win_id, true)
   child.lua('MiniMap.toggle_focus()')
   eq(child.api.nvim_get_current_win(), init_win_id)
+end
+
+T['Window']["does not respect 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.set_size(15, 20)
+  child.o.winborder = 'rounded'
+  map_open()
+  child.expect_screenshot()
 end
 
 T['Scrollbar'] = new_set()

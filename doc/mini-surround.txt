@@ -9,8 +9,8 @@ Fast and feature-rich surrounding. Can be configured to have experience
 similar to 'tpope/vim-surround' (see |MiniSurround-vim-surround-config|).
 
 Features:
-- Actions (text editing actions are dot-repeatable out of the box and respect
-  |[count]|) with configurable keymappings:
+- Actions (text editing actions are dot-repeatable out of the box and
+  respect |[count]|) with configurable mappings:
     - Add surrounding with `sa` (in visual mode or on motion).
     - Delete surrounding with `sd`.
     - Replace surrounding with `sr`.
@@ -30,8 +30,8 @@ Features:
       balanced brackets (open - with whitespace pad, close - without), in
       "output" - left and right parts of brackets.
     - '?' - interactive. Prompts user to enter left and right parts.
-    - All other alphanumeric, punctuation, or space characters represent
-      surrounding with identical left and right parts.
+    - All other single character identifiers (supported by |getcharstr()|)
+      represent surrounding with identical left and right parts.
 
 - Configurable search methods to find not only covering but possibly next,
   previous, or nearest surrounding. See more in |MiniSurround.config|.
@@ -161,35 +161,37 @@ Example: typing `sd)` with cursor on `*` (covers `a` character) changes line
 `!( *a (bb) )!` into `! aa (bb) !`. Typing `sr!)` changes same initial line
 into `(( aa (bb) ))`.
 >
- |Key|     Name      |  Example line |    Delete   |     Replace     |
- |---|---------------|---------------|-------------|-----------------|
- | ( |  Balanced ()  | !( *a (bb) )! |  !aa (bb)!  | ( ( aa (bb) ) ) |
- | [ |  Balanced []  | ![ *a [bb] ]! |  !aa [bb]!  | [ [ aa [bb] ] ] |
- | { |  Balanced {}  | !{ *a {bb} }! |  !aa {bb}!  | { { aa {bb} } } |
- | < |  Balanced <>  | !< *a <bb> >! |  !aa <bb>!  | < < aa <bb> > > |
- |---|---------------|---------------|-------------|-----------------|
- | ) |  Balanced ()  | !( *a (bb) )! | ! aa (bb) ! | (( aa (bb) ))   |
- | ] |  Balanced []  | ![ *a [bb] ]! | ! aa [bb] ! | [[ aa [bb] ]]   |
- | } |  Balanced {}  | !{ *a {bb} }! | ! aa {bb} ! | {{ aa {bb} }}   |
- | > |  Balanced <>  | !< *a <bb> >! | ! aa <bb> ! | << aa <bb> >>   |
- | b |  Alias for    | !( *a {bb} )! | ! aa {bb} ! | (( aa {bb} ))   |
- |   |  ), ], or }   |               |             |                 |
- |---|---------------|---------------|-------------|-----------------|
- | q |  Alias for    | !'aa'*a'aa'!  | !'aaaaaa'!  | "'aa'aa'aa'"    |
- |   |  ", ', or `   |               |             |                 |
- |---|---------------|---------------|-------------|-----------------|
- | ? |  User prompt  | !e * o!       | ! a !       | ee a oo         |
- |   |(typed e and o)|               |             |                 |
- |---|---------------|---------------|-------------|-----------------|
- | t |      Tag      | !<x>*</x>!    | !a!         | <y><x>a</x></y> |
- |   |               |               |             | (typed y)       |
- |---|---------------|---------------|-------------|-----------------|
- | f | Function call | !f(*a, bb)!   | !aa, bb!    | g(f(*a, bb))    |
- |   |               |               |             | (typed g)       |
- |---|---------------|---------------|-------------|-----------------|
- |   |    Default    | !_a*a_!       | !aaa!       | __aaa__         |
- |   |   (typed _)   |               |             |                 |
- |---|---------------|---------------|-------------|-----------------|
+ ┌───┬───────────────┬───────────────┬─────────────┬─────────────────┐
+ │Key│     Name      │  Example line │    Delete   │     Replace     │
+ ├───┴───────────────┴───────────────┴─────────────┴─────────────────┤
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │ ( │  Balanced ()  │ !( *a (bb) )! │  !aa (bb)!  │ ( ( aa (bb) ) ) │
+ │ [ │  Balanced []  │ ![ *a [bb] ]! │  !aa [bb]!  │ [ [ aa [bb] ] ] │
+ │ { │  Balanced {}  │ !{ *a {bb} }! │  !aa {bb}!  │ { { aa {bb} } } │
+ │ < │  Balanced <>  │ !< *a <bb> >! │  !aa <bb>!  │ < < aa <bb> > > │
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │ ) │  Balanced ()  │ !( *a (bb) )! │ ! aa (bb) ! │ (( aa (bb) ))   │
+ │ ] │  Balanced []  │ ![ *a [bb] ]! │ ! aa [bb] ! │ [[ aa [bb] ]]   │
+ │ } │  Balanced {}  │ !{ *a {bb} }! │ ! aa {bb} ! │ {{ aa {bb} }}   │
+ │ > │  Balanced <>  │ !< *a <bb> >! │ ! aa <bb> ! │ << aa <bb> >>   │
+ │ b │  Alias for    │ !( *a {bb} )! │ ! aa {bb} ! │ (( aa {bb} ))   │
+ │   │  ), ], or }   │               │             │                 │
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │ q │  Alias for    │ !'aa'*a'aa'!  │ !'aaaaaa'!  │ "'aa'aa'aa'"    │
+ │   │  ", ', or `   │               │             │                 │
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │ ? │  User prompt  │ !e * o!       │ ! a !       │ ee a oo         │
+ │   │(typed e and o)│               │             │                 │
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │ t │      Tag      │ !<x>*</x>!    │ !a!         │ <y><x>a</x></y> │
+ │   │               │               │             │ (typed y)       │
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │ f │ Function call │ !f(*a, bb)!   │ !aa, bb!    │ g(f(*a, bb))    │
+ │   │               │               │             │ (typed g)       │
+ ├┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┤
+ │   │    Default    │ !_a*a_!       │ !aaa!       │ __aaa__         │
+ │   │   (typed _)   │               │             │                 │
+ └┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┘
 <
 Notes:
 - All examples assume default `config.search_method`.
@@ -526,6 +528,8 @@ Default values:
     search_method = 'cover',
 
     -- Whether to disable showing non-error feedback
+    -- This also affects (purely informational) helper messages shown after
+    -- idle time if user input is required.
     silent = false,
   }
 <
@@ -576,8 +580,8 @@ Note: if 'timeoutlen' is low enough to cause occasional usage of |s| key
 
 User can define own surroundings by supplying `config.custom_surroundings`.
 It should be a **table** with keys being single character surrounding
-identifier and values - surround specification (see
-|MiniSurround-surround-specification|).
+identifier (supported by |getcharstr()|) and values - surround specification
+(see |MiniSurround-surround-specification|).
 
 General recommendations:
 - In `config.custom_surroundings` only some data can be defined (like only
@@ -586,6 +590,8 @@ General recommendations:
   specification is helpful when user input is needed (like asking for
   function name). Use |input()| or |MiniSurround.user_input()|. Return
   `nil` to stop any current surround operation.
+- Keys should use character representation which can be |getcharstr()| output.
+  For example, `'\r'` and not `'<CR>'`.
 
 Examples of using `config.custom_surroundings` (see more examples at
 |MiniSurround.gen_spec|): >lua
@@ -813,10 +819,11 @@ Example configuration for function definition textobject with
   })
 <
 Notes:
-- By default query is done using 'nvim-treesitter' plugin if it is present
-  (falls back to builtin methods otherwise). This allows for a more
-  advanced features (like multiple buffer languages, custom directives, etc.).
-  See `opts.use_nvim_treesitter` for how to disable this.
+- Be sure that query files don't contain unknown |treesitter-directives|
+  (like `#make-range!`, for example). Otherwise surrounding with such captures
+  might not be found as |vim.treesitter| won't treat them as captures. Verify
+  with `:=vim.treesitter.query.get('lang', 'textobjects')` and see if the
+  target capture is recognized as one.
 - It uses buffer's |filetype| to determine query language.
 - On large files it is slower than pattern-based textobjects. Still very
   fast though (one search should be magnitude of milliseconds or tens of
@@ -830,9 +837,11 @@ Parameters ~
   should be a string capture starting with `'@'`.
 {opts} `(table|nil)` Options. Possible values:
   - <use_nvim_treesitter> - whether to try to use 'nvim-treesitter' plugin
-    (if present) to do the query. It implements more advanced behavior at
-    cost of increased execution time. Provides more coherent experience if
-    'nvim-treesitter-textobjects' queries are used. Default: `true`.
+    (if present) to do the query. It used to implement more advanced behavior
+    and more coherent experience if 'nvim-treesitter-textobjects' queries are
+    used. However, as |lua-treesitter-core| methods are more capable now,
+    the option will soon be removed. Only present for backward compatibility.
+    Default: `false`.
 
 Return ~
 `(function)` Function which returns array of current buffer region pairs
@@ -841,7 +850,7 @@ Return ~
 See also ~
 |MiniSurround-surround-specification| for how this type of
   surrounding specification is processed.
-|get_query()| for how query is fetched in case of no 'nvim-treesitter'.
+|vim.treesitter.get_query()| for how query is fetched.
 |Query:iter_captures()| for how all query captures are iterated in case of
   no 'nvim-treesitter'.
 |MiniAi.gen_spec.treesitter()| for similar 'mini.ai' generator.

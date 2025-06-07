@@ -183,6 +183,15 @@ end
 ---   require('mini.test').setup({}) -- replace {} with your config table
 --- <
 MiniTest.setup = function(config)
+  -- TODO: Remove after Neovim=0.8 support is dropped
+  if vim.fn.has('nvim-0.9') == 0 then
+    vim.notify(
+      '(mini.test) Neovim<0.9 is soft deprecated (module works but not supported).'
+        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
+        .. ' Please update your Neovim version.'
+    )
+  end
+
   -- Export module
   _G.MiniTest = MiniTest
 
@@ -694,7 +703,7 @@ end
 ---   - <stop_on_error> - whether to stop execution (see |MiniTest.stop()|)
 ---     after first error. Default: `false`.
 MiniTest.execute = function(cases, opts)
-  vim.validate({ cases = { cases, 'table' } })
+  H.check_type('cases', cases, 'table')
 
   MiniTest.current.all_cases = cases
 
@@ -806,7 +815,7 @@ end
 ---   Use `nil` or empty string to not test for pattern matching.
 ---@param ... any Extra arguments with which `f` will be called.
 MiniTest.expect.error = function(f, pattern, ...)
-  vim.validate({ pattern = { pattern, 'string', true } })
+  H.check_type('pattern', pattern, 'string', true)
 
   local ok, err = pcall(f, ...)
   err = err or ''
@@ -902,14 +911,29 @@ end
 ---@param opts? MiniTest.expect.reference_screenshot.opts Options:
 ---   - <force> `(boolean)` - whether to forcefully create reference screenshot.
 ---     Temporary useful during test writing. Default: `false`.
----   - <ignore_lines> `(table)` - array of line numbers to ignore during compare.
----     Default: `nil` to check all lines.
+---   - <ignore_text> `(boolean|table)` - whether to ignore all or some text lines.
+---     If `true` - ignore all, if number array - ignore text of those lines,
+---     if `false` - do not ignore any. Default: `false`.
+---   - <ignore_attr> `(boolean|table)` - whether to ignore all or some attr lines.
+---     If `true` - ignore all, if number array - ignore attr of those lines,
+---     if `false` - do not ignore any. Default: `false`.
 ---   - <directory> `(string)` - directory where automatically constructed `path`
 ---     is located. Default: "tests/screenshots".
 MiniTest.expect.reference_screenshot = function(screenshot, path, opts)
   if screenshot == nil then return true end
 
-  opts = vim.tbl_extend('force', { force = false, ignore_lines = {}, directory = 'tests/screenshots' }, opts or {})
+  local default_opts = { force = false, ignore_text = false, ignore_attr = false, directory = 'tests/screenshots' }
+  opts = vim.tbl_extend('force', default_opts, opts or {})
+
+  -- TODO: Remove after releasing 'mini.nvim' 0.17.0
+  if opts.ignore_lines ~= nil then
+    vim.notify(
+      '(mini.test) `ignore_lines` is soft deprecated in favor of separate `ignore_text` and `ignore_attr`.'
+        .. ' It will work at least until the next release, after which its support will be removed.'
+        .. ' Sorry for the inconvenience.'
+    )
+  end
+  opts.ignore_lines = opts.ignore_lines or {}
 
   H.cache.n_screenshots = H.cache.n_screenshots + 1
 
@@ -945,10 +969,11 @@ MiniTest.expect.reference_screenshot = function(screenshot, path, opts)
   local reference = H.screenshot_read(path)
 
   -- Compare
-  local are_same, cause = H.screenshot_compare(reference, screenshot, opts)
+  local same_text, cause_text = H.screenshot_compare_part('text', reference, screenshot, opts)
+  local same_attr, cause_attr = H.screenshot_compare_part('attr', reference, screenshot, opts)
+  if same_text and same_attr then return true end
 
-  if are_same then return true end
-
+  local cause = same_text and cause_attr or cause_text
   local subject = 'screenshot equality to reference at ' .. vim.inspect(path)
   local context = string.format('%s\nReference:\n%s\n\nObserved:\n%s', cause, tostring(reference), tostring(screenshot))
   H.error_expect(subject, context)
@@ -1419,7 +1444,7 @@ MiniTest.new_child_neovim = function()
   --stylua: ignore start
   local supported_vim_tables = {
     -- Collections
-   'cmd', 'diagnostic', 'fn', 'highlight', 'json', 'loop', 'lsp', 'mpack', 'spell', 'treesitter', 'ui', "uv",
+   'cmd', 'diagnostic', 'fn', 'highlight', 'hl', 'json', 'loop', 'lsp', 'mpack', 'spell', 'treesitter', 'ui', "uv",
     -- Variables
     'g', 'b', 'w', 't', 'v', 'env',
     -- Options (no 'opt' because not really useful due to use of metatables)
@@ -1810,6 +1835,7 @@ end
 ---@field diagnostic table Redirection table for |vim.diagnostic|.
 ---@field fn table Redirection table for |vim.fn|.
 ---@field highlight table Redirection table for `vim.highlight` (|lua-highlight)|.
+---@field hl table Redirection table for |vim.hl|.
 ---@field json table Redirection table for `vim.json`.
 ---@field loop table Redirection table for |vim.loop|.
 ---@field lsp table Redirection table for `vim.lsp` (|lsp-core)|.
@@ -1980,26 +2006,20 @@ H.reporter_symbols = setmetatable({
 -- Helper functionality =======================================================
 -- Settings -------------------------------------------------------------------
 H.setup_config = function(config)
-  -- General idea: if some table elements are not present in user-supplied
-  -- `config`, take them from default config
-  vim.validate({ config = { config, 'table', true } })
+  H.check_type('config', config, 'table', true)
   config = vim.tbl_deep_extend('force', vim.deepcopy(H.default_config), config or {})
 
-  vim.validate({
-    collect = { config.collect, 'table' },
-    execute = { config.execute, 'table' },
-    script_path = { config.script_path, 'string' },
-    silent = { config.silent, 'boolean' },
-  })
+  H.check_type('collect', config.collect, 'table')
+  H.check_type('collect.emulate_busted', config.collect.emulate_busted, 'boolean')
+  H.check_type('collect.find_files', config.collect.find_files, 'function')
+  H.check_type('collect.filter_cases', config.collect.filter_cases, 'function')
 
-  vim.validate({
-    ['collect.emulate_busted'] = { config.collect.emulate_busted, 'boolean' },
-    ['collect.find_files'] = { config.collect.find_files, 'function' },
-    ['collect.filter_cases'] = { config.collect.filter_cases, 'function' },
+  H.check_type('execute', config.execute, 'table')
+  H.check_type('execute.reporter', config.execute.reporter, 'table', true)
+  H.check_type('execute.stop_on_error', config.execute.stop_on_error, 'boolean')
 
-    ['execute.reporter'] = { config.execute.reporter, 'table', true },
-    ['execute.stop_on_error'] = { config.execute.stop_on_error, 'boolean' },
-  })
+  H.check_type('script_path', config.script_path, 'string')
+  H.check_type('silent', config.silent, 'boolean')
 
   return config
 end
@@ -2402,11 +2422,18 @@ H.buffer_reporter = { ns_id = vim.api.nvim_create_namespace('MiniTestBuffer'), n
 
 H.buffer_reporter.setup_buf_and_win = function(window_opts)
   local buf_id = vim.api.nvim_create_buf(true, true)
+  H.set_buf_name(buf_id, 'buffer-reporter')
 
   local win_id
   if vim.is_callable(window_opts) then
     win_id = window_opts()
   elseif type(window_opts) == 'table' then
+    -- Ensure proper title
+    if type(window_opts.title) == 'string' then
+      window_opts.title = H.fit_to_width(window_opts.title, window_opts.width)
+    end
+    if vim.fn.has('nvim-0.9') == 0 then window_opts.title = nil end
+
     win_id = vim.api.nvim_open_win(buf_id, true, window_opts)
   end
   win_id = win_id or vim.api.nvim_get_current_win()
@@ -2425,6 +2452,8 @@ H.buffer_reporter.default_window_opts = function()
     height = math.floor(0.618 * vim.o.lines),
     row = math.floor(0.191 * vim.o.lines),
     col = math.floor(0.191 * vim.o.columns),
+    border = (vim.fn.exists('+winborder') == 1 and vim.o.winborder ~= '') and vim.o.winborder or 'single',
+    title = ' Test results ',
   }
 end
 
@@ -2432,7 +2461,6 @@ H.buffer_reporter.set_options = function(buf_id, win_id)
   -- Set unique name
   local n_buffer = H.buffer_reporter.n_buffer + 1
   local suffix = n_buffer == 1 and '' or (' ' .. n_buffer)
-  vim.api.nvim_buf_set_name(buf_id, 'MiniTest' .. suffix)
   H.buffer_reporter.n_buffer = n_buffer
 
   vim.cmd('silent! set filetype=minitest')
@@ -2499,7 +2527,7 @@ H.buffer_reporter.set_lines = function(buf_id, lines, start, finish)
 
   -- Add highlight
   for _, hl_data in ipairs(hl_ranges) do
-    vim.highlight.range(buf_id, ns_id, hl_data.hl, { hl_data.line, hl_data.left }, { hl_data.line, hl_data.right })
+    H.highlight_range(buf_id, ns_id, hl_data.hl, { hl_data.line, hl_data.left }, { hl_data.line, hl_data.right })
   end
 end
 
@@ -2630,40 +2658,34 @@ H.screenshot_encode_attr = function(attr)
   return res
 end
 
-H.screenshot_compare = function(screen_ref, screen_obs, opts)
+H.screenshot_compare_part = function(part, ref, obs, opts)
+  local ignore_part, ignore_lines = opts['ignore_' .. part], opts.ignore_lines
+  if ignore_part == true then return true, '' end
+
   local compare = function(x, y, desc)
-    if x ~= y then
-      return false, ('Different %s. Reference: %s. Observed: %s.'):format(desc, vim.inspect(x), vim.inspect(y))
-    end
-    return true, ''
+    if x == y then return true, '' end
+    return false, ('Different %s. Reference: %s. Observed: %s.'):format(desc, vim.inspect(x), vim.inspect(y))
   end
 
-  --stylua: ignore start
   local ok, cause
-  ok, cause = compare(#screen_ref.text, #screen_obs.text, 'number of `text` lines')
-  if not ok then return ok, cause end
-  ok, cause = compare(#screen_ref.attr, #screen_obs.attr, 'number of `attr` lines')
+  ok, cause = compare(#ref[part], #obs[part], 'number of `' .. part .. '` lines')
   if not ok then return ok, cause end
 
-  local lines_to_check, ignore_lines = {}, opts.ignore_lines
-  for i = 1, #screen_ref.text do
-    if not vim.tbl_contains(ignore_lines, i) then table.insert(lines_to_check, i) end
+  local lines_to_check = {}
+  for i = 1, #ref[part] do
+    local is_ignore_part = type(ignore_part) == 'table' and vim.tbl_contains(ignore_part, i)
+    if not (is_ignore_part or vim.tbl_contains(ignore_lines, i)) then table.insert(lines_to_check, i) end
   end
 
   for _, i in ipairs(lines_to_check) do
-    ok, cause = compare(#screen_ref.text[i], #screen_obs.text[i], 'number of columns in `text` line ' .. i)
-    if not ok then return ok, cause end
-    ok, cause = compare(#screen_ref.attr[i], #screen_obs.attr[i], 'number of columns in `attr` line ' .. i)
+    ok, cause = compare(#ref[part][i], #obs[part][i], 'number of columns in `' .. part .. '` line ' .. i)
     if not ok then return ok, cause end
 
-    for j = 1, #screen_ref.text[i] do
-      ok, cause = compare(screen_ref.text[i][j], screen_obs.text[i][j], string.format('`text` cell at line %s column %s', i, j))
-      if not ok then return ok, cause end
-      ok, cause = compare(screen_ref.attr[i][j], screen_obs.attr[i][j], string.format('`attr` cell at line %s column %s', i, j))
+    for j = 1, #ref[part][i] do
+      ok, cause = compare(ref[part][i][j], obs[part][i][j], '`' .. part .. '` cell at line ' .. i .. ' column ' .. j)
       if not ok then return ok, cause end
     end
   end
-  --stylua: ignore end
 
   return true, ''
 end
@@ -2686,6 +2708,15 @@ H.screenshot_read = function(path)
 end
 
 -- Utilities ------------------------------------------------------------------
+H.error = function(msg) error('(mini.test) ' .. msg, 0) end
+
+H.check_type = function(name, val, ref, allow_nil)
+  if type(val) == ref or (ref == 'callable' and vim.is_callable(val)) or (allow_nil and val == nil) then return end
+  H.error(string.format('`%s` should be %s, not %s', name, ref, type(val)))
+end
+
+H.set_buf_name = function(buf_id, name) vim.api.nvim_buf_set_name(buf_id, 'minitest://' .. buf_id .. '/' .. name) end
+
 H.echo = function(msg, is_important)
   if H.get_config().silent then return end
 
@@ -2699,8 +2730,6 @@ H.echo = function(msg, is_important)
 end
 
 H.message = function(msg) H.echo(msg, true) end
-
-H.error = function(msg) error(string.format('(mini.test) %s', msg)) end
 
 H.wrap_callable = function(f)
   if not vim.is_callable(f) then return end
@@ -2723,6 +2752,11 @@ end
 
 H.add_style = function(x, ansi_code) return string.format('%s%s%s', H.ansi_codes[ansi_code], x, H.ansi_codes.reset) end
 
+H.fit_to_width = function(text, width)
+  local t_width = vim.fn.strchars(text)
+  return t_width <= width and text or ('…' .. vim.fn.strcharpart(text, t_width - width + 1, width - 1))
+end
+
 H.string_to_chars = function(s)
   -- Can't use `vim.split(s, '')` because of multibyte characters
   local res = {}
@@ -2735,5 +2769,9 @@ end
 -- TODO: Remove after compatibility with Neovim=0.9 is dropped
 H.tbl_flatten = vim.fn.has('nvim-0.10') == 1 and function(x) return vim.iter(x):flatten(math.huge):totable() end
   or vim.tbl_flatten
+
+-- TODO: Remove after compatibility with Neovim=0.10 is dropped
+H.highlight_range = function(...) vim.hl.range(...) end
+if vim.fn.has('nvim-0.11') == 0 then H.highlight_range = function(...) vim.highlight.range(...) end end
 
 return MiniTest

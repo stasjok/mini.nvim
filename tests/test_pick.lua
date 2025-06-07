@@ -22,18 +22,14 @@ child.expect_screenshot = function(opts)
   child.expect_screenshot_orig(opts)
 end
 
-child.has_float_footer = function()
-  -- https://github.com/neovim/neovim/pull/24739
-  return child.fn.has('nvim-0.10') == 1
-end
-
 -- Test paths helpers
-local test_dir = 'tests/dir-pick'
-local real_files_dir = 'tests/dir-pick/real-files'
-
 local join_path = function(...) return table.concat({ ... }, '/') end
 
 local full_path = function(x) return (vim.fn.fnamemodify(x, ':p'):gsub('[\\/]$', '')) end
+
+local test_dir = 'tests/dir-pick'
+local test_dir_absolute = full_path(test_dir)
+local real_files_dir = 'tests/dir-pick/real-files'
 
 local real_file = function(basename) return join_path(real_files_dir, basename) end
 
@@ -83,11 +79,17 @@ local validate_win_option = function(win_id, option_name, option_value)
   eq(child.api.nvim_win_get_option(win_id, option_name), option_value)
 end
 
-local validate_buf_name = function(buf_id, name)
+local validate_buf_name = function(buf_id, ref_name)
   buf_id = buf_id or child.api.nvim_get_current_buf()
-  name = name ~= '' and full_path(name) or ''
-  name = name:gsub('[\\/]+$', '')
-  eq(child.api.nvim_buf_get_name(buf_id), name)
+  local name = child.api.nvim_buf_get_name(buf_id):gsub('\\', '/')
+  ref_name = ref_name ~= '' and full_path(ref_name) or ''
+  ref_name = ref_name:gsub('\\', '/'):gsub('[\\/]+$', '')
+  eq(name, ref_name)
+end
+
+local validate_helper_buf_name = function(buf_id, ref_name)
+  buf_id = (buf_id == nil or buf_id == 0) and child.api.nvim_get_current_buf() or buf_id
+  eq(child.api.nvim_buf_get_name(buf_id), 'minipick://' .. buf_id .. '/' .. ref_name)
 end
 
 local validate_contains_all = function(base, to_be_present)
@@ -194,18 +196,10 @@ local clear_process_log = function() child.lua('_G.process_log = {}') end
 -- Data =======================================================================
 local test_items = { 'a_b_c', 'abc', 'a_b_b', 'c_a_a', 'b_c_c' }
 
-local many_items = {}
-for i = 1, 1000000 do
-  many_items[3 * i - 2] = 'ab'
-  many_items[3 * i - 1] = 'ac'
-  many_items[3 * i] = 'bb'
-end
-
 -- Time constants
 local default_busy_delay = 50
 local track_lost_focus_delay = 1000
 local small_time = helpers.get_time_const(10)
-local micro_time = 1
 
 -- Output test set ============================================================
 local T = new_set({
@@ -220,8 +214,11 @@ local T = new_set({
 
       load_module()
 
-      -- Make border differentiable in screenshots
-      child.cmd('hi MiniPickBorder ctermfg=2')
+      -- Make some UI elements differentiable in screenshots
+      child.cmd('hi MiniPickBorder guifg=Red ctermfg=1')
+      child.cmd('hi MiniPickPrompt guifg=Green ctermfg=2')
+      child.cmd('hi MiniPickPromptCaret guifg=Yellow ctermfg=3')
+      child.cmd('hi MiniPickPromptPrefix guifg=Azure ctermfg=4')
     end,
     post_once = child.stop,
   },
@@ -261,6 +258,8 @@ T['setup()']['creates side effects'] = function()
   validate_hl_group('MiniPickPreviewLine', 'links to CursorLine')
   validate_hl_group('MiniPickPreviewRegion', 'links to IncSearch')
   validate_hl_group('MiniPickPrompt', 'links to DiagnosticFloatingInfo')
+  validate_hl_group('MiniPickPromptCaret', 'links to MiniPickPrompt')
+  validate_hl_group('MiniPickPromptPrefix', 'links to MiniPickPrompt')
 end
 
 T['setup()']['creates `config` field'] = function()
@@ -312,8 +311,20 @@ T['setup()']['creates `config` field'] = function()
   expect_config('source.choose_marked', vim.NIL)
 
   expect_config('window.config', vim.NIL)
-  expect_config('window.prompt_cursor', '▏')
+  expect_config('window.prompt_caret', '▏')
   expect_config('window.prompt_prefix', '> ')
+
+  -- Should temporarily respect deprecated `window.prompt_cursor`
+  local caret_cursor = child.lua([[
+    _G.log = {}
+    vim.notify = function(...) table.insert(_G.log, { ... }) end
+    require('mini.pick').setup({ window = { prompt_cursor = '$' } })
+    return { MiniPick.config.window.prompt_caret, MiniPick.config.window.prompt_cursor }
+  ]])
+  eq(caret_cursor, { '$' })
+  local ref_msg = '(mini.pick) `prompt_cursor` in `config.window` is renamed to `prompt_caret` for better naming consistency.'
+    .. ' It works for now, but will stop in the next release. Sorry for the inconvenience.'
+  eq(child.lua_get('_G.log'), { { ref_msg, child.lua_get('vim.log.levels.WARN') } })
 end
 
 T['setup()']['respects `config` argument'] = function()
@@ -378,13 +389,30 @@ T['setup()']['validates `config` argument'] = function()
 
   expect_config_error({ window = 'a' }, 'window', 'table')
   expect_config_error({ window = { config = 1 } }, 'window.config', 'table or callable')
-  expect_config_error({ window = { prompt_cursor = 1 } }, 'window.prompt_cursor', 'string')
+  expect_config_error({ window = { prompt_caret = 1 } }, 'window.prompt_caret', 'string')
   expect_config_error({ window = { prompt_prefix = 1 } }, 'window.prompt_prefix', 'string')
 end
 
 T['setup()']['ensures colors'] = function()
   child.cmd('colorscheme default')
   expect.match(child.cmd_capture('hi MiniPickBorder'), 'links to FloatBorder')
+end
+
+T['setup()']['should `MiniExtra.pickers` to registry'] = function()
+  unload_module()
+  child.lua([[package.loaded['mini.pick'] = nil]])
+
+  child.lua('_G.MiniExtra = { pickers = { miniextra = function() end } }')
+  load_module()
+  eq(child.lua_get('type(MiniPick.registry.miniextra)'), 'function')
+
+  -- Should not override user pickers
+  child.lua([[
+    MiniPick.registry.miniextra = function() _G.hello = 'world' end
+    require('mini.pick').setup()
+  ]])
+  child.lua_notify('MiniPick.registry.miniextra()')
+  eq(child.lua_get('_G.hello'), 'world')
 end
 
 -- This set mostly contains general function testing which doesn't fit into
@@ -414,15 +442,12 @@ T['start()']['returns `nil` when there is no current match'] = function()
 end
 
 T['start()']['works with window footer'] = function()
-  -- TODO: Use this as primary test after support for Neovim<=0.9 is dropped
-  if not child.has_float_footer() then return end
-
   child.lua_notify('_G.picked_item = MiniPick.start(...)', { { source = { items = test_items } } })
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 
   eq(child.api.nvim_get_current_win(), get_picker_state().windows.main)
   type_keys('<CR>')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
   eq(child.lua_get('_G.picked_item'), test_items[1])
 end
 
@@ -458,6 +483,7 @@ T['start()']['creates proper window'] = function()
   local win_config = child.api.nvim_win_get_config(win_id)
   eq(win_config.relative, 'editor')
   eq(win_config.focusable, true)
+  eq(win_config.zindex, 251)
 
   validate_win_option(win_id, 'list', true)
   validate_win_option(win_id, 'listchars', 'extends:…')
@@ -473,14 +499,44 @@ T['start()']['creates proper main buffer'] = function()
   validate_buf_option(buf_id, 'buftype', 'nofile')
 end
 
+T['start()']['uses properly named buffers'] = function()
+  start_with_items(test_items)
+  validate_helper_buf_name(0, 'main')
+  type_keys('<S-Tab>')
+  validate_helper_buf_name(0, 'info')
+  -- NOTE: Source's `preview()` can override buffer's name for more info
+  type_keys('<Tab>')
+  validate_helper_buf_name(0, 'preview')
+end
+
 T['start()']['tracks lost focus'] = function()
+  child.api.nvim_buf_set_lines(0, 0, -1, false, { 'aa bb' })
+  child.lua_notify([[
+    local win_id = vim.api.nvim_get_current_win()
+    local change_focus = function()
+     vim.api.nvim_set_current_win(win_id)
+     return false
+    end
+    MiniPick.start({
+      source = { items = { 'a', 'b' } },
+      mappings = { change_focus = { char = 'e', func = change_focus } },
+    })
+  ]])
+  child.expect_screenshot()
+  type_keys('e')
+  -- By default it checks inside a timer with 1 second period
+  sleep(track_lost_focus_delay + small_time)
+  child.expect_screenshot()
+  -- - Should not keep key query process going
+  type_keys('w')
+  eq(get_cursor(), { 1, 3 })
+
+  -- Should also work in case of an error in action
   child.lua_notify([[MiniPick.start({
     source = { items = { 'a', 'b' } },
     mappings = { error = { char = 'e', func = function() error() end } },
   })]])
-  child.expect_screenshot()
   type_keys('e')
-  -- By default it checks inside a timer with 1 second period
   sleep(track_lost_focus_delay + small_time)
   child.expect_screenshot()
 end
@@ -550,6 +606,17 @@ T['start()']['respects `source.items`'] = function()
   child.poke_eventloop()
   child.expect_screenshot()
   stop()
+
+  -- Should execute callback items with `source.cwd` as current directory
+  eq(child.fn.getcwd() ~= test_dir_absolute, true)
+  child.lua('_G.cwd = ' .. vim.inspect(test_dir_absolute))
+  child.lua([[_G.items_callable_cwd = function()
+    _G.cur_cwd = vim.fn.getcwd()
+    return { 'u', 'v' }
+  end]])
+  child.lua_notify('MiniPick.start({ source = { items = _G.items_callable_cwd, cwd = _G.cwd } })')
+  eq(child.lua_get('_G.cur_cwd'), test_dir_absolute)
+  stop()
 end
 
 T['start()']['correctly computes stritems'] = function()
@@ -582,7 +649,7 @@ end
 T['start()']['respects `source.name`'] = function()
   start({ source = { items = test_items, name = 'Hello' } })
   validate_picker_option('source.name', 'Hello')
-  if child.has_float_footer() then child.expect_screenshot_orig() end
+  child.expect_screenshot()
 end
 
 T['start()']['respects `source.cwd`'] = function()
@@ -622,6 +689,8 @@ T['start()']['respects `source.show`'] = function()
     items = { 'a', { text = 'b' }, 'bb' },
     show = function(buf_id, items_to_show, query, ...)
       _G.show_args = { buf_id, items_to_show, query, ... }
+      -- Information about shown indexes should be up to date at this point
+      _G.shown_inds = MiniPick.get_picker_matches().shown_inds
       local lines = vim.tbl_map(
         function(x) return '__' .. (type(x) == 'table' and x.text or x) end,
         items_to_show
@@ -633,10 +702,12 @@ T['start()']['respects `source.show`'] = function()
 
   child.expect_screenshot()
   eq(child.lua_get('_G.show_args'), { buf_id, { 'a', { text = 'b' }, 'bb' }, {} })
+  eq(child.lua_get('_G.shown_inds'), { 1, 2, 3 })
 
   type_keys('b')
   child.expect_screenshot()
   eq(child.lua_get('_G.show_args'), { buf_id, { { text = 'b' }, 'bb' }, { 'b' } })
+  eq(child.lua_get('_G.shown_inds'), { 2, 3 })
 end
 
 T['start()']['respects `source.preview`'] = function()
@@ -780,14 +851,20 @@ T['start()']['respects `options.use_cache`'] = function()
 end
 
 T['start()']['allows custom mappings'] = function()
-  -- Both in global and local config
+  -- Should prefer custom action over built-ins (even hard-coded alternatives)
+  child.lua('MiniPick.config.mappings.custom_bs = { char = "<BS>", func = function() _G.custom_bs = true end }')
+  child.lua('MiniPick.config.mappings.custom_home = { char = "<Home>", func = function() _G.custom_home = true end }')
+
+  -- Should work in global and local config
   child.lua([[MiniPick.config.mappings.custom_global = {
     char = '<C-d>',
-    func = function(...) _G.args_global = { ... } end,
+    -- Should be executed with source's cwd set as current directory
+    func = function(...) _G.cur_cwd, _G.args_global = vim.fn.getcwd(), { ... } end,
   }]])
 
+  child.lua('_G.cwd = ' .. vim.inspect(test_dir_absolute))
   child.lua_notify([[MiniPick.start({
-    source = { items = { 'a', 'b' } },
+    source = { items = { 'a', 'ab', 'b' }, cwd = _G.cwd },
     mappings = {
       -- Return value is treated as "should stop picker after execution"
       custom = { char = 'm', func = function(...) _G.args_local = { ... }; return true end },
@@ -795,8 +872,17 @@ T['start()']['allows custom mappings'] = function()
   })]])
 
   type_keys('<C-d>')
+  eq(child.lua_get('_G.cur_cwd'), test_dir_absolute)
   eq(child.lua_get('_G.args_global'), {})
   eq(is_picker_active(), true)
+
+  type_keys('a', '<BS>')
+  eq(child.lua_get('_G.custom_bs'), true)
+  eq(get_picker_query(), { 'a' })
+
+  type_keys('<Down>', '<Home>')
+  eq(child.lua_get('_G.custom_home'), true)
+  eq(get_picker_matches().current_ind, 2)
 
   type_keys('m')
   eq(child.lua_get('_G.args_local'), {})
@@ -835,18 +921,24 @@ T['start()']['respects `window.config`'] = function()
   stop()
 end
 
-T['start()']['respects `window.prompt_cursor`'] = function()
-  start({ source = { items = { 'a', 'b', 'c' } }, window = { prompt_cursor = '+' } })
+T['start()']['respects `window.prompt_caret`'] = function()
+  start({ source = { items = { 'a', 'b', 'c' } }, window = { prompt_caret = '+' } })
   child.expect_screenshot()
   type_keys('a', 'b', '<Left>')
   child.expect_screenshot()
 end
 
 T['start()']['respects `window.prompt_prefix`'] = function()
-  start({ source = { items = { 'a', 'b', 'c' } }, window = { prompt_prefix = '$>  ' } })
-  child.expect_screenshot()
-  type_keys('a', 'b', '<Left>')
-  child.expect_screenshot()
+  local validate = function(prefix)
+    start({ source = { items = { 'a', 'b', 'c' } }, window = { prompt_prefix = prefix } })
+    child.expect_screenshot()
+    type_keys('a', 'b', '<Left>')
+    child.expect_screenshot()
+    type_keys('<C-c>')
+  end
+
+  validate('$>  ')
+  validate('')
 end
 
 T['start()']['stops currently active picker'] = function()
@@ -857,7 +949,7 @@ T['start()']['stops currently active picker'] = function()
   child.expect_screenshot()
 end
 
-T['start()']['stops impoperly aborted previous picker'] = function()
+T['start()']['stops improperly aborted previous picker'] = function()
   child.lua_notify([[MiniPick.start({
     source = { items = { 'a', 'b', 'c' } },
     mappings = { error = { char = 'e', func = function() error() end } },
@@ -983,7 +1075,7 @@ T['refresh()']['recomputes window config'] = function()
   child.expect_screenshot()
 end
 
-T['default_match()'] = new_set({ n_retry = helpers.get_n_retry(4) })
+T['default_match()'] = new_set()
 
 local default_match = forward_lua('MiniPick.default_match')
 
@@ -1000,44 +1092,40 @@ T['default_match()']['works with active picker'] = function()
 end
 
 T['default_match()']['does not block query update'] = function()
-  helpers.skip_if_slow()
-
+  child.lua('_G.small_time = ' .. small_time)
   child.lua([[
+    -- Mock slow matching
+    local find_orig = string.find
+    string.find = function(...)
+      vim.loop.sleep(_G.small_time)
+      return find_orig(...)
+    end
+
+    -- Track usage of `set_picker_match_inds`
     _G.log = {}
-    _G.default_match_wrapper = function(stritems, inds, query)
-      table.insert(_G.log, { n_match_inds = #inds, query = vim.deepcopy(query) })
-      MiniPick.default_match(stritems, inds, query)
+    local set_picker_match_inds_orig = MiniPick.set_picker_match_inds
+    MiniPick.set_picker_match_inds = function(match_inds)
+      table.insert(_G.log, #match_inds)
+      return set_picker_match_inds(match_inds)
     end
   ]])
-  child.lua_notify('MiniPick.start({ source = { match = _G.default_match_wrapper }, delay = { async = 1 } })')
+  child.lua_notify('MiniPick.start({ delay = { async = 1 } })')
 
-  -- Set many items and wait until it completely sets
-  set_picker_items(many_items)
-  for _ = 1, 500 do
-    sleep(small_time)
-    if child.lua_get([[type(MiniPick.get_picker_items()) == 'table']]) then break end
-  end
+  set_picker_items({ 'ab', 'ac', 'bb' })
+  sleep(4 * small_time)
 
   -- Type three characters very quickly. If `default_match()` were blocking,
-  -- each press would lead to calling `source.match` with the result of
-  -- matching on prior query. In this test every key press should interrupt
-  -- currently active matching and start a new one with the latest available
-  -- set of `match_inds` (which should be all inds as match is, hopefully,
-  -- never finishes).
-  type_keys('a')
-  sleep(micro_time)
-  type_keys('b')
-  sleep(micro_time)
-  type_keys('c')
-  sleep(micro_time)
-  eq(child.lua_get('#MiniPick.get_picker_matches()'), 0)
-  eq(get_picker_state().is_busy, true)
-  eq(child.lua_get('_G.log'), {
-    { n_match_inds = #many_items, query = {} },
-    { n_match_inds = #many_items, query = { 'a' } },
-    { n_match_inds = #many_items, query = { 'a', 'b' } },
-    { n_match_inds = #many_items, query = { 'a', 'b', 'c' } },
-  })
+  -- each press would be done after matches from previous ones are set. The
+  -- goal is for each key press to stop active matching and start a new one.
+  -- This test is not ideal, but is the best attempt at testing this.
+  type_keys('abc')
+  eq(child.lua_get('_G.log'), { 3, 0 })
+
+  -- Should work for both fuzzy and exact matching
+  type_keys('<C-u>')
+  child.lua('_G.log = {}')
+  type_keys("'abc")
+  eq(child.lua_get('_G.log'), { 3, 0 })
 end
 
 T['default_match()']['works without active picker'] = function()
@@ -1407,7 +1495,7 @@ end
 
 T['default_show()']['handles stritems with non-trivial whitespace'] = function()
   child.o.tabstop = 3
-  default_show(0, { 'With\nnewline', 'With\ttab' }, {})
+  default_show(0, { 'With\nnewline', 'With\rCR', 'EndsWithCR\r', 'EndsWithNL\n', 'EndsWithCRLF\r\n', 'With\ttab' }, {})
   child.expect_screenshot()
 end
 
@@ -1512,6 +1600,28 @@ T['default_preview()']['works without active picker'] = function()
   child.expect_screenshot()
 end
 
+T['default_preview()']['can be used in outside preview window'] = function()
+  -- This is not a module's capabilitiy per se, but something it should allow
+  local item = { path = real_file('b.txt'), lnum = 5, text = 'b.txt' }
+  start_with_items({ item })
+
+  local buf_id = child.api.nvim_create_buf(false, true)
+  local win_config = {
+    relative = 'editor',
+    anchor = 'NE',
+    row = 0,
+    col = child.o.columns,
+    height = 3,
+    width = 15,
+    border = 'single',
+    style = 'minimal',
+  }
+  child.api.nvim_open_win(buf_id, false, win_config)
+  sleep(small_time)
+  default_preview(buf_id, item, { line_position = 'center' })
+  child.expect_screenshot()
+end
+
 T['default_preview()']['works for file path'] = function()
   local items = {
     -- Item as string
@@ -1524,11 +1634,17 @@ T['default_preview()']['works for file path'] = function()
     real_file('c.gif'),
   }
   validate_preview(items)
+
+  -- Should have proper buffer name
+  validate_helper_buf_name(0, 'preview')
+
   stop()
 
   -- Should work for failed to read files
   child.lua('vim.loop.fs_open = function() return nil end')
-  validate_preview({ real_file('Makefile') })
+  local makefile_path = real_file('Makefile')
+  validate_preview({ makefile_path })
+  validate_helper_buf_name(0, 'preview')
 end
 
 T['default_preview()']['works for relative file path'] = function()
@@ -1539,6 +1655,17 @@ T['default_preview()']['works for relative file path'] = function()
   child.lua_notify(lua_cmd)
   type_keys('<Tab>')
   child.expect_screenshot()
+  validate_helper_buf_name(0, 'preview')
+  type_keys('<C-c>')
+
+  -- Should respect source's cwd (thanks to window-local cwd)
+  local target_win_id = child.api.nvim_get_current_win()
+  child.lua('_G.cwd = ' .. vim.inspect(test_dir_absolute .. '/builtin-tests'))
+  child.fn.chdir(test_dir_absolute)
+  child.lua_notify('MiniPick.start({ source = { items = { { path = "file" } }, cwd = _G.cwd } })')
+  type_keys('<Tab>')
+  child.expect_screenshot()
+  eq(child.fn.getcwd(target_win_id), test_dir_absolute)
 end
 
 T['default_preview()']['works for file path with tilde'] = function()
@@ -1605,6 +1732,7 @@ end
 
 T['default_preview()']['works for directory path'] = function()
   validate_preview({ test_dir, { text = real_files_dir, path = real_files_dir } })
+  validate_helper_buf_name(0, 'preview')
 end
 
 T['default_preview()']['works for buffer'] = function()
@@ -1635,6 +1763,9 @@ T['default_preview()']['works for buffer'] = function()
     { text = 'Buffer #4', buf = buf_id_4 },
   }
   validate_preview(items)
+
+  -- Should have proper buffer name
+  validate_helper_buf_name(0, 'preview')
 end
 
 local mock_buffer_for_preview = function()
@@ -1697,6 +1828,8 @@ end
 T['default_preview()']['has fallback'] = function()
   child.set_size(10, 40)
   validate_preview({ -1, { text = 'Random table' } })
+
+  validate_helper_buf_name(0, 'preview')
 end
 
 T['default_preview()']['does not highlight big files'] = function()
@@ -1795,8 +1928,7 @@ T['default_choose()']['respects picker target window'] = function()
 
   eq(child.api.nvim_win_get_buf(win_id_1), buf_id_1)
   validate_buf_name(buf_id_1, '')
-  eq(child.api.nvim_win_get_buf(win_id_2), buf_id_2)
-  validate_buf_name(buf_id_2, path)
+  validate_buf_name(child.api.nvim_win_get_buf(win_id_2), path)
 end
 
 T['default_choose()']['works without active picker'] = function()
@@ -1847,8 +1979,16 @@ T['default_choose()']['works for relative file path'] = function()
   type_keys('<CR>')
   validate_buf_name(0, real_file('a.lua'))
 
-  -- Should open with relative path to have better view in `:buffers`
-  expect.match(child.cmd_capture('buffers'), '"tests[\\/]dir%-pick')
+  -- Should open path in relative form for nicer `:buffers`
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]tests/dir%-pick')
+
+  -- Should respect source's cwd (thanks to window-local cwd)
+  child.lua('_G.cwd = ' .. vim.inspect(test_dir_absolute .. '/builtin-tests'))
+  child.fn.chdir(test_dir_absolute)
+  child.lua_notify('MiniPick.start({ source = { items = { { path = "file" } }, cwd = _G.cwd } })')
+  type_keys('<CR>')
+  validate_buf_name(0, full_path(test_dir_absolute .. '/builtin-tests/file'))
+  eq(child.fn.getcwd(), test_dir_absolute)
 end
 
 T['default_choose()']['works for URI path'] = function()
@@ -1879,7 +2019,7 @@ T['default_choose()']['reuses opened listed buffer for file path'] = function()
   validate_buf_name(buf_id_path, path)
   set_cursor(5, 3)
 
-  local buf_id_alt = child.api.nvim_create_buf(true, false)
+  local setup_dummy_cur_buf = function() child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false)) end
 
   local validate = function(pos)
     eq(child.api.nvim_win_get_buf(0), buf_id_path)
@@ -1888,22 +2028,57 @@ T['default_choose()']['reuses opened listed buffer for file path'] = function()
   end
 
   -- Reuses without setting cursor
-  child.api.nvim_set_current_buf(buf_id_alt)
+  setup_dummy_cur_buf()
   default_choose(path)
   validate({ 5, 3 })
 
   -- Reuses with setting cursor
-  child.api.nvim_set_current_buf(buf_id_alt)
+  setup_dummy_cur_buf()
   default_choose(path .. '\0007\0002')
   validate({ 7, 1 })
 
   -- Doesn't reuse if unlisted
-  child.api.nvim_set_current_buf(buf_id_alt)
+  setup_dummy_cur_buf()
   child.cmd('bdelete ' .. buf_id_path)
   eq(child.api.nvim_buf_get_option(buf_id_path, 'buflisted'), false)
   default_choose(path)
   validate({ 1, 0 })
   eq(child.api.nvim_buf_get_option(buf_id_path, 'buflisted'), true)
+end
+
+T['default_choose()']['mimics empty buffer reuse'] = function()
+  local validate = function(ref_n_bufs)
+    default_choose(real_file('b.txt'))
+    eq(#child.api.nvim_list_bufs(), ref_n_bufs)
+    child.cmd('%bwipeout!')
+  end
+
+  -- Should mimic `:h buffer-reuse` similar to how `:edit` does it
+  eq(child.api.nvim_get_current_buf() == 1, true)
+  validate(1)
+
+  eq(child.api.nvim_get_current_buf() ~= 1, true)
+  validate(1)
+
+  child.cmd('tabnew')
+  validate(2)
+
+  -- Should reuse only for strict set of conditions
+  child.api.nvim_buf_set_name(0, 'named-buf')
+  validate(2)
+
+  child.bo.buftype = 'quickfix'
+  validate(2)
+
+  child.cmd('split')
+  eq(#child.fn.win_findbuf(child.api.nvim_get_current_buf()), 2)
+  validate(2)
+
+  child.api.nvim_buf_set_lines(0, 0, -1, false, { ' ' })
+  validate(2)
+
+  child.bo.modified = true
+  validate(2)
 end
 
 T['default_choose()']['works for directory path'] = function()
@@ -2060,6 +2235,42 @@ T['default_choose()']['opens just enough folds'] = function()
   eq(child.fn.foldclosed(13), -1)
 end
 
+T['default_choose()']['updates jumplist'] = function()
+  -- Same buffer/path
+  local path = real_file('b.txt')
+  local validate = function(item)
+    child.cmd('edit ' .. vim.fn.fnameescape(path))
+    local init_buf_id = child.api.nvim_get_current_buf()
+    set_cursor(9, 1)
+
+    choose_item(item)
+    if item.bufnr ~= nil then eq(child.api.nvim_get_current_buf(), item.bufnr) end
+    if item.path ~= nil then eq(vim.endswith(child.api.nvim_buf_get_name(0):gsub('\\', '/'), item.path), true) end
+    eq(get_cursor(), { item.lnum, 0 })
+
+    type_keys('<C-o>')
+    eq(child.api.nvim_get_current_buf(), init_buf_id)
+    eq(get_cursor(), { 9, 1 })
+
+    -- Cleanup
+    child.cmd('%bwipeout!')
+  end
+
+  -- Same path/buffer
+  validate({ text = path, path = path, lnum = 2 })
+
+  local buf_id = child.api.nvim_get_current_buf()
+  validate({ text = 'buffer', bufnr = buf_id, lnum = 2 })
+
+  -- Different path/buffer
+  local new_path = real_file('Makefile')
+  validate({ text = new_path, path = new_path, lnum = 2 })
+
+  local new_buf_id = child.api.nvim_create_buf(true, false)
+  child.api.nvim_buf_set_lines(new_buf_id, 0, -1, false, { 'aaa', 'bbb' })
+  validate({ text = 'buffer', bufnr = new_buf_id, lnum = 2 })
+end
+
 T['default_choose()']['has print fallback'] = function()
   choose_item({ text = 'regular-table' })
   eq(child.cmd_capture('messages'), '{\n  text = "regular-table"\n}')
@@ -2181,6 +2392,10 @@ T['default_choose_marked()']['creates quickfix list from file/buffer positions']
 
     -- URI
     { path = 'file:/' .. full_path(path) },
+
+    -- Edge cases
+    { text = '\000a\0b', path = path },
+    { text = '\000a\0b', bufnr = buf_id },
   }
 
   start_with_items(items)
@@ -2208,6 +2423,9 @@ T['default_choose_marked()']['creates quickfix list from file/buffer positions']
   validate_qfitem(qflist[17], { bufnr = buf_id, lnum = 7, col = 8, end_lnum = 8, end_col = 0 })
 
   validate_qfitem(qflist[18], { filename = full_path(path), lnum = 1, col = 1, end_lnum = 0, end_col = 0 })
+
+  validate_qfitem(qflist[19], { filename = path, lnum = 1, col = 1, end_lnum = 0, end_col = 0, text = '│a│b' })
+  validate_qfitem(qflist[20], { bufnr = buf_id, lnum = 1, col = 1, end_lnum = 0, end_col = 0, text = '│a│b' })
 end
 
 T['default_choose_marked()']['falls back to choosing first item'] = function()
@@ -2367,6 +2585,18 @@ T['ui_select()']['respects `opts.preview_item`'] = function()
   child.expect_screenshot()
 end
 
+T['ui_select()']['respects `start_opts`'] = function()
+  child.lua_notify([[
+    local start_opts = {
+      -- Should ignore these and prefer parts of `source` that come from `opts`
+      source = { name = 'Should not be used', items = { 'c', 'd' } },
+      window = { config = { width = vim.o.columns } },
+    }
+    MiniPick.ui_select({ 'a', 'b' }, { prompt = 'Select:' }, function() end, start_opts)
+  ]])
+  child.expect_screenshot()
+end
+
 T['builtin.files()'] = new_set({ hooks = { pre_case = mock_spawn } })
 
 local builtin_files = forward_lua_notify('MiniPick.builtin.files')
@@ -2488,7 +2718,6 @@ T['builtin.files()']['respects `opts.source.cwd` for cli spawn'] = function()
   mock_cli_return({})
   builtin_files({}, { source = { cwd = test_dir } })
 
-  local test_dir_absolute = full_path(test_dir)
   validate_picker_option('source.cwd', test_dir_absolute)
   eq(get_spawn_log()[1].options.cwd, test_dir_absolute)
 end
@@ -2662,7 +2891,6 @@ T['builtin.grep()']['respects `opts.source.cwd` for cli spawn'] = function()
   mock_cli_return({})
   builtin_grep({ pattern = 'b' }, { source = { cwd = test_dir } })
 
-  local test_dir_absolute = full_path(test_dir)
   validate_picker_option('source.cwd', test_dir_absolute)
   eq(get_spawn_log()[1].options.cwd, test_dir_absolute)
 end
@@ -2900,7 +3128,6 @@ T['builtin.grep_live()']['respects `opts.source.cwd` for cli spawn'] = function(
   mock_cli_return({ real_file('b.txt') .. '\0001\0001' })
   type_keys('b')
 
-  local test_dir_absolute = full_path(test_dir)
   validate_picker_option('source.cwd', test_dir_absolute)
   eq(get_spawn_log()[1].options.cwd, test_dir_absolute)
 end
@@ -2909,10 +3136,20 @@ T['builtin.help()'] = new_set()
 
 local builtin_help = forward_lua_notify('MiniPick.builtin.help')
 
+local validate_help_with_layout = function(win_layout, n_tabpages)
+  eq(child.fn.winlayout()[1], win_layout)
+  eq(#child.api.nvim_list_tabpages(), n_tabpages)
+  local has_help = false
+  for _, win_id in ipairs(child.api.nvim_tabpage_list_wins(0)) do
+    if child.api.nvim_buf_get_option(child.api.nvim_win_get_buf(win_id), 'buftype') == 'help' then has_help = true end
+  end
+  eq(has_help, true)
+end
+
 T['builtin.help()']['works'] = function()
   child.lua_notify('_G.help_item = MiniPick.builtin.help()')
   -- Ignore footer as it contains non-reliable number of help tags
-  child.expect_screenshot({ ignore_lines = { 14 } })
+  child.expect_screenshot({ ignore_text = { 14 } })
 
   -- Should set correct name
   validate_picker_option('source.name', 'Help')
@@ -2923,7 +3160,7 @@ T['builtin.help()']['works'] = function()
   eq(child.lua_get('_G.help_item'), item)
 
   -- Should open help page as choosing
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 13 } })
 end
 
 T['builtin.help()']['has proper preview'] = function()
@@ -2937,33 +3174,50 @@ T['builtin.help()']['has proper preview'] = function()
   builtin_help()
   type_keys('<Tab>')
   -- Ignore footer as it contains non-reliable number of help tags
-  child.expect_screenshot({ ignore_lines = { 14 } })
+  child.expect_screenshot({ ignore_text = { 14 } })
   eq(child.bo.buftype, 'nofile')
+  -- Changes buffer name to show explicitly help file.
+  -- This is neither good nor bad. Can be changed in the future.
+  eq(child.api.nvim_buf_get_name(0):find('^minipick://') == nil, true)
 
   eq(child.v.hlsearch, 0)
   eq(child.fn.getreg('/'), 'aa')
 end
 
 T['builtin.help()']['has customized `choose` modifications'] = function()
-  local has_help = function()
-    for _, win_id in ipairs(child.api.nvim_tabpage_list_wins(0)) do
-      if child.api.nvim_buf_get_option(child.api.nvim_win_get_buf(win_id), 'buftype') == 'help' then return true end
-    end
-    return false
-  end
-
-  local validate = function(key, win_layout, n_tabpages)
+  local validate = function(keys, win_layout, n_tabpages)
     builtin_help()
-    type_keys(key)
-    eq(child.fn.winlayout()[1], win_layout)
-    eq(#child.api.nvim_list_tabpages(), n_tabpages)
-    eq(has_help(), true)
+    type_keys(keys)
+    validate_help_with_layout(win_layout, n_tabpages)
     child.cmd('%bw')
   end
-
   validate('<C-s>', 'col', 1)
   validate('<C-v>', 'row', 1)
   validate('<C-t>', 'leaf', 2)
+end
+
+T['builtin.help()']['respects `local_opts.default_split`'] = function()
+  local validate = function(value, win_layout, n_tabpages)
+    builtin_help({ default_split = value })
+    type_keys('<CR>')
+    validate_help_with_layout(win_layout, n_tabpages)
+    child.cmd('%bw')
+  end
+  validate(nil, 'col', 1)
+  validate('horizontal', 'col', 1)
+  validate('vertical', 'row', 1)
+  validate('tab', 'leaf', 2)
+
+  -- Can work with overridden `choose` key
+  builtin_help({ default_split = 'vertical' }, { mappings = { choose = '<C-z>' } })
+  type_keys('<C-z>')
+  validate_help_with_layout('row', 1)
+  child.cmd('%bw')
+
+  expect.error(
+    function() child.lua('MiniPick.builtin.help({ default_split = "" })') end,
+    '`opts%.default_split`.*one of'
+  )
 end
 
 T['builtin.help()']['works for help tags with special characters'] = function()
@@ -2972,7 +3226,7 @@ T['builtin.help()']['works for help tags with special characters'] = function()
   set_picker_query({ 'c_CTRL-K' })
   type_keys('<Tab>')
   -- Ignore footer as it contains non-reliable number of help tags
-  child.expect_screenshot({ ignore_lines = { 14 } })
+  child.expect_screenshot({ ignore_text = { 14 } })
 end
 
 T['builtin.help()']['works when help window is already opened'] = function()
@@ -2984,7 +3238,7 @@ T['builtin.help()']['works when help window is already opened'] = function()
 
   -- Should open help in already opened help window (just like `:help`)
   type_keys('<CR>')
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 13 } })
   eq(#child.api.nvim_list_wins(), 2)
 end
 
@@ -3110,12 +3364,11 @@ end
 
 T['builtin.cli()']['respects `local_opts.spawn_opts`'] = function()
   builtin_cli({ command = { 'echo', 'aa\nbb' }, spawn_opts = { env = { AAA = 'xxx' } } })
-  eq(get_spawn_log()[1].options, { args = { 'aa\nbb' }, env = { AAA = 'xxx' } })
+  eq(get_spawn_log()[1].options, { args = { 'aa\nbb' }, cwd = child.fn.getcwd(), env = { AAA = 'xxx' } })
 end
 
 T['builtin.cli()']['respects `opts.source.cwd` for cli spawn'] = function()
   local command = { 'echo', 'aa\nbb' }
-  local test_dir_absolute = full_path(test_dir)
 
   local validate = function(local_opts, opts, ref_cwd, source_cwd)
     builtin_cli(local_opts, opts)
@@ -3218,6 +3471,7 @@ T['builtin.resume()']['preserves current working directory'] = function()
   child.fn.chdir(dir_2)
   builtin_resume()
   validate_picker_option('source.cwd', full_path(dir_1))
+  eq(child.fn.getcwd(0), dir_1)
 end
 
 T['builtin.resume()']['preserves query cache'] = function()
@@ -3325,15 +3579,6 @@ T['registry']['works'] = function()
   eq(actual_types, ref_types)
 end
 
-T['registry']['should contain values from `MiniExtra.pickers` if present'] = function()
-  unload_module()
-  child.lua([[package.loaded['mini.pick'] = nil]])
-
-  child.lua('_G.MiniExtra = { pickers = { miniextra_method = function() end } }')
-  load_module()
-  eq(child.lua_get('type(MiniPick.registry.miniextra_method)'), 'function')
-end
-
 T['registry']['is not reloaded in `setup()`'] = function()
   child.lua([[MiniPick.registry.custom = function() end]])
   child.lua([[require('mini.pick').setup()]])
@@ -3410,14 +3655,23 @@ T['get_picker_matches()']['works'] = function()
   start_with_items(items)
   child.lua('_G.res = MiniPick.get_picker_matches()')
 
-  local ref =
-    { all = items, all_inds = { 1, 2, 3 }, current = items[1], current_ind = 1, marked = {}, marked_inds = {} }
+  local ref = {
+    all = items,
+    all_inds = { 1, 2, 3 },
+    current = items[1],
+    current_ind = 1,
+    marked = {},
+    marked_inds = {},
+    shown = items,
+    shown_inds = { 1, 2, 3 },
+  }
   eq(child.lua_get('_G.res'), ref)
 
   -- Returns copy
   child.lua([[_G.res.all[1], _G.res.all_inds[1] = 'xx', 100]])
   child.lua([[_G.res.current, _G.res.current_ind = 'yy', 200]])
-  child.lua([[_G.res.marked[1], _G.res.marked_inds[1] = 'tt', 300]])
+  child.lua([[_G.res.marked[1], _G.res.marked_inds[1] = 'uu', 300]])
+  child.lua([[_G.res.shown[1], _G.res.shown_inds[1] = 'vv', 400]])
   eq(get_picker_matches(), ref)
 end
 
@@ -3476,6 +3730,37 @@ T['get_picker_matches()']['reacts to change in marked matches'] = function()
 
   type_keys('<C-n>', '<C-n>', '<C-x>')
   validate({ items[1], items[3] }, { 1, 3 })
+end
+
+T['get_picker_matches()']['reacts to change in shown matches'] = function()
+  local validate = function(ref_shown, ref_shown_inds)
+    local matches = get_picker_matches()
+    eq(matches.shown, ref_shown)
+    eq(matches.shown_inds, ref_shown_inds)
+  end
+
+  child.set_size(10, 20)
+
+  local items = { 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'hha', 'hhha', 'ha' }
+  start_with_items(items)
+  validate({ 'a', 'b', 'c', 'd', 'e' }, { 1, 2, 3, 4, 5 })
+
+  type_keys('<C-p>')
+  validate({ 'f', 'g', 'hha', 'hhha', 'ha' }, { 6, 7, 8, 9, 10 })
+
+  type_keys('a')
+  validate({ 'a', 'ha', 'hha', 'hhha' }, { 1, 10, 8, 9 })
+
+  type_keys('x')
+  validate({}, {})
+
+  type_keys('<C-c>')
+
+  -- Should always order from top to bottom
+  start({ source = { items = { 'a', 'b', 'c', 'ad', 'd' } }, options = { content_from_bottom = true } })
+  validate({ 'd', 'ad', 'c', 'b', 'a' }, { 5, 4, 3, 2, 1 })
+  type_keys('d')
+  validate({ 'ad', 'd' }, { 4, 5 })
 end
 
 T['get_picker_matches()']['handles no matches'] = function()
@@ -3717,6 +4002,27 @@ T['set_picker_items()']['resets query cache'] = function()
   eq(get_picker_matches().all_inds, { 2, 3 })
 end
 
+T['set_picker_items()']['recomputes visible range'] = function()
+  start_with_items({ 'a', 'b' })
+  set_picker_items({ 'c', 'd', 'e' })
+  child.expect_screenshot()
+end
+
+T['set_picker_items()']['triggers dedicated event'] = function()
+  child.lua('_G.log = {}')
+  child.cmd('au User MiniPickMatch lua table.insert(_G.log, MiniPick.get_picker_matches().all)')
+
+  start_with_items({})
+  eq(child.lua_get('_G.log'), {})
+
+  type_keys('a')
+  eq(child.lua_get('_G.log'), {})
+
+  set_picker_items({ 'a', 'b' })
+  -- Should trigger first during item setting and then after query matching
+  eq(child.lua_get('_G.log'), { { 'a', 'b' }, { 'a' } })
+end
+
 T['set_picker_items()']['respects `opts.do_match`'] = function()
   local validate_match_calls = make_match_with_count()
   child.lua_notify([[MiniPick.start({ source = { match = _G.match_with_count } })]])
@@ -3733,18 +4039,34 @@ T['set_picker_items()']['respects `opts.do_match`'] = function()
 end
 
 T['set_picker_items()']['respects `opts.querytick`'] = function()
+  -- Mock slow `set_picker_items`
+  child.lua('_G.small_time = ' .. small_time)
+  child.lua([[
+    _G.log = {}
+    -- Mock slow item preparation
+    local tolower_orig = vim.fn.tolower
+    vim.fn.tolower = function(...)
+      table.insert(_G.log, { time = vim.loop.hrtime(), args = {...} })
+      vim.loop.sleep(_G.small_time)
+      table.insert(_G.log, { time = vim.loop.hrtime() })
+      return tolower_orig(...)
+    end
+
+    -- Reload module for `vim.fn.tolower` mock to take effect
+    package.loaded['mini.pick'] = nil
+    require('mini.pick').setup()
+  ]])
+
   -- Should check every `delay.async` milliseconds if global querytick is the
   -- same as supplied. If not - abort without setting items.
-  child.lua('MiniPick.config.delay.async = ' .. micro_time)
+  child.lua('MiniPick.config.delay.async = 1')
 
   start_with_items()
-  set_picker_items(many_items, { querytick = -1 })
+  set_picker_items({ 'ab', 'ac', 'bb' }, { querytick = -1 })
   eq(get_picker_items(), vim.NIL)
 end
 
 T['set_picker_items()']['does not block picker'] = function()
-  helpers.skip_if_slow()
-
   child.lua([[
     _G.log = {}
     _G.log_func = function()
@@ -3753,14 +4075,20 @@ T['set_picker_items()']['does not block picker'] = function()
     end
     _G.mappings = { append_log = { char = 'l', func = _G.log_func } }
   ]])
-  child.lua_notify('MiniPick.start({ mappings = _G.mappings, delay = { async = 1 } })')
+  child.lua('MiniPick.config.delay.async = 1')
+  child.lua_notify('MiniPick.start({ mappings = _G.mappings })')
 
-  -- Set many items and start typing right away. Key presses should be
-  -- processed right away even though there is an items preprocessing is going.
-  set_picker_items(many_items)
+  -- Set many items and immediately press a key, which should be processed
+  -- right away even though there is item preprocessing going.
+  -- Mocking "slow set_picker_items" doesn't work for some reason.
+  local items = {}
+  for _ = 1, 100000 do
+    table.insert(items, 'ab')
+    table.insert(items, 'ac')
+    table.insert(items, 'bb')
+  end
+  set_picker_items(items)
   type_keys('l')
-  sleep(small_time)
-  stop()
   eq(child.lua_get('_G.log'), { { is_busy = true, items_type = 'nil' } })
 end
 
@@ -3824,6 +4152,13 @@ T['set_picker_items_from_cli()']['correctly processes stdout feed'] = function()
   mock_stdout_feed({ 'aa\n', 'bb', 'cc\n', 'dd', '\nee' })
   set_picker_items_from_cli(test_command)
   eq(get_picker_items(), { 'aa', 'bbcc', 'dd', 'ee' })
+  stop()
+
+  -- Should respect both '\r\n' and '\n' to split items
+  start_with_items()
+  mock_stdout_feed({ 'aa\nbb\r\ncc\rdd\nee' })
+  set_picker_items_from_cli(test_command)
+  eq(get_picker_items(), { 'aa', 'bb', 'cc\rdd', 'ee' })
 end
 
 T['set_picker_items_from_cli()']['correctly detects error in stdout feed'] = function()
@@ -3977,29 +4312,134 @@ T['set_picker_match_inds()']['sets first index as current'] = function()
   validate_current_ind(2)
 end
 
+T['set_picker_match_inds()']['triggers relevant event'] = function()
+  child.lua('_G.log = {}')
+  child.cmd('au User MiniPickMatch lua table.insert(_G.log, MiniPick.get_picker_matches().all)')
+
+  start_with_items({ 'a', 'b', 'c' })
+  -- Should trigger first during item setting and then after query matching
+  eq(child.lua_get('_G.log'), { { 'a', 'b', 'c' }, { 'a', 'b', 'c' } })
+  child.lua('_G.log = {}')
+
+  set_picker_match_inds({ 2, 3 })
+  eq(child.lua_get('_G.log'), { { 'b', 'c' } })
+end
+
+T['set_picker_match_inds()']['can set current match index'] = function()
+  child.set_size(10, 35)
+  start_with_items({ 'a', 'b', 'c', 'da' })
+
+  set_picker_match_inds({ 3 }, 'current')
+  eq(get_picker_matches().current, 'c')
+  eq(get_picker_matches().current_ind, 3)
+  -- - Should update in overall view too
+  child.expect_screenshot()
+
+  -- Only first one should be used
+  set_picker_match_inds({ 2, 3 }, 'current')
+  eq(get_picker_matches().current_ind, 2)
+
+  -- Should treat as absolute indexes (i.e. indexes among all items)
+  type_keys('a')
+  set_picker_match_inds({ 4 }, 'current')
+  eq(get_picker_matches().current_ind, 4)
+
+  -- Should still update automatically later
+  type_keys('<C-u>')
+  eq(get_picker_matches().current_ind, 1)
+
+  -- Should throw error on bad input
+  type_keys('a')
+  expect.error(function() set_picker_match_inds({ 2 }, 'current') end, 'among all current matches')
+  type_keys('<C-u>')
+
+  type_keys('x')
+  expect.error(function() set_picker_match_inds({ 1 }, 'current') end, 'among all current matches')
+  type_keys('<C-u>')
+
+  expect.error(function() set_picker_match_inds(4, 'current') end, 'array')
+  expect.error(function() set_picker_match_inds({ 0 }, 'current') end, 'among all current matches')
+  expect.error(function() set_picker_match_inds({ 100 }, 'current') end, 'among all current matches')
+end
+
+T['set_picker_match_inds()']['can set marked match indexes'] = function()
+  child.set_size(10, 35)
+  start_with_items({ 'a', 'b', 'c', 'da' })
+
+  set_picker_match_inds({ 2, 4 }, 'marked')
+  eq(get_picker_matches().marked, { 'b', 'da' })
+  eq(get_picker_matches().marked_inds, { 2, 4 })
+  -- - Should update in overall view too
+  child.expect_screenshot()
+
+  -- Should set all marked indexes to the input
+  set_picker_match_inds({ 3 }, 'marked')
+  eq(get_picker_matches().marked_inds, { 3 })
+  child.expect_screenshot()
+
+  set_picker_match_inds({}, 'marked')
+  eq(get_picker_matches().marked_inds, {})
+
+  -- Should be able to mark not currently matched to query
+  type_keys('a')
+  set_picker_match_inds({ 2 }, 'marked')
+  eq(get_picker_matches().marked_inds, { 2 })
+
+  -- Should still be able to manually mark afterwards
+  type_keys('<C-x>')
+  eq(get_picker_matches().marked_inds, { 1, 2 })
+
+  -- Should throw error on bad input
+  expect.error(function() set_picker_match_inds({ 0 }, 'marked') end, 'from 1 to number of items')
+  expect.error(function() set_picker_match_inds({ 100 }, 'marked') end, 'from 1 to number of items')
+end
+
 T['set_picker_match_inds()']['validates arguments'] = function()
   start_with_items()
   expect.error(function() set_picker_match_inds(1) end, '`match_inds`.*array')
   expect.error(function() set_picker_match_inds({ 'a' }) end, '`match_inds`.*numbers')
+  expect.error(function() set_picker_match_inds({ 1 }, 1) end, '`match_type`.*one of')
+  expect.error(function() set_picker_match_inds({ 1 }, 'x') end, '`match_type`.*one of')
 end
 
 T['set_picker_opts()'] = new_set()
 
 T['set_picker_opts()']['works'] = function()
-  local expect_screenshot = function()
-    if child.has_float_footer() then child.expect_screenshot_orig() end
-  end
-
+  local target_win_id = child.api.nvim_get_current_win()
+  local init_cwd = child.fn.getcwd()
   start_with_items({ 'a', 'b', 'bb' })
-  expect_screenshot()
+  child.expect_screenshot()
 
   child.lua([[MiniPick.set_picker_opts({ source = { name = 'My name' }, window = { config = { col = 5 } } })]])
-  expect_screenshot()
+  child.expect_screenshot()
+
+  -- Can be used to update mappings
+  child.lua([[MiniPick.set_picker_opts({
+    mappings = { log = { char = '<C-d>', func = function() _G.log = 'hello' end } },
+  })]])
+  type_keys('<C-d>')
+  eq(child.lua_get('_G.log'), 'hello')
+
+  -- Should update present options, not override them
+  child.lua([[MiniPick.set_picker_opts({
+    mappings = { log2 = { char = '<C-z>', func = function() _G.log = 'world' end } },
+  })]])
+  type_keys('<C-z>')
+  eq(child.lua_get('_G.log'), 'world')
+  type_keys('<C-d>')
+  eq(child.lua_get('_G.log'), 'hello')
+
+  -- Can be used to update cwd
+  child.lua('_G.cwd = ' .. vim.inspect(test_dir))
+  child.lua('MiniPick.set_picker_opts({ source = { items = { { path = "file" } }, cwd = _G.cwd } })')
+  eq(child.lua_get('MiniPick.get_picker_opts().source.cwd'), test_dir)
+  eq(child.fn.getcwd(0), full_path(test_dir))
+  eq(child.fn.getcwd(target_win_id), init_cwd)
 
   -- Should rerun match
   child.lua('MiniPick.set_picker_opts({ source = { match = function() return { 2 } end } })')
   eq(get_picker_matches().all_inds, { 2 })
-  expect_screenshot()
+  child.expect_screenshot()
 
   -- Can be called without active picker
   type_keys('<C-c>')
@@ -4048,6 +4488,18 @@ T['set_picker_query()']['works'] = function()
   type_keys('<C-c>')
   eq(is_picker_active(), false)
   eq(set_picker_query({ 'a' }), vim.NIL)
+end
+
+T['set_picker_query()']['does not have side effects'] = function()
+  start_with_items({ 'a', 'b', 'bb' })
+
+  child.lua([[
+    _G.query = { 'b' }
+    MiniPick.set_picker_query(_G.query)
+  ]])
+
+  type_keys('b')
+  eq(child.lua_get('_G.query'), { 'b' })
 end
 
 T['set_picker_query()']['resets caret'] = function()
@@ -4277,38 +4729,34 @@ T['Overall view']['shows prompt'] = function()
 end
 
 T['Overall view']['uses footer for extra info'] = function()
-  if not child.has_float_footer() then return end
-
   start_with_items({ 'a', 'b', 'bb', 'bbb' }, 'My name')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 
   -- Should update after matching
   type_keys('b')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 
   -- Should update after moving
   type_keys('<C-n>')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 
   -- Should update after marking and unmarking
   type_keys('<C-x>')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
   type_keys('<C-x>')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 
   -- Should correctly show no matches
   type_keys('x')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 end
 
 T['Overall view']['correctly infers footer empty space'] = function()
-  if not child.has_float_footer() then return end
-
   local validate = function(win_config)
     local lua_cmd = string.format('MiniPick.config.window.config = %s', vim.inspect(win_config))
     child.lua(lua_cmd)
     start_with_items({ 'a' })
-    child.expect_screenshot_orig()
+    child.expect_screenshot()
     type_keys('<C-c>')
   end
 
@@ -4325,50 +4773,92 @@ T['Overall view']['correctly infers footer empty space'] = function()
 end
 
 T['Overall view']['does not show footer if items are not set'] = function()
-  if not child.has_float_footer() then return end
   start_with_items()
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 end
 
 T['Overall view']['respects `options.content_from_bottom` with footer'] = function()
-  if not child.has_float_footer() then return end
-
   start({ source = { items = { 'a', 'b' } }, options = { content_from_bottom = true } })
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
 end
 
-T['Overall view']['truncates border text'] = function()
-  if not child.has_float_footer() then return end
+T['Overall view']['truncates prompt'] = function()
+  child.set_size(10, 17)
+  -- Should work with non-default lengths and multibyte characters in both
+  -- prefix and caret
+  child.lua('MiniPick.config.window.prompt_prefix = "<ы>"')
+  child.lua('MiniPick.config.window.prompt_caret = "!Ы!"')
+  start_with_items({ 'a' }, 'Test')
 
+  -- Should work with multibyte characters in query
+  local query = 'abcйцф_'
+  type_keys(query)
+  child.expect_screenshot()
+  for _ = 1, vim.fn.strchars(query) do
+    type_keys('<Left>')
+    child.expect_screenshot()
+  end
+
+  -- Should work with more single character query parts
+  local query_arr = { 'ab', 'cde', 'fgh', 'ij' }
+  set_picker_query(query_arr)
+  child.expect_screenshot()
+  for _ = 1, #query_arr do
+    type_keys('<Left>')
+    child.expect_screenshot()
+  end
+end
+
+T['Overall view']['truncates footer'] = function()
   local validate = function(...)
     child.set_size(...)
     start_with_items({ 'a' }, 'Very long name')
-    set_picker_query({ 'very long query' })
-    child.expect_screenshot_orig()
+    child.expect_screenshot()
     type_keys('<C-c>')
   end
 
   validate(10, 20)
   -- Should not partially show footer indexes, only in full (when space allows)
-  validate(10, 35)
+  validate(10, 38)
+  validate(10, 39)
 end
 
 T['Overall view']['allows "none" as border'] = function()
-  if not child.has_float_footer() then return end
-
   child.lua([[MiniPick.config.window.config = { border = 'none' }]])
   start_with_items({ 'a' }, 'My name')
-  child.expect_screenshot_orig()
+  child.expect_screenshot()
+end
+
+T['Overall view']["respects 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+
+  child.o.winborder = 'rounded'
+  start_with_items({ 'a', 'b', 'c' })
+  child.expect_screenshot()
+  stop()
+
+  -- Should prefer explicitly configured value over 'winborder'
+  child.lua([[MiniPick.config.window.config = { border = 'double' }]])
+  start_with_items({ 'a', 'b', 'c' })
+  child.expect_screenshot()
+  stop()
+
+  -- Should infer custom border (for visible title/footer) for `winborder=none`
+  child.lua([[MiniPick.config.window.config = nil]])
+  child.o.winborder = 'none'
+  start_with_items({ 'a', 'b', 'c' })
+  child.expect_screenshot()
 end
 
 T['Overall view']["respects tabline, statusline, 'cmdheight'"] = function()
-  local validate = function()
+  local validate = function(screenshot_opts)
     start_with_items({ 'a' }, 'My name')
-    child.expect_screenshot()
+    child.expect_screenshot(screenshot_opts)
     type_keys('<C-c>')
   end
 
   child.set_size(10, 20)
+  child.o.tabline, child.o.statusline = 'My tabline', 'My statusline'
 
   child.o.showtabline, child.o.laststatus = 2, 2
   validate()
@@ -4381,6 +4871,22 @@ T['Overall view']["respects tabline, statusline, 'cmdheight'"] = function()
 
   child.o.showtabline, child.o.laststatus = 0, 0
   validate()
+
+  child.o.cmdheight = 2
+  local ignore_cmdline_hl = child.fn.has('nvim-0.11') == 1 and {} or { ignore_attr = { 9, 10 } }
+  validate(ignore_cmdline_hl)
+
+  child.o.cmdheight = 0
+  validate()
+end
+
+T['Overall view']['works with small available dimensions'] = function()
+  child.set_size(5, 40)
+  child.o.showtabline, child.o.laststatus = 0, 0
+  child.o.cmdheight = 4
+
+  start_with_items({ 'a' }, 'My name')
+  child.expect_screenshot({ ignore_attr = child.fn.has('nvim-0.11') == 0 })
 end
 
 T['Overall view']["respects 'guicursor'"] = function()
@@ -4427,9 +4933,6 @@ T['Overall view']['uses dedicated highlight groups'] = function()
   expect.match(winhighlight, 'NormalFloat:MiniPickNormal')
   expect.match(winhighlight, 'FloatBorder:MiniPickBorderBusy')
 
-  local win_config = child.api.nvim_win_get_config(win_id)
-  if child.fn.has('nvim-0.9') == 1 then eq(win_config.title, { { '> ▏', 'MiniPickPrompt' } }) end
-
   -- Not busy picker
   set_picker_items({ 'a' })
   eq(get_picker_state().is_busy, false)
@@ -4437,7 +4940,17 @@ T['Overall view']['uses dedicated highlight groups'] = function()
   winhighlight = child.api.nvim_win_get_option(win_id, 'winhighlight')
   expect.match(winhighlight, 'FloatBorder:MiniPickBorder')
 
-  if child.has_float_footer() then
+  -- Title support is present only on Neovim>=0.9
+  type_keys('a')
+
+  local win_config = child.api.nvim_win_get_config(win_id)
+  if child.fn.has('nvim-0.9') == 1 then
+    local ref_title = { { '> ', 'MiniPickPromptPrefix' }, { 'a', 'MiniPickPrompt' }, { '▏', 'MiniPickPromptCaret' } }
+    eq(win_config.title, ref_title)
+  end
+
+  -- Footer support is present only on Neovim>=0.10
+  if child.fn.has('nvim-0.10') == 1 then
     win_config = child.api.nvim_win_get_config(win_id)
     local footer = win_config.footer
     eq(footer[1], { ' My name ', 'MiniPickBorderText' })
@@ -4620,15 +5133,23 @@ T['Main view']['properly computes items range to show'] = function()
 end
 
 T['Main view']['does not inherit highlighting from `matchparen`'] = function()
-  -- child.set_lines({ 'hello', 'world' })
-  -- child.fn.matchaddpos('Comment', { { 1, 1 }, { 1, 3 } })
   child.cmd('packadd matchparen')
   child.set_lines({ '(  )' })
   child.set_cursor(1, 0)
-  if #child.fn.getmatches() == 0 then return MiniTest.skip('No "matchparen"') end
 
   start_with_items({ 'aaaaaaaa' })
   eq(child.fn.getmatches(get_picker_state().windows.main), {})
+end
+
+T['Main view']['has correct local cwd'] = function()
+  local target_win_id = child.api.nvim_get_current_win()
+  child.lua('_G.cwd = ' .. vim.inspect(test_dir_absolute .. '/builtin-tests'))
+  child.fn.chdir(test_dir_absolute)
+  child.lua_notify('MiniPick.start({ source = { cwd = _G.cwd } })')
+
+  -- Should set local cwd per window and not affect other windows
+  eq(child.fn.getcwd(0):gsub('\\', '/'), full_path(test_dir_absolute .. '/builtin-tests'):gsub('\\', '/'))
+  eq(child.fn.getcwd(target_win_id), test_dir_absolute)
 end
 
 T['Info view'] = new_set()
@@ -4638,20 +5159,28 @@ T['Info view']['works'] = function()
   child.lua('MiniPick.config.window.config = { height = 40 }')
 
   start_with_items({ 'a', 'b', 'bb' }, 'My name')
-  mock_picker_cwd('mock/current-dir')
+  mock_picker_cwd(test_dir)
   type_keys('<S-Tab>')
   child.expect_screenshot()
 end
 
 T['Info view']['respects custom mappings'] = function()
-  child.set_size(20, 60)
+  child.set_size(23, 60)
   child.lua([[MiniPick.config.mappings.custom_action = { char = '<C-d>', func = function() print('Hello') end }]])
   child.lua([[MiniPick.config.mappings.another_action = { char = '<C-e>', func = function() print('World') end }]])
+  -- Should prefer custom action key over built-in
+  child.lua([[MiniPick.config.mappings.dup_key_action = { char = '<Left>', func = function() print('!!!') end }]])
   child.lua([[MiniPick.config.mappings.choose = 'a']])
+  -- Should omit the rest of "Choose" as they are disabled
+  child.lua([[MiniPick.config.mappings.choose_in_split = '']])
+  child.lua([[MiniPick.config.mappings.choose_in_vsplit = '']])
+  child.lua([[MiniPick.config.mappings.choose_in_tabpage = '']])
+  child.lua([[MiniPick.config.mappings.choose_marked = '']])
+
   child.lua([[MiniPick.config.window.config = { height = 20 }]])
 
   start_with_items({ 'a', 'b', 'bb' }, 'My name')
-  mock_picker_cwd('mock/current-dir')
+  mock_picker_cwd(test_dir)
   type_keys('<S-Tab>')
   child.expect_screenshot()
 end
@@ -4676,7 +5205,7 @@ end
 T['Info view']['is updated after moving/marking current item'] = function()
   child.set_size(15, 40)
   start_with_items({ 'a', 'b', 'bb' }, 'My name')
-  mock_picker_cwd('mock/current-dir')
+  mock_picker_cwd(test_dir)
   type_keys('<S-Tab>')
   child.expect_screenshot()
 
@@ -4711,7 +5240,7 @@ end
 
 T['Info view']['supports vertical and horizontal scroll'] = function()
   start_with_items({ 'a' })
-  mock_picker_cwd('mock/current-dir')
+  mock_picker_cwd(test_dir)
   type_keys('<S-Tab>')
 
   local validate = function(key)
@@ -4937,6 +5466,101 @@ T['Matching']['resets matched indexes when needed'] = function()
   type_keys('b', 'b', '<Left>')
   type_keys('x')
   validate_all_match_inds()
+end
+
+T['Matching']['triggers dedicated event'] = function()
+  child.lua('_G.log = {}')
+  local validate_log = function(ref_log)
+    eq(child.lua_get('_G.log'), ref_log)
+    child.lua('_G.log = {}')
+  end
+  child.cmd('au User MiniPickMatch lua table.insert(_G.log, MiniPick.get_picker_matches().all)')
+
+  start_with_items({ 'ba', 'ab', 'bb' })
+  -- - Triggered twice on start: during setting items and empty query matching
+  validate_log({ { 'ba', 'ab', 'bb' }, { 'ba', 'ab', 'bb' } })
+
+  type_keys('a')
+  validate_log({ { 'ab', 'ba' } })
+
+  type_keys('x')
+  validate_log({ {} })
+
+  type_keys('y')
+  validate_log({ {} })
+
+  type_keys('<BS>')
+  validate_log({ {} })
+
+  type_keys('<C-u>')
+  validate_log({ { 'ba', 'ab', 'bb' } })
+
+  type_keys('<C-c>')
+
+  -- Should trigger when using cache for match inds
+  child.lua_notify([[MiniPick.start({
+    source = { items = { 'ba', 'ab', 'bb' } },
+    options = { use_cache = true },
+  })]])
+  validate_log({ { 'ba', 'ab', 'bb' }, { 'ba', 'ab', 'bb' } })
+
+  type_keys('a')
+  validate_log({ { 'ab', 'ba' } })
+
+  type_keys('x')
+  validate_log({ {} })
+
+  type_keys('<BS>')
+  validate_log({ { 'ab', 'ba' } })
+
+  type_keys('<BS>')
+  validate_log({ { 'ba', 'ab', 'bb' } })
+
+  type_keys('a')
+  validate_log({ { 'ab', 'ba' } })
+
+  type_keys('<C-c>')
+
+  -- Should trigger with custom `source.match`
+  child.lua_notify([[
+    local match = function()
+      table.insert(_G.log, 'match')
+      return { 2 }
+    end
+    MiniPick.start({ source = { items = { 'ba', 'ab', 'bb' }, match = match } })
+  ]])
+
+  validate_log({ { 'ba', 'ab', 'bb' }, 'match', { 'ab' } })
+
+  type_keys('x')
+  validate_log({ 'match', { 'ab' } })
+
+  type_keys('<C-c>')
+end
+
+T['Matching']['dedicated event can update window config'] = function()
+  child.lua([[
+    local adjust_height = function()
+      local n_matches = #(MiniPick.get_picker_matches().all or {})
+      local height = math.min(math.max(n_matches, 1), 5)
+      MiniPick.set_picker_opts({ window = { config = { height = height } } })
+    end
+    vim.api.nvim_create_autocmd('User', { pattern = 'MiniPickMatch', callback = adjust_height })
+  ]])
+
+  child.lua_notify('MiniPick.start({ source = { items = { "ab", "bb" } }, window = { config = { height = 7 } } })')
+
+  -- Should adjust immediately and ignore picker's window config
+  child.expect_screenshot()
+
+  type_keys('a')
+  child.expect_screenshot()
+
+  type_keys('x')
+  child.expect_screenshot()
+
+  type_keys('<C-u>')
+  child.expect_screenshot()
 end
 
 T['Matching']['allows returning wider than input set of match indexes'] = function()
@@ -5165,10 +5789,14 @@ T['Choose'] = new_set()
 
 T['Choose']['works for split/tab variations'] = function()
   local validate = function(key)
+    local global_cwd = child.fn.getcwd(-1, -1)
+    child.lua('_G.source_cwd = ' .. vim.inspect(test_dir_absolute))
+
     local win_id_init = child.api.nvim_get_current_win()
     child.lua_notify([[MiniPick.start({
       source = {
         items = { 'a' },
+        cwd = _G.source_cwd,
         choose = function() _G.target_window = MiniPick.get_picker_state().windows.target end,
       },
     })]])
@@ -5178,6 +5806,13 @@ T['Choose']['works for split/tab variations'] = function()
     child.expect_screenshot()
     -- Should modify target window
     eq(child.lua_get('_G.target_window') ~= win_id_init, true)
+
+    -- Should not modify any current directory
+    eq(child.fn.getcwd(-1, -1), global_cwd)
+    eq(child.fn.getcwd(0), global_cwd)
+
+    -- Should not create extra buffers due to splitting
+    eq(#child.api.nvim_list_bufs(), 1)
 
     -- Cleanup
     child.lua('_G.target_window = nil')
@@ -5247,6 +5882,19 @@ T['Choose']['uses output as "should continue"'] = function()
   validate('<C-t>')
 
   validate({ '<C-x>', '<M-CR>' })
+end
+
+T['Choose']['handles error in choose function'] = function()
+  child.lua_notify([[MiniPick.start({ source = { items = { 'a' }, choose = function() error('Oops!') end } })]])
+  expect.error(function() type_keys('<CR>') end, 'Error during choose:.*Oops!')
+  eq(is_picker_active(), false)
+  eq(#child.api.nvim_list_wins(), 1)
+
+  child.lua_notify([[MiniPick.start({ source = { items = { 'a' }, choose_marked = function() error('Oops!') end } })]])
+  type_keys('<C-x>')
+  expect.error(function() type_keys('<M-CR>') end, 'Error during choose marked:.*Oops!')
+  eq(is_picker_active(), false)
+  eq(#child.api.nvim_list_wins(), 1)
 end
 
 T['Mark'] = new_set()
@@ -5379,6 +6027,30 @@ T['Paste']['works'] = function()
 
   -- Should sanitize register content
   validate('a\nb\tc', { 'a', ' ', 'b', ' ', 'c' })
+end
+
+T['Paste']['supports special registers'] = function()
+  child.o.iskeyword = child.o.iskeyword .. ',-'
+  child.api.nvim_buf_set_lines(0, 0, -1, false, { 'aa bb!cc-dd ee', test_dir })
+  set_cursor(1, 7)
+
+  start_with_items({ 'a' })
+
+  local validate = function(register, ref_query)
+    type_keys('<C-r>', register)
+    eq(get_picker_query(), ref_query)
+    type_keys('<C-u>')
+  end
+
+  validate('<C-w>', vim.split('cc-dd', ''))
+  validate('<C-a>', vim.split('bb!cc-dd', ''))
+  validate('<C-l>', vim.split('aa bb!cc-dd ee', ''))
+
+  type_keys('<C-c>')
+
+  set_cursor(2, 0)
+  start_with_items({ 'a' })
+  validate('<C-f>', vim.split(test_dir, ''))
 end
 
 T['Paste']['pastes at caret'] = function()

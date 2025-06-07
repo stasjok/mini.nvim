@@ -84,6 +84,15 @@ local H = {}
 ---   require('mini.extra').setup({}) -- replace {} with your config table
 --- <
 MiniExtra.setup = function(config)
+  -- TODO: Remove after Neovim=0.8 support is dropped
+  if vim.fn.has('nvim-0.9') == 0 then
+    vim.notify(
+      '(mini.extra) Neovim<0.9 is soft deprecated (module works but not supported).'
+        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
+        .. ' Please update your Neovim version.'
+    )
+  end
+
   -- Export module
   _G.MiniExtra = MiniExtra
 
@@ -306,7 +315,8 @@ end
 --- - All have the same signature:
 ---     - <local_opts> - optional table with options local to picker.
 ---     - <opts> - optional table with options forwarded to |MiniPick.start()|.
---- - All of them are automatically registered in |MiniPick.registry|.
+--- - All of them are automatically registered in |MiniPick.registry| inside
+---   both |MiniExtra.setup()| or |MiniPick.setup()| (only one is enough).
 --- - All use default versions of |MiniPick-source.preview|, |MiniPick-source.choose|,
 ---   and |MiniPick-source.choose_marked| if not stated otherwise.
 ---   Shown text and |MiniPick-source.show| are targeted to the picked items.
@@ -372,6 +382,73 @@ MiniExtra.pickers.buf_lines = function(local_opts, opts)
   local match = function(stritems, inds, query) pick.default_match(stritems, inds, query, match_opts) end
   local default_source = { name = string.format('Buffer lines (%s)', scope), show = show, match = match }
   return H.pick_start(items, { source = default_source }, opts)
+end
+
+--- Color scheme picker
+---
+--- Pick and apply color scheme. Preview temporarily applies item's color scheme
+--- and shows how selected highlight groups look.
+--- Canceling reverts to color scheme before picker start:
+--- - With |MiniColors-colorscheme:apply()| if |mini.colors| was available.
+--- - With |:colorscheme| if |g:colors_name| was available.
+---
+---@param local_opts __extra_pickers_local_opts
+---   Possible fields:
+---   - <names> `(table)` - array of color scheme names to pick from.
+---     Default: all available color schemes.
+---   - <preview_hl_groups> `(table)` - array of highlight groups to show in preview
+---     window. Default: all defined highlight groups in alphabetical order.
+---
+---@param opts __extra_pickers_opts
+---
+---@return __extra_pickers_return
+MiniExtra.pickers.colorschemes = function(local_opts, opts)
+  local pick = H.validate_pick('colorschemes')
+  local_opts = local_opts or {}
+
+  -- Infer data to show
+  local all_cs = vim.fn.getcompletion('', 'color')
+  local items = local_opts.names or all_cs
+  if not H.islist(items) then H.error('`names` should be array of color scheme names') end
+  for _, item in ipairs(items) do
+    if not vim.tbl_contains(all_cs, item) then H.error(vim.inspect(item) .. ' is not a color scheme name') end
+  end
+
+  local hl_groups = local_opts.preview_hl_groups
+  if hl_groups ~= nil and not H.islist(hl_groups) then H.error('`preview_hl_groups` should be array') end
+
+  -- Compute original color scheme to restore
+  local bg_orig = vim.o.background
+  local has_minicolors, minicolors = pcall(require, 'mini.colors')
+  local cs_orig = has_minicolors and minicolors.get_colorscheme() or vim.g.colors_name
+  local restore = function()
+    vim.o.background = bg_orig
+    if cs_orig == nil then return end
+    if type(cs_orig) == 'string' then return vim.cmd('colorscheme ' .. cs_orig) end
+    cs_orig:apply()
+    -- Trigger to indicate actual color scheme application
+    vim.api.nvim_exec_autocmds('ColorScheme', {})
+  end
+
+  -- Define source
+  local choose = function(item) vim.cmd('colorscheme ' .. item) end
+  local choose_marked = function(items_to_mark) choose(items_to_mark[1] or '') end
+
+  local needs_restore = false
+  local preview = function(buf_id, item)
+    needs_restore = true
+    -- Ensure that previewed color scheme tries to use the initial background.
+    -- This can be not the case if previous preview forced new background.
+    vim.o.background = bg_orig
+    vim.cmd('colorscheme ' .. item)
+    H.preview_cs_hl_groups(buf_id, hl_groups)
+  end
+
+  local default_source = { name = 'Colorschemes', preview = preview, choose = choose, choose_marked = choose_marked }
+  local result = H.pick_start(items, { source = default_source }, opts)
+
+  if result == nil and needs_restore then restore() end
+  return result
 end
 
 --- Neovim commands picker
@@ -581,14 +658,18 @@ MiniExtra.pickers.git_branches = function(local_opts, opts)
   local repo_dir = H.git_get_repo_dir(path, path_type, 'git_branches')
 
   -- Define source
-  local show_history = function(buf_id, item)
+  local preview = function(buf_id, item)
     local branch = item:match('^%*?%s*(%S+)')
-    local cmd = { 'git', '-C', repo_dir, 'log', branch, '--format=format:%h %s' }
-    H.cli_show_output(buf_id, cmd)
+    H.cli_show_output(buf_id, { 'git', '-C', repo_dir, 'log', branch, '--format=format:%h %s' })
   end
-
-  local preview = show_history
-  local choose = H.make_show_in_target_win('git_branches', show_history)
+  local choose = function(item)
+    local win_target = (pick.get_picker_state().windows or {}).target
+    if win_target == nil or not H.is_valid_win(win_target) then return end
+    local buf_id = vim.api.nvim_create_buf(true, true)
+    H.set_buf_name(buf_id, item:match('^%*?%s*(%S+)'))
+    preview(buf_id, item)
+    vim.api.nvim_win_set_buf(win_target, buf_id)
+  end
 
   local command = { 'git', 'branch', '-v', '--no-color', '--list' }
   if scope == 'all' or scope == 'remotes' then table.insert(command, 3, '--' .. scope) end
@@ -637,12 +718,16 @@ MiniExtra.pickers.git_commits = function(local_opts, opts)
     vim.bo[buf_id].syntax = 'git'
     H.cli_show_output(buf_id, { 'git', '-C', repo_dir, '--no-pager', 'show', item:match('^(%S+)') })
   end
-  local choose_show = function(buf_id, item)
+  local choose = function(item)
+    local win_target = (pick.get_picker_state().windows or {}).target
+    if win_target == nil or not H.is_valid_win(win_target) then return end
+    local buf_id = vim.api.nvim_create_buf(true, true)
+    H.set_buf_name(buf_id, item:match('^(%S+)'))
     preview(buf_id, item)
     -- Set filetype on opened buffer to trigger appropriate `FileType` event
     vim.bo[buf_id].filetype = 'git'
+    vim.api.nvim_win_set_buf(win_target, buf_id)
   end
-  local choose = H.make_show_in_target_win('git_commits', choose_show)
 
   local command = { 'git', 'log', [[--format=format:%h %s]], '--', path }
 
@@ -878,12 +963,10 @@ MiniExtra.pickers.history = function(local_opts, opts)
   local items = {}
   local names = scope == 'all' and { 'cmd', 'search', 'expr', 'input', 'debug' } or { scope }
   for _, cur_name in ipairs(names) do
-    local cmd_output = vim.api.nvim_exec(':history ' .. cur_name, true)
-    local lines = vim.split(cmd_output, '\n')
     local id = type_ids[cur_name]
-    -- Output of `:history` is sorted from oldest to newest
-    for i = #lines, 2, -1 do
-      local hist_entry = lines[i]:match('^.-%-?%d+%s+(.*)$')
+    for i = 1, vim.fn.histnr(cur_name) do
+      local hist_entry = vim.fn.histget(cur_name, -i)
+      if hist_entry == '' then break end
       table.insert(items, string.format('%s %s', id, hist_entry))
     end
   end
@@ -895,7 +978,7 @@ MiniExtra.pickers.history = function(local_opts, opts)
     if not (type(item) == 'string' and vim.fn.mode() == 'n') then return end
     local id, entry = item:match('^(.) (.*)$')
     if id == ':' or id == '/' or id == '?' then
-      vim.schedule(function() vim.fn.feedkeys(id .. entry .. '\r', 'nx') end)
+      vim.schedule(function() vim.fn.feedkeys(id .. entry .. '\r', 'nxt') end)
     end
   end
 
@@ -1024,7 +1107,7 @@ MiniExtra.pickers.keymaps = function(local_opts, opts)
     local keys = vim.api.nvim_replace_termcodes(item.maparg.lhs, true, true, true)
     -- Restore Visual mode (should be active previously at least once)
     if item.maparg.mode == 'x' then keys = 'gv' .. keys end
-    vim.schedule(function() vim.fn.feedkeys(keys) end)
+    vim.schedule(function() vim.api.nvim_input(keys) end)
   end
 
   local default_opts = { source = { name = string.format('Keymaps (%s)', scope), preview = preview, choose = choose } }
@@ -1245,6 +1328,7 @@ MiniExtra.pickers.options = function(local_opts, opts)
     local has_value, value = pcall(function()
       return vim.api.nvim_win_call(target_win_id, function() return vim[value_source][item.info.name] end)
     end)
+    -- TODO: consider removing after Neovim<=0.10 compatibility is dropped
     if not has_value then value = '<Option is deprecated (will be removed in later Neovim versions)>' end
 
     local lines = { 'Value:', unpack(vim.split(vim.inspect(value), '\n')), '', 'Info:' }
@@ -1448,8 +1532,7 @@ MiniExtra.pickers.visit_paths = function(local_opts, opts)
 
   local name = string.format('Visit paths (%s)', is_for_cwd and 'cwd' or 'all')
   local default_source = { name = name, cwd = picker_cwd, match = match, show = show }
-  opts = vim.tbl_deep_extend('force', { source = default_source }, opts or {}, { source = { items = items } })
-  return pick.start(opts)
+  return H.pick_start(items, { source = default_source }, opts)
 end
 
 --- Visit labels from 'mini.visits' picker
@@ -1480,7 +1563,7 @@ end
 ---     preview and choose. Default: `nil` to use "robust frecency".
 ---@param opts __extra_pickers_opts
 ---
----@return Chosen path.
+---@return ... Chosen path.
 MiniExtra.pickers.visit_labels = function(local_opts, opts)
   local pick = H.validate_pick('visit_labels')
   local has_visits, visits = pcall(require, 'mini.visits')
@@ -1520,15 +1603,7 @@ MiniExtra.pickers.visit_labels = function(local_opts, opts)
 
   local name = string.format('Visit labels (%s)', is_for_cwd and 'cwd' or 'all')
   local default_source = { name = name, cwd = picker_cwd, preview = preview, choose = choose }
-  opts = vim.tbl_deep_extend('force', { source = default_source }, opts or {}, { source = { items = items } })
-  return pick.start(opts)
-end
-
--- Register in 'mini.pick'
-if type(_G.MiniPick) == 'table' then
-  for name, f in pairs(MiniExtra.pickers) do
-    _G.MiniPick.registry[name] = function(local_opts) return f(local_opts) end
-  end
+  return H.pick_start(items, { source = default_source }, opts)
 end
 
 -- Helper data ================================================================
@@ -1548,9 +1623,21 @@ H.is_windows = vim.loop.os_uname().sysname == 'Windows_NT'
 
 -- Helper functionality =======================================================
 -- Settings -------------------------------------------------------------------
-H.setup_config = function(config) end
+H.setup_config = function(config)
+  H.check_type('config', config, 'table', true)
+  return config
+end
 
-H.apply_config = function(config) MiniExtra.config = config end
+H.apply_config = function(config)
+  MiniExtra.config = config
+
+  -- Register pickers in 'mini.pick'
+  if type(_G.MiniPick) == 'table' then
+    for name, f in pairs(MiniExtra.pickers) do
+      _G.MiniPick.registry[name] = _G.MiniPick.registry[name] or function(local_opts) return f(local_opts) end
+    end
+  end
+end
 
 -- Mini.ai specifications -----------------------------------------------------
 H.ai_indent_spec = function(ai_type)
@@ -1629,14 +1716,7 @@ end
 
 H.pick_start = function(items, default_opts, opts)
   local pick = H.validate_pick()
-  local fallback = {
-    source = {
-      preview = pick.default_preview,
-      choose = pick.default_choose,
-      choose_marked = pick.default_choose_marked,
-    },
-  }
-  local opts_final = vim.tbl_deep_extend('force', fallback, default_opts, opts or {}, { source = { items = items } })
+  local opts_final = vim.tbl_deep_extend('force', default_opts, opts or {}, { source = { items = items } })
   return pick.start(opts_final)
 end
 
@@ -1687,17 +1767,6 @@ H.pick_get_config = function()
   return vim.tbl_deep_extend('force', (require('mini.pick') or {}).config or {}, vim.b.minipick_config or {})
 end
 
-H.make_show_in_target_win = function(fun_name, show_fun)
-  local pick = H.validate_pick(fun_name)
-  return function(item)
-    local win_target = (pick.get_picker_state().windows or {}).target
-    if win_target == nil or not H.is_valid_win(win_target) then return end
-    local buf_id = vim.api.nvim_create_buf(true, true)
-    show_fun(buf_id, item)
-    vim.api.nvim_win_set_buf(win_target, buf_id)
-  end
-end
-
 H.show_with_icons = function(buf_id, items, query)
   require('mini.pick').default_show(buf_id, items, query, { show_icons = true })
 end
@@ -1710,6 +1779,22 @@ H.choose_with_buflisted = function(item)
   local win_target = pick.get_picker_state().windows.target
   local buf_id = vim.api.nvim_win_get_buf(win_target)
   vim.bo[buf_id].buflisted = true
+end
+
+-- Colorscheme picker ----------------------------------------------------------
+H.preview_cs_hl_groups = function(buf_id, hl_groups)
+  local lines = hl_groups
+  if lines == nil then
+    lines = vim.tbl_keys(vim.api.nvim_get_hl(0, {}))
+    table.sort(lines)
+  end
+  vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, lines)
+
+  local ns_id = H.ns_id.pickers
+  vim.api.nvim_buf_clear_namespace(buf_id, ns_id, 0, -1)
+  for i, hl in ipairs(lines) do
+    pcall(vim.api.nvim_buf_set_extmark, buf_id, ns_id, i - 1, 0, { end_row = i, end_col = 0, hl_group = hl })
+  end
 end
 
 -- Diagnostic picker ----------------------------------------------------------
@@ -1863,11 +1948,12 @@ H.lsp_make_on_list = function(source, opts)
     return items
   end
 
+  local pick = H.validate_pick()
   local show_explicit = H.pick_get_config().source.show
   local show = function(buf_id, items_to_show, query)
     if show_explicit ~= nil then return show_explicit(buf_id, items_to_show, query) end
     if is_symbol then
-      H.validate_pick().default_show(buf_id, items_to_show, query)
+      pick.default_show(buf_id, items_to_show, query)
 
       -- Highlight whole lines with pre-computed symbol kind highlight groups
       H.pick_clear_namespace(buf_id, H.ns_id.pickers)
@@ -1880,6 +1966,14 @@ H.lsp_make_on_list = function(source, opts)
     return H.show_with_icons(buf_id, items_to_show, query)
   end
 
+  local choose = function(item)
+    pick.default_choose(item)
+    -- Ensure relative path in `:buffers` output with hacky workaround.
+    -- `default_choose` ensures it with `bufadd(fnamemodify(path, ':.'))`, but
+    -- somehow that doesn't work inside `on_list` of `vim.lsp.buf` methods.
+    vim.fn.chdir(vim.fn.getcwd())
+  end
+
   return function(data)
     local items = data.items
     for _, item in ipairs(data.items) do
@@ -1887,7 +1981,8 @@ H.lsp_make_on_list = function(source, opts)
     end
     items = process(items)
 
-    return H.pick_start(items, { source = { name = string.format('LSP (%s)', source), show = show } }, opts)
+    local source_opts = { name = string.format('LSP (%s)', source), show = show, choose = choose }
+    return H.pick_start(items, { source = source_opts }, opts)
   end
 end
 
@@ -1939,6 +2034,7 @@ H.list_get = {
     local cur_buf = vim.api.nvim_get_current_buf()
     local res = vim.fn.getchangelist(cur_buf)[1]
     for _, x in ipairs(res) do
+      x.col = x.col + 1
       x.bufnr = cur_buf
     end
     return res
@@ -2056,7 +2152,14 @@ end
 H.set_buflines = function(buf_id, lines) vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, lines) end
 
 -- Utilities ------------------------------------------------------------------
-H.error = function(msg) error(string.format('(mini.extra) %s', msg), 0) end
+H.error = function(msg) error('(mini.extra) ' .. msg, 0) end
+
+H.check_type = function(name, val, ref, allow_nil)
+  if type(val) == ref or (ref == 'callable' and vim.is_callable(val)) or (allow_nil and val == nil) then return end
+  H.error(string.format('`%s` should be %s, not %s', name, ref, type(val)))
+end
+
+H.set_buf_name = function(buf_id, name) vim.api.nvim_buf_set_name(buf_id, 'miniextra://' .. buf_id .. '/' .. name) end
 
 H.is_valid_win = function(win_id) return type(win_id) == 'number' and vim.api.nvim_win_is_valid(win_id) end
 

@@ -11,6 +11,14 @@ local unload_module = function() child.mini_unload('notify') end
 local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
+-- Tweak `expect_screenshot()` to test only on Neovim>=0.9 (as 0.8 does
+-- not have titles)
+child.expect_screenshot_orig = child.expect_screenshot
+child.expect_screenshot = function(opts)
+  if child.fn.has('nvim-0.9') == 0 then return end
+  child.expect_screenshot_orig(opts)
+end
+
 -- Common test helpers
 local get_notif_win_id = function(tabpage_id)
   tabpage_id = tabpage_id or child.api.nvim_get_current_tabpage()
@@ -69,7 +77,6 @@ local T = new_set({
       -- Make more comfortable screenshots
       child.set_size(7, 45)
       child.o.laststatus = 0
-      child.o.ruler = false
     end,
     post_once = child.stop,
   },
@@ -92,6 +99,7 @@ T['setup()']['creates side effects'] = function()
   local has_highlight = function(group, value) expect.match(child.cmd_capture('hi ' .. group), value) end
 
   has_highlight('MiniNotifyBorder', 'links to FloatBorder')
+  has_highlight('MiniNotifyLspProgress', 'links to MiniNotifyNormal')
   has_highlight('MiniNotifyNormal', 'links to NormalFloat')
   has_highlight('MiniNotifyTitle', 'links to FloatTitle')
 end
@@ -146,6 +154,21 @@ T['setup()']['ensures colors'] = function()
   expect.match(child.cmd_capture('hi MiniNotifyBorder'), 'links to FloatBorder')
 end
 
+T['setup()']['clears the history'] = function()
+  child.lua([[
+    local id_1 = MiniNotify.add("Hello")
+    local id_2 = MiniNotify.add("Hello")
+    MiniNotify.remove(id_1)
+  ]])
+  eq(#child.lua_get('MiniNotify.get_all()'), 2)
+  eq(is_notif_window_shown(), true)
+
+  child.lua('MiniNotify.setup(MiniNotify.config)')
+  -- Should also remove possibly visible notification window
+  eq(#child.lua_get('MiniNotify.get_all()'), 0)
+  eq(is_notif_window_shown(), false)
+end
+
 T['make_notify()'] = new_set()
 
 local notify = forward_lua('vim.notify')
@@ -186,17 +209,17 @@ T['make_notify()']['works'] = function()
 
   -- Should add all notifications to history with proper `level` and `hl_group`
   local history = vim.tbl_map(
-    function(notif) return { msg = notif.msg, level = notif.level, hl_group = notif.hl_group } end,
+    function(notif) return { msg = notif.msg, level = notif.level, hl_group = notif.hl_group, data = notif.data } end,
     get_all()
   )
   --stylua: ignore
   eq(history, {
-    { msg = 'error', level = 'ERROR', hl_group = 'DiagnosticError' },
-    { msg = 'warn',  level = 'WARN',  hl_group = 'DiagnosticWarn' },
-    { msg = 'info',  level = 'INFO',  hl_group = 'DiagnosticInfo' },
-    { msg = 'debug', level = 'DEBUG', hl_group = 'DiagnosticHint' },
-    { msg = 'trace', level = 'TRACE', hl_group = 'DiagnosticOk' },
-    { msg = 'off',   level = 'OFF',   hl_group = 'MiniNotifyNormal' },
+    { msg = 'error', level = 'ERROR', hl_group = 'DiagnosticError',  data = { source = 'vim.notify' } },
+    { msg = 'warn',  level = 'WARN',  hl_group = 'DiagnosticWarn',   data = { source = 'vim.notify' } },
+    { msg = 'info',  level = 'INFO',  hl_group = 'DiagnosticInfo',   data = { source = 'vim.notify' } },
+    { msg = 'debug', level = 'DEBUG', hl_group = 'DiagnosticHint',   data = { source = 'vim.notify' } },
+    { msg = 'trace', level = 'TRACE', hl_group = 'DiagnosticOk',     data = { source = 'vim.notify' } },
+    { msg = 'off',   level = 'OFF',   hl_group = 'MiniNotifyNormal', data = { source = 'vim.notify' } },
   })
 
   -- Should make notifications disappear after configured duration
@@ -258,7 +281,7 @@ T['make_notify()']['validates arguments'] = function()
   validate_level('OFF')
 end
 
-T['make_notify()']['has output working in `libuv` callbacks'] = function()
+T['make_notify()']['has output working in fast event'] = function()
   child.lua('_G.dur = ' .. small_time)
   child.lua([[
     vim.notify = MiniNotify.make_notify()
@@ -270,9 +293,23 @@ T['make_notify()']['has output working in `libuv` callbacks'] = function()
   eq(get_all()[1].msg, 'Hello')
 end
 
+T['make_notify()']['has output working when completion is active'] = function()
+  child.lua([[
+    vim.notify = MiniNotify.make_notify()
+    _G.completefunc_notify = function() vim.notify("Hello", vim.log.levels.INFO) end
+  ]])
+  child.o.completefunc = 'v:lua.completefunc_notify'
+  child.type_keys('i', '<C-x><C-u>')
+  sleep(small_time + small_time)
+  eq(child.cmd_capture('messages'), '')
+  eq(get_all()[1].msg, 'Hello')
+end
+
 T['make_notify()']['has output validating arguments'] = function()
   child.lua('vim.notify = MiniNotify.make_notify()')
-  expect.error(function() child.lua([[vim.notify('Hello', 'ERROR')]]) end, 'valid values.*vim%.log%.levels')
+  child.lua([[vim.notify('Hello', 'ERROR')]])
+  sleep(small_time)
+  expect.match(child.cmd_capture('messages'), 'valid values.*vim%.log%.levels')
 end
 
 T['make_notify()']['allows non-positive `duration`'] = function()
@@ -302,13 +339,14 @@ T['add()']['works'] = function()
   local notif = get(id)
   local notif_fields = vim.tbl_keys(notif)
   table.sort(notif_fields)
-  eq(notif_fields, { 'hl_group', 'level', 'msg', 'ts_add', 'ts_update' })
+  eq(notif_fields, { 'data', 'hl_group', 'level', 'msg', 'ts_add', 'ts_update' })
 
   eq(notif.msg, 'Hello')
 
   -- Non-message arguments should have defaults
   eq(notif.level, 'INFO')
   eq(notif.hl_group, 'MiniNotifyNormal')
+  eq(notif.data, {})
 
   -- Timestamp fields should use `vim.loop.gettimeofday()`
   eq(notif.ts_add, ref_seconds + ref_microseconds)
@@ -324,9 +362,10 @@ end
 
 T['add()']['respects arguments'] = function()
   local validate = function(level)
-    local id = add('Hello', level, 'Comment')
+    local id = add('Hello', level, 'Comment', { a = 1, b = { bb = 2 } })
     eq(get(id).level, level)
     eq(get(id).hl_group, 'Comment')
+    eq(get(id).data, { a = 1, b = { bb = 2 } })
   end
 
   validate('ERROR')
@@ -350,12 +389,17 @@ local update = forward_lua('MiniNotify.update')
 
 T['update()']['works'] = function()
   mock_gettimeofday()
+  child.lua([[
+    MiniNotify.config.content.format = function(notif)
+      return (notif.data.a > 10 and 'NEW' or 'OLD') .. ' ' .. notif.msg
+    end
+  ]])
 
-  local id = add('Hello', 'ERROR', 'Comment')
+  local id = add('Hello', 'ERROR', 'Comment', { a = 1, b = true, c = 'c' })
   child.expect_screenshot()
   local init_notif = get(id)
 
-  update(id, { msg = 'World', level = 'WARN', hl_group = 'String' })
+  update(id, { msg = 'World', level = 'WARN', hl_group = 'String', data = { a = 11 } })
 
   -- Should show updated notification in a floating window
   child.expect_screenshot()
@@ -367,6 +411,9 @@ T['update()']['works'] = function()
   eq(notif.level, 'WARN')
   eq(notif.hl_group, 'String')
 
+  -- Should assign non-nil `data` as is, without `vim.tbl_deep_extend`
+  eq(notif.data, { a = 11 })
+
   -- Add time should be untouched
   eq(notif.ts_add, init_notif.ts_add)
 
@@ -374,19 +421,21 @@ T['update()']['works'] = function()
   eq(init_notif.ts_update < notif.ts_update, true)
 end
 
-T['update()']['allows partial new data'] = function()
-  local id = add('Hello', 'ERROR', 'Comment')
-  update(id, { msg = 'World' })
+T['update()']['allows partial new content'] = function()
+  local id = add('Hello', 'ERROR', 'Comment', { a = 1, b = true })
+  update(id, { msg = 'World', data = { b = false } })
   local notif = get(id)
   eq(notif.msg, 'World')
   eq(notif.level, 'ERROR')
   eq(notif.hl_group, 'Comment')
+  eq(notif.data, { b = false })
 
   -- Empty table
   update(id, {})
   eq(notif.msg, 'World')
   eq(notif.level, 'ERROR')
   eq(notif.hl_group, 'Comment')
+  eq(notif.data, { b = false })
 end
 
 T['update()']['can update only active notification'] = function()
@@ -401,11 +450,12 @@ end
 T['update()']['validates arguments'] = function()
   local id = add('Hello')
   expect.error(function() update('a', { msg = 'World' }) end, '`id`.*identifier')
-  expect.error(function() update(id, 1) end, '`new_data`.*table')
+  expect.error(function() update(id, 1) end, '`new`.*table')
   expect.error(function() update(id, { msg = 1 }) end, '`msg`.*string')
   expect.error(function() update(id, { level = 1 }) end, '`level`.*key of `vim%.log%.levels`')
   expect.error(function() update(id, { level = 'Error' }) end, '`level`.*key of `vim%.log%.levels`')
   expect.error(function() update(id, { hl_group = 1 }) end, '`hl_group`.*string')
+  expect.error(function() update(id, { data = 1 }) end, '`data`.*table')
 end
 
 T['remove()'] = new_set()
@@ -519,6 +569,17 @@ T['refresh()']['handles manual buffer/window delete'] = function()
   eq(is_notif_window_shown(), true)
 end
 
+T['refresh()']['can be used inside fast event'] = function()
+  add('Hello')
+  child.lua('_G.dur = ' .. small_time)
+  child.lua([[
+    local timer = vim.loop.new_timer()
+    timer:start(_G.dur, 0, function() MiniNotify.refresh() end)
+  ]])
+  sleep(small_time + small_time)
+  eq(child.cmd_capture('messages'), '')
+end
+
 T['refresh()']['respects `vim.{g,b}.mininotify_disable`'] = new_set({ parametrize = { { 'g' }, { 'b' } } }, {
   test = function(var_type)
     mock_gettimeofday()
@@ -586,7 +647,8 @@ T['show_history()']['works'] = function()
   show_history()
   child.expect_screenshot()
 
-  -- Should set proper filetype
+  -- Should set proper buffer name and filetype
+  eq(child.api.nvim_buf_get_name(0), 'mininotify://' .. child.api.nvim_get_current_buf() .. '/history')
   eq(child.bo.filetype, 'mininotify-history')
 end
 
@@ -739,10 +801,13 @@ T['Window']['shows start of buffer if it does not fit whole'] = function()
   child.expect_screenshot()
 end
 
-T['Window']['uses proper buffer filetype'] = function()
-  child.cmd('au FileType mininotify lua _G.been_here = true')
+T['Window']['uses proper buffer filetype and name'] = function()
+  child.lua([[
+    local f = function(args) _G.is_correct = vim.api.nvim_buf_get_name(args.buf) == ('mininotify://') .. args.buf .. '/content' end
+    vim.api.nvim_create_autocmd('FileType', { pattern = 'mininotify', callback = f })
+  ]])
   add('Hello')
-  eq(child.lua_get('_G.been_here'), true)
+  eq(child.lua_get('_G.is_correct'), true)
 end
 
 T['Window']['respects `content.format`'] = function()
@@ -772,15 +837,24 @@ T['Window']['respects `window.config`'] = function()
   -- As callable
   child.lua([[MiniNotify.config.window.config = function(buf_id)
     _G.buffer_filetype = vim.bo[buf_id].filetype
-    return { border = 'double', width = 25, height = 5 }
+    return { border = 'double', width = 25, height = 5, title = 'Custom title to check truncation' }
   end]])
   refresh()
-  child.expect_screenshot()
+  -- NOTE: Neovim<=0.9 has issues with displaying title in this case
+  if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
+end
 
-  -- Allows title
-  if child.fn.has('nvim-0.9') == 0 then return end
-  child.lua([[MiniNotify.config.window.config = { border = 'single', title = 'Notif' }]])
-  refresh()
+T['Window']["respects 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+
+  child.o.winborder = 'rounded'
+  add('Hello', 'ERROR', 'Comment')
+  child.expect_screenshot()
+  clear()
+
+  -- Should prefer explicitly configured value over 'winborder'
+  child.lua([[MiniNotify.config.window.config.border = 'double']])
+  add('Hello', 'ERROR', 'Comment')
   child.expect_screenshot()
 end
 
@@ -818,7 +892,6 @@ T['Window']['respects `window.winblend`'] = function()
 end
 
 T['Window']['respects tabline/statusline/cmdline'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for 0.10.') end
   child.set_size(7, 20)
   child.lua('MiniNotify.config.content.format = function(notif) return notif.msg end')
   for i = 1, 7 do
@@ -826,23 +899,26 @@ T['Window']['respects tabline/statusline/cmdline'] = function()
   end
 
   -- Validate tabline/statusline
-  local validate = function()
+  local validate = function(screenshot_opts)
     refresh()
-    child.expect_screenshot()
+    child.expect_screenshot(screenshot_opts)
   end
 
   local validate_ui_lines = function()
+    local ignore_tabline = child.fn.has('nvim-0.11') == 0 and 1 or nil
+    local ignore_ruler = child.fn.has('nvim-0.12') == 0 and 7 or nil
+
     child.o.showtabline, child.o.laststatus = 2, 2
-    validate()
+    validate({ ignore_text = { ignore_tabline, ignore_ruler }, ignore_attr = { ignore_tabline } })
 
     child.o.showtabline, child.o.laststatus = 2, 0
-    validate()
+    validate({ ignore_text = { ignore_tabline, ignore_ruler }, ignore_attr = { ignore_tabline } })
 
     child.o.showtabline, child.o.laststatus = 0, 2
-    validate()
+    validate({ ignore_text = { ignore_ruler } })
 
     child.o.showtabline, child.o.laststatus = 0, 0
-    validate()
+    validate({ ignore_text = { ignore_ruler } })
   end
 
   -- Both with and without border
@@ -853,7 +929,8 @@ T['Window']['respects tabline/statusline/cmdline'] = function()
   -- Command line
   child.o.showtabline, child.o.laststatus = 0, 0
   child.o.cmdheight = 3
-  validate()
+  local ignore_cmdline = child.fn.has('nvim-0.11') == 1 and {} or { ignore_text = { 5 }, ignore_attr = { 5, 6, 7 } }
+  validate(ignore_cmdline)
 
   child.o.cmdheight = 0
   validate()
@@ -934,28 +1011,8 @@ T['LSP progress'] = new_set({
       mock_gettimeofday()
       child.lua('MiniNotify.config.window.config = { width = 45, height = 1 }')
 
-      -- Mock LSP
-      child.lua([[
-        -- Use source table for better mock (to be compatible with Neovim<=0.9)
-        _G.clients = {}
-
-        vim.lsp.get_client_by_id = function(id)
-          if _G.clients[id] ~= nil then return _G.clients[id] end
-
-          local res = {
-            name = 'mock-lsp',
-
-            -- Mock methods for testing relevancy of `LspProgress` event
-            progress = { pending = {}, push = function() end },
-
-            -- Mock methods to be compatible with Neovim<=0.9
-            messages = { progress = {} },
-          }
-          if id == 2 then res.name = nil end
-
-          _G.clients[id] = res
-          return res
-        end]])
+      -- Mock LSP just to have its client id
+      child.cmd('luafile tests/mock-lsp/fruits.lua')
     end,
   },
 })
@@ -968,7 +1025,7 @@ local call_handler = function(result, ctx)
 end
 
 T['LSP progress']['works'] = function()
-  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = 1 }
+  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = child.lua_get('_G.fruits_lsp_client_id') }
 
   local result = { token = 'test', value = { kind = 'begin', title = 'Testing', message = '0/1', percentage = 0 } }
   call_handler(result, ctx)
@@ -980,7 +1037,6 @@ T['LSP progress']['works'] = function()
 
   result.value.kind, result.value.message, result.value.percentage = 'end', 'done', nil
   call_handler(result, ctx)
-  -- Should show the last 'report' message as it is usually more informative
   child.expect_screenshot()
 
   -- Should wait some time and then hide notifications
@@ -990,12 +1046,17 @@ T['LSP progress']['works'] = function()
   child.expect_screenshot()
 
   -- Should update single notification (and not remove/add new ones)
-  eq(#get_all(), 1)
+  local history = get_all()
+  eq(#history, 1)
+  -- - Should use correct content based on latest LSP response
+  eq(history[1].level, 'INFO')
+  eq(history[1].hl_group, 'MiniNotifyLspProgress')
+  eq(history[1].data, { source = 'lsp_progress', client_name = 'fruits-lsp', response = result, context = ctx })
 end
 
 T['LSP progress']['handles not present data'] = function()
-  -- Absent client name
-  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = 2 }
+  -- NOTE: client's name is always present
+  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = child.lua_get('_G.fruits_lsp_client_id') }
 
   -- All data which is allowed to be absent (as per LSP spec) is absent
   local result = { token = 'test', value = { kind = 'begin', title = 'Testing' } }
@@ -1016,7 +1077,7 @@ T['LSP progress']['handles sent error'] = function()
   child.lua([[vim.lsp.handlers['$/progress'](
     { code = 1, message = 'Error' },
     {},
-    {bufnr = vim.api.nvim_get_current_buf(), client_id = 1},
+    {bufnr = vim.api.nvim_get_current_buf(), client_id = _G.fruits_lsp_client_id},
     {}
   )]])
   eq(
@@ -1026,7 +1087,7 @@ T['LSP progress']['handles sent error'] = function()
 end
 
 T['LSP progress']['respects `lsp_progress.enable`'] = function()
-  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = 1 }
+  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = child.lua_get('_G.fruits_lsp_client_id') }
   local result = { token = 'test', value = { kind = 'begin', title = 'Testing', message = '0/1', percentage = 0 } }
 
   child.lua('MiniNotify.config.lsp_progress.enable = false')
@@ -1038,8 +1099,17 @@ T['LSP progress']['respects `lsp_progress.enable`'] = function()
   eq(is_notif_window_shown(), true)
 end
 
+T['LSP progress']['respects `lsp_progress.level`'] = function()
+  child.lua('MiniNotify.config.lsp_progress.level = "ERROR"')
+  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = child.lua_get('_G.fruits_lsp_client_id') }
+  local result = { token = 'test', value = { kind = 'begin', title = 'Testing', message = '0/1', percentage = 0 } }
+
+  call_handler(result, ctx)
+  eq(get_all()[1].level, 'ERROR')
+end
+
 T['LSP progress']['respects `lsp_progress.duration_last`'] = function()
-  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = 1 }
+  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = child.lua_get('_G.fruits_lsp_client_id') }
   local result = { token = 'test', value = { kind = 'begin', title = 'Testing', message = '0/1', percentage = 0 } }
   call_handler(result, ctx)
 
@@ -1063,7 +1133,7 @@ T['LSP progress']['reuses previous LSP handler'] = function()
   if child.fn.has('nvim-0.10') == 0 then return end
   child.cmd('au LspProgress * lua _G.n_been_here = (_G.n_been_here or 0) + 1')
 
-  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = 1 }
+  local ctx = { bufnr = vim.api.nvim_get_current_buf(), client_id = child.lua_get('_G.fruits_lsp_client_id') }
   local result = { token = 'test', value = { kind = 'begin', title = 'Testing' } }
   call_handler(result, ctx)
 

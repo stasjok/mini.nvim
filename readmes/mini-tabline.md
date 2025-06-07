@@ -31,7 +31,8 @@ https://user-images.githubusercontent.com/24854248/173045373-f5bdea82-fe3e-4488-
 - Buffer names are made unique by extending paths to files or appending unique identifier to buffers without name.
 - Current buffer is displayed "optimally centered" (in center of screen while maximizing the total number of buffers shown) when there are many buffers open.
 - 'Buffer tabs' are clickable if Neovim allows it.
-- Allow showing extra information section in case of multiple Neovim tabpages.
+- Extra information section in case of multiple Neovim tabpages.
+- Truncation symbols which show if there are tabs to the left and/or right. Exact characters are taken from 'listchars' option (`precedes` and `extends` fields) and are shown only if 'list' option is enabled.
 
 ## Dependencies
 
@@ -150,10 +151,6 @@ Here are code snippets for some common installation methods (use only one):
   -- Function which formats the tab label
   -- By default surrounds with space and possibly prepends with icon
   format = nil,
-
-  -- Whether to set Vim's settings for tabline (make it always shown and
-  -- allow hidden buffers)
-  set_vim_settings = true,
 
   -- Where to show tabpage section in case of multiple vim tabpages.
   -- One of 'left', 'right', 'none'.

@@ -165,14 +165,15 @@ T['open()']['works'] = function()
 
   child.lua('MiniStarter.open()')
 
-  expect.no_equality(child.api.nvim_get_current_buf(), init_buf_id)
-  eq(child.api.nvim_buf_get_name(0), child.fn.getcwd() .. package.config:sub(1, 1) .. 'Starter')
+  local buf_cur = child.api.nvim_get_current_buf()
+  expect.no_equality(buf_cur, init_buf_id)
+  eq(child.api.nvim_buf_get_name(0), 'ministarter://' .. buf_cur .. '/welcome')
   validate_starter_shown()
 
   expect.match(table.concat(get_lines(), '\n'), 'Builtin actions')
 end
 
-T['open()']['sets buffer options'] = function()
+T['open()']['sets local options'] = function()
   -- Cache initial data for future verification
   child.o.showtabline = 2
   local init_laststatus = child.o.laststatus
@@ -180,14 +181,15 @@ T['open()']['sets buffer options'] = function()
   -- Open Starter buffer
   child.lua('MiniStarter.open()')
 
-  -- Should set essential buffer options (not all actually set are tested)
+  -- Should set essential local options (not all actually set are tested)
   eq(child.bo.bufhidden, 'wipe')
   eq(child.bo.buflisted, false)
   eq(child.bo.buftype, 'nofile')
+  eq(child.wo.colorcolumn, '')
   eq(child.wo.foldlevel, 999)
   eq(child.bo.modifiable, false)
-  eq(child.wo.colorcolumn, '')
   eq(child.wo.signcolumn, 'no')
+  if child.fn.has('nvim-0.9') == 1 then eq(child.wo.statuscolumn, '') end
   eq(child.wo.wrap, false)
 
   -- Should hide tabline but not touch statusline
@@ -270,6 +272,7 @@ T['open()']['respects `buf_id` argument'] = function()
   local cur_buf_id = child.api.nvim_get_current_buf()
   child.lua(('MiniStarter.open(%s)'):format(cur_buf_id))
   eq(child.api.nvim_get_current_buf(), cur_buf_id)
+  eq(child.api.nvim_buf_get_name(0), 'ministarter://' .. cur_buf_id .. '/welcome')
 end
 
 T['open()']['issues an autocommand after finished opening'] = function()
@@ -288,17 +291,11 @@ end
 
 T['open()']['creates unique buffer names'] = function()
   child.lua('MiniStarter.open()')
-  eq(vim.fn.fnamemodify(child.api.nvim_buf_get_name(0), ':t'), 'Starter')
+  eq(child.api.nvim_buf_get_name(0), 'ministarter://' .. child.api.nvim_get_current_buf() .. '/welcome')
 
   child.lua('MiniStarter.close()')
   child.lua('MiniStarter.open()')
-  eq(vim.fn.fnamemodify(child.api.nvim_buf_get_name(0), ':t'), 'Starter_2')
-
-  -- Should not duplicate existing buffer name
-  local buf_id = child.api.nvim_create_buf(true, false)
-  child.api.nvim_buf_set_name(buf_id, child.fn.getcwd() .. '/Starter_3')
-  child.lua('MiniStarter.open()')
-  eq(child.api.nvim_buf_get_name(0), 'ministarter://3')
+  eq(child.api.nvim_buf_get_name(0), 'ministarter://' .. child.api.nvim_get_current_buf() .. '/welcome')
 end
 
 T['open()']['respects `vim.{g,b}.ministarter_disable`'] = new_set({
@@ -724,13 +721,13 @@ T['gen_hook'] = new_set({
 T['gen_hook']['adding_bullet()'] = new_set()
 
 T['gen_hook']['adding_bullet()']['works'] = function()
-  reload_from_strconfig({ content_hooks = '{ MiniStarter.gen_hook.adding_bullet() }' })
+  reload_from_strconfig({ content_hooks = '{ require("mini.starter").gen_hook.adding_bullet() }' })
   child.lua('MiniStarter.open()')
   child.expect_screenshot()
 end
 
 T['gen_hook']['adding_bullet()']['respects `bullet` argument'] = function()
-  reload_from_strconfig({ content_hooks = [[{ MiniStarter.gen_hook.adding_bullet('> ') }]] })
+  reload_from_strconfig({ content_hooks = '{ require("mini.starter").gen_hook.adding_bullet("> ") }' })
   child.lua('MiniStarter.open()')
   child.expect_screenshot()
 end
@@ -741,7 +738,7 @@ T['gen_hook']['adding_bullet() respects `place_cursor` argument'] = function()
       header = [['']],
       footer = [['']],
       items = ('{ %s }'):format(mock_itemstring('bbb', '')),
-      content_hooks = ([[{ MiniStarter.gen_hook.adding_bullet('aaa', %s) }]]):format(place_cursor),
+      content_hooks = ('{ require("mini.starter").gen_hook.adding_bullet("aaa", %s) }'):format(place_cursor),
     })
   end
 
@@ -757,7 +754,7 @@ end
 T['gen_hook']['aligning()'] = new_set()
 
 T['gen_hook']['aligning()']['works'] = function()
-  reload_from_strconfig({ content_hooks = [[{ MiniStarter.gen_hook.aligning() }]] })
+  reload_from_strconfig({ content_hooks = '{ require("mini.starter").gen_hook.aligning() }' })
   child.lua('MiniStarter.open()')
   -- By default shouldn't do any aligning
   child.expect_screenshot()
@@ -781,7 +778,7 @@ T['gen_hook']['aligning()']['respects arguments'] = new_set({
 }, {
   test = function(args)
     reload_from_strconfig({
-      content_hooks = ('{ MiniStarter.gen_hook.aligning(%s) }'):format(args),
+      content_hooks = ('{ require("mini.starter").gen_hook.aligning(%s) }'):format(args),
       header = [['']],
       footer = [['']],
       items = ('{ %s, %s }'):format(mock_itemstring('aaa', 'AAA'), mock_itemstring('bbb', 'AAA')),
@@ -792,14 +789,12 @@ T['gen_hook']['aligning()']['respects arguments'] = new_set({
 })
 
 T['gen_hook']['aligning()']['handles small windows'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10.') end
-
   child.set_size(15, 40)
   child.cmd('vsplit | split')
   child.api.nvim_win_set_width(0, 2)
   child.api.nvim_win_set_height(0, 2)
   reload_from_strconfig({
-    content_hooks = [[{ MiniStarter.gen_hook.aligning('right', 'bottom') }]],
+    content_hooks = '{ require("mini.starter").gen_hook.aligning("right", "bottom") }',
     header = [['']],
     footer = [['']],
     items = ('{ %s, %s }'):format(mock_itemstring('aaa', 'AAA'), mock_itemstring('bbb', 'AAA')),
@@ -810,11 +805,9 @@ T['gen_hook']['aligning()']['handles small windows'] = function()
 end
 
 T['gen_hook']['aligning()']['has output respecting `buf_id` argument'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10.') end
-
   child.set_size(15, 40)
   reload_from_strconfig({
-    content_hooks = [[{ MiniStarter.gen_hook.aligning('center', 'center') }]],
+    content_hooks = '{ require("mini.starter").gen_hook.aligning("center", "center") }',
     header = [['']],
     footer = [['']],
     items = ('{ %s, %s }'):format(mock_itemstring('aaa', 'AAA'), mock_itemstring('bbb', 'AAA')),
@@ -842,7 +835,7 @@ local reload_indexing = function(args)
     header = [['']],
     footer = [['']],
     items = '{ ' .. table.concat(itemstrings, ', ') .. '}',
-    content_hooks = ('{ MiniStarter.gen_hook.indexing(%s) }'):format(args),
+    content_hooks = ('{ require("mini.starter").gen_hook.indexing(%s) }'):format(args),
   })
 end
 
@@ -869,7 +862,7 @@ T['gen_hook']['indexing()']['respects arguments'] = new_set({
 T['gen_hook']['padding()'] = new_set()
 
 T['gen_hook']['padding()']['works'] = function()
-  reload_from_strconfig({ content_hooks = [[{ MiniStarter.gen_hook.padding() }]] })
+  reload_from_strconfig({ content_hooks = '{ require("mini.starter").gen_hook.padding() }' })
   child.lua('MiniStarter.open()')
   -- By default shouldn't do any aligning
   child.expect_screenshot()
@@ -879,7 +872,7 @@ T['gen_hook']['padding()']['respects arguments'] = new_set({
   parametrize = { { '2, 0' }, { '0, 2' }, { '2, 2' } },
 }, {
   test = function(args)
-    local command = string.format('{ MiniStarter.gen_hook.padding(%s) }', args)
+    local command = string.format('{ require("mini.starter").gen_hook.padding(%s) }', args)
     reload_from_strconfig({ content_hooks = command })
     child.lua('MiniStarter.open()')
     child.expect_screenshot()
@@ -915,19 +908,11 @@ end
 T['sections']['recent_files()'] = new_set()
 
 T['sections']['recent_files()']['correctly identifies files from current directory'] = function()
-  local dir, dir_similar = 'tests/dir-starter/aaa', 'tests/dir-starter/aaabbb'
+  local dir, dir_similar = 'tests/dir-starter/dir', 'tests/dir-starter/directory'
   local file = dir_similar .. '/file'
-  child.fn.mkdir(dir)
-  child.fn.mkdir(dir_similar)
-  MiniTest.finally(function()
-    vim.loop.fs_rmdir(dir)
-    vim.loop.fs_unlink(file)
-    vim.loop.fs_rmdir(dir_similar)
-  end)
 
   -- Make recent file with absolute path having current directory as substring
   -- but not inside current directory
-  child.fn.writefile({ '' }, file)
   child.v.oldfiles = { child.fn.fnamemodify(file, ':p') }
   child.cmd('cd ' .. dir)
 
@@ -938,20 +923,21 @@ T['sections']['recent_files()']['correctly identifies files from current directo
   child.expect_screenshot()
 end
 
-T['sections']['recent_files()']['respects files in subdirectories'] = function()
-  local dir = 'tests/dir-starter/aaa'
-  local dir_nested = dir .. '/bbb'
-  local file, file_nested = dir .. '/file1', dir_nested .. '/file2'
+T['sections']['recent_files()']['opens path in relative form'] = function()
+  local file = 'tests/dir-starter/dir/file1'
+  child.v.oldfiles = { child.fn.fnamemodify(file, ':p') }
+  child.lua('MiniStarter.open()')
+  local n_bufs = #child.api.nvim_list_bufs()
+  type_keys('<CR>')
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]tests/dir%-starter/dir/file1')
+  -- Should properly hide Starter buffer
+  eq(#child.api.nvim_list_bufs(), n_bufs)
+end
 
-  child.fn.mkdir(dir_nested, 'p')
-  child.fn.writefile({ '' }, file)
-  child.fn.writefile({ '' }, file_nested)
-  MiniTest.finally(function()
-    vim.loop.fs_unlink(file_nested)
-    vim.loop.fs_rmdir(dir_nested)
-    vim.loop.fs_unlink(file)
-    vim.loop.fs_rmdir(dir)
-  end)
+T['sections']['recent_files()']['respects files in subdirectories'] = function()
+  local dir = 'tests/dir-starter/dir'
+  local dir_nested = dir .. '/subdir'
+  local file, file_nested = dir .. '/file1', dir_nested .. '/file2'
 
   child.v.oldfiles = { child.fn.fnamemodify(file, ':p'), child.fn.fnamemodify(file_nested, ':p') }
   child.cmd('cd ' .. dir)
@@ -959,7 +945,7 @@ T['sections']['recent_files()']['respects files in subdirectories'] = function()
   -- Mock forward slash for more robust screenshot testing
   child.lua([[
     local fnamemodify_orig = vim.fn.fnamemodify
-    vim.fn.fnamemodify = function(...) return fnamemodify_orig(...):gsub('\\', '/') end
+    vim.fn.fnamemodify = function(...) return (fnamemodify_orig(...):gsub('\\', '/')) end
   ]])
 
   -- Set up to show files only in current directory
@@ -969,10 +955,16 @@ T['sections']['recent_files()']['respects files in subdirectories'] = function()
   child.expect_screenshot()
 end
 
+T['sections']['recent_files()']['respects `n`'] = function()
+  local dir = 'tests/dir-starter/dir'
+  local test_file1, test_file3 = dir .. '/file1', dir .. '/file3'
+
+  child.v.oldfiles = { child.fn.fnamemodify(test_file1, ':p'), child.fn.fnamemodify(test_file3, ':p') }
+  eq(child.lua_get('#MiniStarter.sections.recent_files(1, false)()'), 1)
+end
+
 T['sections']['recent_files()']['respects `show_path`'] = function()
-  local test_file = 'tests/dir-starter/aaa.txt'
-  child.fn.writefile({ '' }, test_file)
-  MiniTest.finally(function() vim.loop.fs_unlink(test_file) end)
+  local test_file = 'tests/dir-starter/dir/file1'
 
   child.v.oldfiles = { child.fn.fnamemodify(test_file, ':p') }
 
@@ -1345,7 +1337,7 @@ end
 T['Highlighting']['uses `MiniStarterItemBullet`'] = function()
   reload_from_strconfig({
     items = example_itemstring,
-    content_hooks = '{ MiniStarter.gen_hook.adding_bullet() }',
+    content_hooks = '{ require("mini.starter").gen_hook.adding_bullet() }',
     header = [['']],
     footer = [['']],
   })
@@ -1400,7 +1392,7 @@ T['Cursor positioning']['works with bullets'] = new_set({
   test = function(place_cursor, cursor_start, cursor_finish)
     reload_from_strconfig({
       items = example_itemstring,
-      content_hooks = ('{ MiniStarter.gen_hook.adding_bullet(nil, %s) }'):format(place_cursor),
+      content_hooks = ('{ require("mini.starter").gen_hook.adding_bullet(nil, %s) }'):format(place_cursor),
       header = [['']],
       footer = [['']],
     })
@@ -1442,7 +1434,7 @@ T['Multiple buffers']['are allowed'] = function()
   -- It should open new Starter buffer while keeping previous one
   child.cmd('tabe')
   validate_starter_shown()
-  eq(vim.fn.fnamemodify(child.api.nvim_buf_get_name(0), ':t'), 'Starter_2')
+  eq(child.api.nvim_buf_get_name(0), 'ministarter://' .. child.api.nvim_get_current_buf() .. '/welcome')
 
   eq(child.api.nvim_buf_is_valid(buf_id_1), true)
   eq(child.api.nvim_buf_get_option(buf_id_1, 'filetype'), 'ministarter')

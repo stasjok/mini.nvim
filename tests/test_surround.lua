@@ -27,9 +27,8 @@ local has_message_about_not_found = function(char, n_lines, search_method, n_tim
   search_method = search_method or 'cover'
   n_times = n_times or 1
   local msg = string.format(
-    [[(mini.surround) No surrounding '%s%s' found within %s lines and `config.search_method = '%s'`.]],
-    n_times > 1 and n_times or '',
-    char,
+    [[(mini.surround) No surrounding %s found within %s lines and `config.search_method = '%s'`.]],
+    vim.inspect((n_times > 1 and n_times or '') .. char),
     n_lines,
     search_method
   )
@@ -73,7 +72,7 @@ end
 
 local mock_treesitter_builtin = function() child.cmd('source tests/dir-surround/mock-lua-treesitter.lua') end
 
-local mock_treesitter_plugin = function() child.cmd('set rtp+=tests/dir-surround') end
+local mock_treesitter_plugin = function() child.cmd('noautocmd set rtp+=tests/dir-surround') end
 
 -- Time constants
 local default_highlight_duraion = 500
@@ -225,6 +224,9 @@ T['gen_spec']['input']['treesitter()']['works'] = function()
   mock_treesitter_builtin()
 
   local lines = get_lines()
+
+  -- Should prefer range from metadata instead of node itself. This is useful,
+  -- for example, with `#offset!` directive to create more precise captures.
   validate_find(lines, { 9, 0 }, { { 10, 12 }, { 11, 2 }, { 7, 6 }, { 8, 1 } }, type_keys, 'sf', 'F')
   validate_no_find(lines, { 13, 0 }, type_keys, 'sf', 'F')
 
@@ -263,7 +265,7 @@ T['gen_spec']['input']['treesitter()']['works with empty region'] = function()
   type_keys('sh', 'o')
   child.poke_eventloop()
   -- It highlights `local` differently from other places
-  if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
+  if child.fn.has('nvim-0.11') == 1 then child.expect_screenshot() end
 
   -- Edge case for empty region on end of last line
   set_lines(lines)
@@ -301,24 +303,23 @@ T['gen_spec']['input']['treesitter()']['respects `opts.use_nvim_treesitter`'] = 
     O = {
       input = MiniSurround.gen_spec.input.treesitter(
         { outer = '@plugin_other.outer', inner = '@plugin_other.inner' },
-        { use_nvim_treesitter = false }
+        { use_nvim_treesitter = true }
       )
     },
   }]])
   local lines = get_lines()
 
-  -- By default it should be `true` but fall back to builtin if no
-  -- 'nvim-treesitter' is found
+  -- By default it should be `false`
   validate_find(lines, { 9, 0 }, { { 10, 12 }, { 11, 2 }, { 7, 6 }, { 8, 1 } }, type_keys, 'sf', 'F')
   validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'o')
   validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'O')
 
   mock_treesitter_plugin()
+  -- Should prefer range from metadata instead of node itself. This is useful,
+  -- for example, with `#offset!` directive to create more precise captures.
   validate_find(lines, { 9, 0 }, { { 10, 12 }, { 11, 2 }, { 7, 6 }, { 8, 1 } }, type_keys, 'sf', 'F')
-  validate_find(lines, { 1, 0 }, { { 1, 5 }, { 1, 0 } }, type_keys, 'sf', 'o')
-
-  -- Should respect `false` value
-  validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'O')
+  validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'o')
+  validate_find(lines, { 1, 0 }, { { 1, 5 }, { 1, 0 } }, type_keys, 'sf', 'O')
 end
 
 T['gen_spec']['input']['treesitter()']['respects plugin options'] = function()
@@ -365,14 +366,23 @@ T['gen_spec']['input']['treesitter()']['validates builtin treesitter presence'] 
 
   expect.error(
     function() type_keys('sd', 'F', '<CR>') end,
-    vim.pesc([[(mini.surround) Can not get query for buffer 1 and language 'lua'.]])
+    vim.pesc([[(mini.surround) Can not get query for buffer 1 and language "lua".]])
   )
 
   -- Parser
   child.bo.filetype = 'aaa'
   expect.error(
     function() type_keys('sd', 'F', '<CR>') end,
-    vim.pesc([[(mini.surround) Can not get parser for buffer 1 and language 'aaa'.]])
+    vim.pesc([[(mini.surround) Can not get parser for buffer 1 and language "aaa".]])
+  )
+
+  -- - Should respect registered language for a filetype
+  child.lua([[
+    vim.treesitter.language.register('my_aaa', 'aaa')
+  ]])
+  expect.error(
+    function() type_keys('sd', 'F', '<CR>') end,
+    vim.pesc([[(mini.surround) Can not get parser for buffer 1 and language "my_aaa".]])
   )
 end
 
@@ -490,11 +500,6 @@ T['Add surrounding']['respects `config.respect_selection_type` in blockwise mode
   -- - As motion is end-exclusive, it registers end mark one column short.
   eq(get_lines(), { 'a(aa)aa', 'b(bb)bb' })
   eq(get_cursor(), { 1, 2 })
-end
-
-T['Add surrounding']['validates single character user input'] = function()
-  validate_edit({ ' aaa ' }, { 1, 1 }, { ' aaa ' }, { 1, 1 }, type_keys, 'sa', 'iw', '<C-v>')
-  eq(get_latest_message(), '(mini.surround) Input must be single character: alphanumeric, punctuation, or space.')
 end
 
 T['Add surrounding']['places cursor to the right of left surrounding'] = function()
@@ -829,6 +834,13 @@ T['Delete surrounding']['prompts helper message after one idle second'] = functi
   child.expect_screenshot()
 end
 
+T['Delete surrounding']['handles special characters in "not found" message'] = function()
+  type_keys('sd', '\t')
+  has_message_about_not_found('\t')
+  type_keys('sd', '<C-j>')
+  has_message_about_not_found('\n')
+end
+
 T['Delete surrounding']['works with multibyte characters'] = function()
   local f = function() type_keys('sd', ')') end
 
@@ -1066,6 +1078,13 @@ T['Replace surrounding']['prompts helper message after one idle second'] = funct
   -- Should clear afterwards
   type_keys('>')
   child.expect_screenshot()
+end
+
+T['Replace surrounding']['handles special characters in "not found" message'] = function()
+  type_keys('sr', '\t', ')')
+  has_message_about_not_found('\t')
+  type_keys('sr', '<C-j>', ')')
+  has_message_about_not_found('\n')
 end
 
 T['Replace surrounding']['works with multibyte characters'] = function()
@@ -1345,6 +1364,13 @@ T['Find surrounding']['prompts helper message after one idle second'] = function
   child.expect_screenshot()
 end
 
+T['Find surrounding']['handles special characters in "not found" message'] = function()
+  type_keys('sf', '\t')
+  has_message_about_not_found('\t')
+  type_keys('sf', '<C-j>')
+  has_message_about_not_found('\n')
+end
+
 T['Find surrounding']['works with multibyte characters'] = function()
   local f = function() type_keys('sf', ')') end
 
@@ -1473,6 +1499,10 @@ local activate_highlighting = function()
 end
 
 T['Highlight surrounding']['works without dot-repeat'] = function()
+  -- Check this only on Neovim>=0.11, as there is a slight change in
+  -- highlighting command line area
+  if child.fn.has('nvim-0.11') == 0 then return end
+
   local test_duration = child.lua_get('MiniSurround.config.highlight_duration')
   set_lines({ ' ' })
   set_cursor(1, 0)
@@ -1547,6 +1577,10 @@ T['Highlight surrounding']['respects `config.n_lines`'] = function()
 end
 
 T['Highlight surrounding']['works with multiline input surroundings'] = function()
+  -- Check this only on Neovim>=0.11, as there is a slight change in
+  -- highlighting command line area
+  if child.fn.has('nvim-0.11') == 0 then return end
+
   child.lua('MiniSurround.config.highlight_duration = ' .. small_time)
   child.lua([[MiniSurround.config.custom_surroundings = {
     a = { input = { '%(\na().-()a\n%)' } },
@@ -1574,8 +1608,6 @@ T['Highlight surrounding']['works with multiline input surroundings'] = function
 end
 
 T['Highlight surrounding']['removes highlighting in correct buffer'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10.') end
-
   child.set_size(5, 60)
   local test_duration = child.lua_get('MiniSurround.config.highlight_duration')
 
@@ -1596,6 +1628,10 @@ T['Highlight surrounding']['removes highlighting in correct buffer'] = function(
 end
 
 T['Highlight surrounding']['removes highlighting per line'] = function()
+  -- Check this only on Neovim>=0.11, as there is a slight change in
+  -- highlighting command line area
+  if child.fn.has('nvim-0.11') == 0 then return end
+
   local test_duration = child.lua_get('MiniSurround.config.highlight_duration')
   local half_duration = 0.5 * test_duration
   set_lines({ '(aaa)', '(bbb)' })
@@ -1624,7 +1660,9 @@ T['Highlight surrounding']['respects `v:count` for input surrounding'] = functio
   set_lines({ '(a(b(c)b)a)' })
   set_cursor(1, 5)
   type_keys('2sh', ')')
-  child.expect_screenshot()
+  -- Check this only on Neovim>=0.11, as there is a slight change in
+  -- highlighting command line area
+  if child.fn.has('nvim-0.11') == 1 then child.expect_screenshot() end
 
   -- Should give informative message on failure
   child.set_size(10, 80)
@@ -1640,6 +1678,10 @@ T['Highlight surrounding']['respects `vim.{g,b}.minisurround_disable`'] = new_se
   parametrize = { { 'g' }, { 'b' } },
 }, {
   test = function(var_type)
+    -- Check this only on Neovim>=0.11, as there is a slight change in
+    -- highlighting command line area
+    if child.fn.has('nvim-0.11') == 0 then return end
+
     child[var_type].minisurround_disable = true
 
     set_lines({ '(aaa)', 'bbb' })
@@ -1939,8 +1981,7 @@ T['Builtin']['Default'] = new_set()
 
 T['Builtin']['Default']['works'] = function()
   local validate = function(key)
-    local key_str = vim.api.nvim_replace_termcodes(key, true, true, true)
-    local s = key_str .. 'aaa' .. key_str
+    local s = key .. 'aaa' .. key
 
     -- Should work as input surrounding
     validate_edit({ s }, { 1, 2 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', key)
@@ -1949,7 +1990,7 @@ T['Builtin']['Default']['works'] = function()
     validate_edit({ '(aaa)' }, { 1, 2 }, { s }, { 1, 1 }, type_keys, 'sr', ')', key)
   end
 
-  validate('<Space>')
+  validate(' ')
   validate('_')
   validate('*')
   validate('"')
@@ -1987,11 +2028,19 @@ T['Builtin']['Default']['works in edge cases'] = function()
   validate_edit({ '****' }, { 1, 3 }, { '**()' }, { 1, 3 }, f)
 end
 
-T['Builtin']['Default']['has limited support of multibyte characters'] = function()
-  -- At the moment, multibyte character doesn't pass validation of user
-  -- single character input. It would be great to fix this.
-  expect.error(function() validate_edit({ 'ыaaaы' }, { 1, 3 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', 'ы') end)
-  expect.error(function() validate_edit({ '(aaa)' }, { 1, 2 }, { 'ыaaaы' }, { 1, 2 }, type_keys, 'sr', ')', 'ы') end)
+T['Builtin']['Default']['supports any identifier which can be `getcharstr()` output'] = function()
+  validate_edit({ 'aaa' }, { 1, 0 }, { 'ыaaaы' }, { 1, 2 }, type_keys, 'sa', 'iw', 'ы')
+  validate_edit({ 'ыaaaы' }, { 1, 3 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', 'ы')
+  validate_edit({ '(aaa)' }, { 1, 2 }, { 'ыaaaы' }, { 1, 2 }, type_keys, 'sr', ')', 'ы')
+
+  validate_edit({ 'aaa' }, { 1, 0 }, { '「aaa「' }, { 1, 3 }, type_keys, 'sa', 'iw', '「')
+  validate_edit({ '「aaa「' }, { 1, 3 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', '「')
+  validate_edit({ '(aaa)' }, { 1, 1 }, { '「aaa「' }, { 1, 3 }, type_keys, 'sr', ')', '「')
+
+  -- <C-j> is `\n`
+  validate_edit({ 'aaa' }, { 1, 0 }, { '', 'aaa', '' }, { 1, 0 }, type_keys, 'sa', 'iw', '<C-j>')
+  validate_edit({ 'aaa', 'bbb', 'ccc' }, { 2, 0 }, { 'aaabbbccc' }, { 1, 3 }, type_keys, 'sd', '<C-j>')
+  validate_edit({ 'aaa', 'bbb', 'ccc' }, { 2, 0 }, { 'aaa(bbb)ccc' }, { 1, 4 }, type_keys, 'sr', '<C-j>', ')')
 end
 
 T['Builtin']['Function call'] = new_set()
@@ -2299,6 +2348,19 @@ T['Custom surrounding']['works'] = function()
 
   validate_edit({ '@aaa#' }, { 1, 2 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', 'q')
   validate_edit({ '(aaa)' }, { 1, 2 }, { '@aaa#' }, { 1, 1 }, type_keys, 'sr', ')', 'q')
+end
+
+T['Custom surrounding']['supports any identifier which can be `getcharstr()` output'] = function()
+  set_custom_surr({
+    ['\22'] = { input = { '@().-()#' }, output = { left = '@', right = '#' } },
+    ['ы'] = { input = { 'Ы().-()Ы' }, output = { left = 'Ы', right = 'Ы' } },
+    ['「'] = { input = { '「().-()」' }, output = { left = '「', right = '」' } },
+  })
+
+  validate_edit({ ' aaa ' }, { 1, 1 }, { ' 「aaa」 ' }, { 1, 4 }, type_keys, 'sa', 'iw', '「')
+  validate_edit({ 'ЫaaaЫ' }, { 1, 3 }, { 'aaa' }, { 1, 0 }, type_keys, 'sd', 'ы')
+  validate_edit({ '@aaa#' }, { 1, 2 }, { '「aaa」' }, { 1, 3 }, type_keys, 'sr', '<C-v>', '「')
+  validate_edit({ '「aaa」' }, { 1, 3 }, { '@aaa#' }, { 1, 1 }, type_keys, 'sr', '「', '<C-v>')
 end
 
 T['Custom surrounding']['overrides builtins'] = function()

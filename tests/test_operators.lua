@@ -135,6 +135,31 @@ T['setup()']['removes built-in LSP mappings'] = function()
   eq(child.fn.maparg('grn'), '')
 end
 
+T['setup()']['remaps built-in `gx` mappings'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Neovim<0.10 does not have built-in `gx` mappings') end
+
+  child.lua('vim.ui.open = function() _G.n = (_G.n or 0) + 1 end')
+  local validate = function(keys, ref_n)
+    type_keys(keys)
+    eq(child.lua_get('_G.n'), ref_n)
+  end
+
+  validate('gX', 1)
+  validate('vgX', 2)
+
+  -- Should remap only built-in `gx`
+  child.lua('vim.keymap.set({ "n", "x" }, "gx", function() _G.n = _G.n + 5 end)')
+  child.lua('MiniOperators.setup()')
+  validate('gX', 3)
+  validate('vgX', 4)
+
+  -- Should not override already present mapping
+  child.lua('vim.keymap.set({ "n", "x" }, "gX", function() _G.n = _G.n + 10 end)')
+  child.lua('MiniOperators.setup()')
+  validate('gX', 14)
+  validate('vgX', 24)
+end
+
 T['evaluate()'] = new_set()
 
 T['evaluate()']['is present'] = function() eq(child.lua_get('type(MiniOperators.evaluate)'), 'function') end
@@ -590,8 +615,14 @@ end
 
 T['Evaluate']['does not trigger `TextYankPost` event'] = function()
   child.cmd('au TextYankPost * lua _G.been_here = true')
+  -- Should also not block other events, like ModeChanged
+  child.cmd('au ModeChanged * lua _G.n = (_G.n or 0) + 1')
+
   validate_edit1d('1 + 1', 0, { 'g=$' }, '2', 0)
+
   eq(child.lua_get('_G.been_here'), vim.NIL)
+  eq(child.lua_get('_G.n') >= 8, true)
+  eq(child.o.eventignore, '')
 end
 
 T['Evaluate']['respects `vim.{g,b}.minioperators_disable`'] = new_set({
@@ -1167,8 +1198,14 @@ end
 
 T['Exchange']['does not trigger `TextYankPost` event'] = function()
   child.cmd('au TextYankPost * lua _G.been_here = true')
+  -- Should also not block other events, like ModeChanged
+  child.cmd('au ModeChanged * lua _G.n = (_G.n or 0) + 1')
+
   validate_edit1d('aa bb', 0, { 'gxiw', 'w', 'gxiw' }, 'bb aa', 3)
+
   eq(child.lua_get('_G.been_here'), vim.NIL)
+  eq(child.lua_get('_G.n') >= 16, true)
+  eq(child.o.eventignore, '')
 end
 
 T['Exchange']['respects `vim.{g,b}.minioperators_disable`'] = new_set({
@@ -1553,8 +1590,14 @@ end
 
 T['Multiply']['does not trigger `TextYankPost` event'] = function()
   child.cmd('au TextYankPost * lua _G.been_here = true')
+  -- Should also not block other events, like ModeChanged
+  child.cmd('au ModeChanged * lua _G.n = (_G.n or 0) + 1')
+
   validate_edit({ 'aa', 'bb' }, { 1, 0 }, { 'gmm' }, { 'aa', 'aa', 'bb' }, { 2, 0 })
+
   eq(child.lua_get('_G.been_here'), vim.NIL)
+  eq(child.lua_get('_G.n') >= 5, true)
+  eq(child.o.eventignore, '')
 end
 
 T['Multiply']['respects `vim.{g,b}.minioperators_disable`'] = new_set({
@@ -1829,15 +1872,74 @@ T['Replace']['works with `[register]`'] = function()
 
   -- Visual mode
   validate_edit1d('aa bb cc', 0, { '"xyiw', 'w', 'yiw', 'w', 'viw', '"xgr' }, 'aa bb aa', 6)
+
+  -- Readonly registers
+  child.o.cmdheight = 15
+  set_lines({ 'aaa' })
+  type_keys('"xyy')
+
+  -- - Empty yet valid registers (as they were not written yet)
+  expect.error(function() type_keys('"%griw') end, 'Register "%%" is empty')
+  expect.error(function() type_keys('".griw') end, 'Register "%." is empty')
+  expect.error(function() type_keys('":griw') end, 'Register "%:" is empty')
+
+  child.api.nvim_buf_set_name(0, 'xxx')
+  type_keys('"%griw')
+  eq(get_lines(), { 'xxx' })
+
+  type_keys('o', 'bbb', '<Esc>', 'k')
+  type_keys('".griw')
+  eq(get_lines(), { 'bbb', 'bbb' })
+
+  type_keys(':lua print(1)', '<CR>')
+  type_keys('":griw')
+  eq(get_lines(), { 'lua print(1)', 'bbb' })
+
+  -- Special registers
+  -- - Temporary register used in the implementation
+  type_keys('"xgriw')
+  eq(get_lines(), { 'aaa print(1)', 'bbb' })
+
+  -- - Alternate file
+  expect.error(function() type_keys('"#griw') end, 'Register "#" is empty')
+  child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false))
+  set_lines({ 'yyy' })
+  type_keys('"#griw')
+  eq(get_lines(), { 'xxx' })
+
+  -- - Expression register
+  type_keys('"=', '1+1<CR>', 'griw')
+  eq(get_lines(), { '2' })
+
+  -- - Black hole
+  type_keys('"_griw')
+  eq(get_lines(), { '' })
+
+  -- Should all work with linewise operator
+  set_lines({ 'uuu', 'vvv' })
+  set_cursor(1, 0)
+  type_keys('"#grr')
+  eq(get_lines(), { 'xxx', 'vvv' })
+  type_keys('"=', '["a"]<CR>', 'grr')
+  eq(get_lines(), { 'a', 'vvv' })
+
+  child.cmd('b#')
+  set_cursor(1, 0)
+  type_keys('"%grr')
+  eq(get_lines(), { 'xxx', 'bbb' })
+  type_keys('".grr')
+  eq(get_lines(), { 'bbb', 'bbb' })
+  type_keys('":grr')
+  eq(get_lines(), { 'lua print(1)', 'bbb' })
 end
 
-T['Replace']['validatees `[register]` content'] = function()
-  child.o.cmdheight = 10
+T['Replace']['propagates informative error about `[register]` content'] = function()
+  child.o.cmdheight = 15
   set_lines({ 'aa bb' })
   type_keys('yiw', 'w')
 
-  expect.error(function() type_keys('"agriw') end, 'Register "a".*empty')
-  expect.error(function() type_keys('"Agriw') end, 'Register "A".*unknown')
+  expect.error(function() type_keys('"agriw') end, 'Register "a" is empty')
+  expect.error(function() type_keys('"Agriw') end, 'Register "A" is invalid')
 end
 
 T['Replace']['works in edge cases'] = function()
@@ -1866,7 +1968,7 @@ end
 T['Replace']['does not have side effects'] = function()
   set_lines({ 'aa', 'bb', 'cc', 'xy' })
 
-  -- All non-operator related marks and target register
+  -- All non-operator related marks, target and temporary register
   set_cursor(4, 0)
   type_keys('ma')
   type_keys('v"xy')
@@ -1879,6 +1981,7 @@ T['Replace']['does not have side effects'] = function()
   set_cursor(1, 0)
   type_keys('yiw')
   local target_register_info = child.fn.getreginfo('"')
+  local temp_register_info = child.fn.getreginfo('x')
   set_cursor(2, 0)
   type_keys('grj')
 
@@ -1887,6 +1990,7 @@ T['Replace']['does not have side effects'] = function()
   eq(child.api.nvim_buf_get_mark(0, 'a'), { 3, 0 })
   eq(child.api.nvim_buf_get_mark(0, 'x'), { 3, 1 })
   eq(child.fn.getreginfo('"'), target_register_info)
+  eq(child.fn.getreginfo('x'), temp_register_info)
 end
 
 T['Replace']['preserves visual marks'] = function()
@@ -1956,9 +2060,14 @@ T['Replace']['does not trigger `TextYankPost` event'] = function()
   type_keys('yiw')
 
   child.cmd('au TextYankPost * lua _G.been_here = true')
+  -- Should also not block other events, like ModeChanged
+  child.cmd('au ModeChanged * lua _G.n = (_G.n or 0) + 1')
 
   validate_edit1d('bb', 0, { 'griw' }, 'aa', 0)
+
   eq(child.lua_get('_G.been_here'), vim.NIL)
+  eq(child.lua_get('_G.n') >= 5, true)
+  eq(child.o.eventignore, '')
 end
 
 T['Replace']['respects `vim.{g,b}.minioperators_disable`'] = new_set({
@@ -2215,8 +2324,14 @@ end
 
 T['Sort']['does not trigger `TextYankPost` event'] = function()
   child.cmd('au TextYankPost * lua _G.been_here = true')
+  -- Should also not block other events, like ModeChanged
+  child.cmd('au ModeChanged * lua _G.n = (_G.n or 0) + 1')
+
   validate_edit1d('b, a', 0, { 'gs$' }, 'a, b', 0)
+
   eq(child.lua_get('_G.been_here'), vim.NIL)
+  eq(child.lua_get('_G.n') >= 8, true)
+  eq(child.o.eventignore, '')
 end
 
 T['Sort']['respects `vim.{g,b}.minioperators_disable`'] = new_set({

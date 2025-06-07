@@ -654,8 +654,12 @@ T['get()']['can be used after deleting all buffers'] = function()
   -- As `vim.filetype.match()` requries a buffer to be more useful, make sure
   -- that this cached buffer is persistent
   eq(get('file', 'hello.xpm'), { '󰍹', 'MiniIconsYellow', false })
+  -- The helper scratch buffer should be properly named
+  eq(child.api.nvim_buf_get_name(2), 'miniicons://2/filetype-match-scratch')
+
   child.cmd('%bwipeout')
   eq(get('file', 'hello.tcsh'), { '', 'MiniIconsAzure', false })
+  eq(child.api.nvim_buf_get_name(3), 'miniicons://3/filetype-match-scratch')
 end
 
 T['get()']['uses width one glyphs'] = function()
@@ -829,6 +833,9 @@ T['mock_nvim_web_devicons()']['works'] = function()
   for _, method in ipairs(present) do
     eq(child.lua_get('type(devicons.' .. method .. ')'), 'function')
   end
+
+  -- Should set global variable which is set in 'plugin/nvim-web-devicons.vim'
+  eq(child.g.nvim_web_devicons, 1)
 end
 
 T['tweak_lsp_kind()'] = new_set({

@@ -768,7 +768,7 @@ end
 
 T['expect']['error()']['respects `pattern` argument'] = function()
   ---@diagnostic disable-next-line:param-type-mismatch
-  expect.error(function() MiniTest.expect.error(error, 1) end, 'pattern.*expected string')
+  expect.error(function() MiniTest.expect.error(error, 1) end, 'pattern.*string')
 
   -- `nil` and `''` are placeholders for 'any error'
   expect.no_error(function() MiniTest.expect.error(error, '') end)
@@ -1034,6 +1034,11 @@ T['expect']['reference_screenshot()']['respects `opts.force` argument'] = functi
 end
 
 T['expect']['reference_screenshot()']['respects `opts.ignore_lines`'] = function()
+  -- Do not show soft deprecation message
+  local notify_orig = vim.notify
+  vim.notify = function() end
+  MiniTest.finally(function() vim.notify = notify_orig end)
+
   local path = get_ref_path('reference-screenshot')
   child.set_size(5, 12)
   local validate = function(ignore_lines, ref)
@@ -1051,6 +1056,60 @@ T['expect']['reference_screenshot()']['respects `opts.ignore_lines`'] = function
   expect.error(
     function() MiniTest.expect.reference_screenshot(child.get_screenshot(), path, { ignore_lines = { 2 } }) end,
     'screenshot equality to reference at ' .. vim.pesc(vim.inspect(path)) .. '.*Reference:.*Observed:'
+  )
+end
+
+T['expect']['reference_screenshot()']['respects `opts.ignore_text`'] = function()
+  local path = get_ref_path('reference-screenshot')
+  child.set_size(5, 12)
+  local validate = function(ignore_text, ref)
+    eq(MiniTest.expect.reference_screenshot(child.get_screenshot(), path, { ignore_text = ignore_text }), ref)
+  end
+
+  set_lines({ 'aaa' })
+  validate(nil, true)
+  validate(false, true)
+
+  -- Make different text but same highlighting
+  set_lines({ 'aaa', 'bbb' })
+  local ns_id = child.api.nvim_create_namespace('test-hl')
+  child.api.nvim_buf_set_extmark(0, ns_id, 1, 0, { end_row = 2, end_col = 0, hl_group = 'EndOfBuffer', hl_eol = true })
+
+  validate({ 2 }, true)
+  validate({ 1, 2, 3 }, true)
+
+  set_lines({ 'ccc', 'bbb' })
+  expect.error(
+    function() MiniTest.expect.reference_screenshot(child.get_screenshot(), path, { ignore_text = { 2 } }) end,
+    'screenshot equality to reference at '
+      .. vim.pesc(vim.inspect(path))
+      .. '.*Different `text` cell at line 1 column 1%. Reference: "a"%. Observed: "c"%.'
+  )
+end
+
+T['expect']['reference_screenshot()']['respects `opts.ignore_attr`'] = function()
+  local path = get_ref_path('reference-screenshot')
+  child.set_size(5, 12)
+  local validate = function(ignore_attr, ref)
+    eq(MiniTest.expect.reference_screenshot(child.get_screenshot(), path, { ignore_attr = ignore_attr }), ref)
+  end
+
+  set_lines({ 'aaa' })
+  validate(nil, true)
+  validate(false, true)
+
+  -- Make different attr but same text
+  local ns_id = child.api.nvim_create_namespace('test-hl')
+  child.api.nvim_buf_set_extmark(0, ns_id, 0, 1, { end_row = 0, end_col = 3, hl_group = 'EndOfBuffer' })
+
+  validate({ 1 }, true)
+  validate({ 1, 2 }, true)
+
+  expect.error(
+    function() MiniTest.expect.reference_screenshot(child.get_screenshot(), path, { ignore_text = { 2 } }) end,
+    'screenshot equality to reference at '
+      .. vim.pesc(vim.inspect(path))
+      .. '.*Different `attr` cell at line 1 column 2%. Reference: "0"%. Observed: "1"%.'
   )
 end
 
@@ -1197,6 +1256,7 @@ T['child']['redirected method tables'] = new_set({
     { 'diagnostic', 'get', { 0 } },
     { 'fn', 'fnamemodify', { '.', ':p' } },
     { 'highlight', 'range', { 0, 1, 'Comment', { 0, 1 }, { 0, 2 } } },
+    { 'hl', 'range', { 0, 1, 'Comment', { 0, 1 }, { 0, 2 } } },
     { 'json', 'encode', { { a = 1 } } },
     { 'loop', 'hrtime', {} },
     { 'lsp', 'get_active_clients', {} },
@@ -1209,11 +1269,13 @@ T['child']['redirected method tables'] = new_set({
 })
 
 T['child']['redirected method tables']['method'] = function(tbl_name, field_name, args)
+  if tbl_name == 'hl' and child.fn.has('nvim-0.11') == 0 then return end
   local method = function() return child[tbl_name][field_name](unpack(args)) end
   validate_child_method(method, { name = tbl_name .. '.' .. field_name })
 end
 
 T['child']['redirected method tables']['field'] = function(tbl_name, field_name, _)
+  if tbl_name == 'hl' and child.fn.has('nvim-0.11') == 0 then return end
   -- Although being tables, they should be overridable to allow test doubles
   validate_child_field(tbl_name, field_name, true)
 end
@@ -1575,12 +1637,18 @@ T['gen_reporter']['buffer'] = new_set({
   },
   parametrize = {
     { '' },
-    { 'group_depth = 2' },
-    { 'window = { width = 0.9 * vim.o.columns, col = 0.05 * vim.o.columns }' },
+    { 'group_depth=2' },
+    { 'window={width=0.9*vim.o.columns,col=0.05*vim.o.columns}' },
+    { 'window={border="double",title=("a"):rep(200)}' },
   },
 }, {
   test = function(opts_element)
-    if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Screenshots are generated for Neovim>=0.10.') end
+    -- Should respect non-empty 'winborder' while preferring explicitly
+    -- configured value over it
+    if vim.startswith(opts_element, 'window') then
+      if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+      child.o.winborder = 'rounded'
+    end
 
     -- Testing "in dynamic" is left for manual approach
     local path = get_ref_path('testref_reporters.lua')
@@ -1604,6 +1672,9 @@ T['gen_reporter']['buffer'] = new_set({
     -- Should be able to run several times
     expect.no_error(child.lua, execute_command)
     expect.no_error(child.lua, execute_command)
+
+    -- Should use properly named buffer
+    eq(child.api.nvim_buf_get_name(0), 'minitest://' .. child.api.nvim_get_current_buf() .. '/buffer-reporter')
   end,
 })
 
@@ -1626,7 +1697,8 @@ T['gen_reporter']['stdout'] = new_set({
     child.fn.termopen(command)
     -- Wait until check is done and possible process is ended
     vim.loop.sleep(terminal_wait)
-    child.expect_screenshot()
+    local ignore_attr = child.fn.has('nvim-0.11') == 1 and {} or { 31, 32, 34, 35 }
+    child.expect_screenshot({ ignore_attr = ignore_attr })
   end,
 })
 

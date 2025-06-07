@@ -255,6 +255,14 @@ T['setup()']['creates mappings for `@` and `Q`'] = function()
 
   type_keys('2Q')
   eq(get_lines(), { 'aaaaa' })
+
+  -- Should not create mapping if it is already taken
+  child.api.nvim_set_keymap('n', 'Q', '<Cmd>echo 1<CR>', { desc = 'My Q' })
+  child.api.nvim_set_keymap('n', '@', '<Cmd>echo 2<CR>', { desc = 'My @' })
+
+  load_module()
+  eq(child.lua_get("vim.fn.maparg('Q', 'n', false, true).desc"), 'My Q')
+  eq(child.lua_get("vim.fn.maparg('@', 'n', false, true).desc"), 'My @')
 end
 
 T['setup()']['respects "human-readable" key names'] = function()
@@ -333,6 +341,21 @@ T['setup()']['ensures valid triggers on `LspAttach` event'] = function()
 
   type_keys(' ')
   child.expect_screenshot()
+end
+
+T['setup()']['ensures valid triggers on selected special buffers'] = function()
+  load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+
+  local validate = function(ft)
+    child.cmd('au FileType ' .. ft .. ' lua vim.keymap.set("n", "<Space>a", ":echo 1<CR>", { buffer = true })')
+    load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+    child.api.nvim_set_current_buf(child.api.nvim_create_buf(false, true))
+    child.bo.filetype = ft
+    validate_trigger_keymap('n', '<Space>', 0)
+  end
+
+  validate('help')
+  validate('git')
 end
 
 T['setup()']['respects `vim.b.miniclue_disable`'] = function()
@@ -761,7 +784,7 @@ T['gen_clues']['g()']['works'] = function()
   ]])
   child.cmd('unmap g%')
 
-  child.set_size(66, 55)
+  child.set_size(67, 55)
   type_keys('g')
   child.expect_screenshot()
 
@@ -1200,6 +1223,10 @@ T['Showing keys']['works'] = function()
   child.expect_screenshot()
   sleep(small_time + small_time)
   child.expect_screenshot()
+
+  -- Should use proper buffer name
+  local buf_id = child.api.nvim_win_get_buf(1002)
+  eq(child.api.nvim_buf_get_name(buf_id), 'miniclue://' .. buf_id .. '/content')
 end
 
 T['Showing keys']['respects `config.window.delay`'] = function()
@@ -1239,11 +1266,28 @@ T['Showing keys']['respects `config.window.config`'] = function()
   make_test_map('n', '<Space>a')
   load_module({
     triggers = { { mode = 'n', keys = '<Space>' } },
-    window = { delay = 0, config = { border = 'double' } },
+    window = { delay = 0, config = { border = 'double', title = 'Custom title to check truncation' } },
   })
 
   type_keys(' ')
   child.expect_screenshot()
+end
+
+T['Showing keys']["respects 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  make_test_map('n', '<Space>a')
+  load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+
+  child.o.winborder = 'rounded'
+  type_keys(' ')
+  child.expect_screenshot()
+  type_keys('<Esc>')
+
+  -- Should prefer explicitly configured value over 'winborder'
+  child.lua('MiniClue.config.window.config.border = "double"')
+  type_keys(' ')
+  child.expect_screenshot()
+  type_keys('<Esc>')
 end
 
 T['Showing keys']['can have `config.window.config.width="auto"`'] = function()
@@ -1476,10 +1520,6 @@ T['Showing keys']['properly translates special keys'] = function()
 end
 
 T['Showing keys']['respects tabline, statusline, cmdheight'] = function()
-  -- Check this only on Neovim>=0.10, as there is a slight change in
-  -- highlighting command line area
-  if child.fn.has('nvim-0.10') == 0 then return end
-
   child.set_size(7, 40)
 
   --stylua: ignore
@@ -1493,15 +1533,15 @@ T['Showing keys']['respects tabline, statusline, cmdheight'] = function()
     window = { delay = 0 },
   })
 
-  local validate = function()
+  local validate = function(screenshot_opts)
     type_keys(' ')
-    child.expect_screenshot()
+    child.expect_screenshot(screenshot_opts)
     type_keys('<Esc>')
   end
 
   -- Tabline
   child.o.showtabline = 2
-  validate()
+  validate({ ignore_text = { 1 }, ignore_attr = { 1 } })
   child.o.showtabline = 0
 
   -- Statusline
@@ -1511,11 +1551,30 @@ T['Showing keys']['respects tabline, statusline, cmdheight'] = function()
 
   -- Command line height
   child.o.cmdheight = 2
-  validate()
+  validate({ ignore_text = { 6, 7 }, ignore_attr = { 6, 7 } })
 
   -- - Zero command line height
   child.o.cmdheight = 0
   validate()
+end
+
+T['Showing keys']['works with small available dimensions'] = function()
+  -- Check this only on Neovim>=0.12, as there is a slight change in
+  -- highlighting command line area
+  if child.fn.has('nvim-0.12') == 0 then return end
+
+  child.set_size(5, 40)
+  child.o.showtabline, child.o.laststatus = 0, 0
+  child.o.cmdheight = 4
+
+  load_module({
+    clues = { { mode = 'n', keys = '<Space>a' }, { mode = 'n', keys = '<Space>b' } },
+    triggers = { { mode = 'n', keys = '<Space>' } },
+    window = { delay = 0 },
+  })
+
+  type_keys(' ')
+  child.expect_screenshot()
 end
 
 T['Showing keys']['reacts to `VimResized`'] = function()
@@ -1616,12 +1675,22 @@ T['Clues']['can be configured after load'] = function()
 end
 
 T['Clues']['uses human-readable names for special keys'] = function()
+  child.set_size(20, 40)
   child.cmd('nmap <Space><Space> :echo 1<CR>')
   child.cmd('nmap <Space><Tab> :echo 2<CR>')
   child.cmd('nmap <Space><End> :echo 3<CR>')
   child.cmd('nmap <Space><PageUp> :echo 4<CR>')
   child.cmd('nmap <Space><C-x> :echo 5<CR>')
-  child.cmd('nmap <Space>< :echo 6<CR>')
+  child.cmd('nmap <Space><C-j> :echo 6<CR>')
+  child.cmd('nmap <Space><C-S-j> :echo 6.1<CR>')
+  child.cmd('nmap <Space><C-M-j> :echo 6.2<CR>')
+  child.cmd('nmap <Space><Right> :echo 7<CR>')
+  child.cmd('nmap <Space><C-Right> :echo 8<CR>')
+  child.cmd('nmap <Space><S-Right> :echo 9<CR>')
+  child.cmd('nmap <Space><kRight> :echo 10<CR>')
+  child.cmd('nmap <Space>< :echo 11<CR>')
+  child.cmd('nmap <Space><F1> :echo 12<CR>')
+  child.cmd('nmap <Space><S-F1> :echo 13<CR>')
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
 
   type_keys(' ')
@@ -1948,7 +2017,7 @@ T['Postkeys']['persists window if action changes tabpage'] = function()
   type_keys('<C-w>')
   child.expect_screenshot()
   type_keys('T')
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 1 }, ignore_attr = { 1 } })
 end
 
 T['Querying keys'] = new_set()
@@ -1973,8 +2042,9 @@ T['Querying keys']['does not entirely block redraws'] = function()
     local n = 0
     _G.add_hl = function()
       local col = n
+      local vim_hl = vim.fn.has('nvim-0.11') == 1 and vim.hl or vim.highlight
       vim.defer_fn(function()
-        vim.highlight.range(0, ns_id, 'Comment', { 0, col }, { 0, col + 1 }, {})
+        vim_hl.range(0, ns_id, 'Comment', { 0, col }, { 0, col + 1 }, {})
       end, 5)
       n = n + 1
     end
@@ -2284,6 +2354,13 @@ T['Reproducing keys']['respects `[register]` in Normal mode'] = function()
 
   validate_edit1d('AaA', 0, { '"y', 'g', 'E' }, 'aAa', 0)
   eq(child.lua_get('_G.register_expr'), 'y')
+
+  -- Works with special expression register "="
+  child.lua([[
+    vim.keymap.set('n', 'gd', function() return 'P' end, { expr = true })
+  ]])
+  validate_edit1d('xxx', 0, { '"=', '1+1<CR>', 'g', 'd' }, '2xxx', 0)
+  eq(child.fn.mode(1), 'n')
 end
 
 T['Reproducing keys']['works in temporary Normal mode'] = function()
@@ -3096,17 +3173,8 @@ end
 
 T["'mini.nvim' compatibility"] = new_set()
 
-local setup_mini_module = function(name, config)
-  local lua_cmd = string.format([[_G.has_module, _G.module = pcall(require, 'mini.%s')]], name)
-  child.lua(lua_cmd)
-  if not child.lua_get('_G.has_module') then return false end
-  child.lua('module.setup()', { config })
-  return true
-end
-
 T["'mini.nvim' compatibility"]['mini.ai'] = function()
-  local has_ai = setup_mini_module('ai')
-  if not has_ai then MiniTest.skip("Could not load 'mini.ai'.") end
+  child.lua('require("mini.ai").setup()')
 
   load_module({ triggers = { { mode = 'o', keys = 'i' }, { mode = 'o', keys = 'a' } }, window = { delay = 0 } })
   validate_trigger_keymap('o', 'i')
@@ -3177,15 +3245,12 @@ T["'mini.nvim' compatibility"]['mini.align'] = function()
   child.set_size(10, 30)
   child.o.cmdheight = 5
 
-  local has_align = setup_mini_module('align')
-  if not has_align then MiniTest.skip("Could not load 'mini.align'.") end
+  child.lua('require("mini.align").setup()')
 
   -- Works together with 'mini.ai' without `g` as trigger
-  local has_ai = setup_mini_module('ai')
-  if has_ai then
-    load_module({ triggers = { { mode = 'o', keys = 'i' } } })
-    validate_edit({ 'f(', 'a_b', 'aa_b', ')' }, { 2, 0 }, { 'ga', 'if', '_' }, { 'f(', 'a _b', 'aa_b', ')' }, { 1, 1 })
-  end
+  child.lua('require("mini.ai").setup()')
+  load_module({ triggers = { { mode = 'o', keys = 'i' } } })
+  validate_edit({ 'f(', 'a_b', 'aa_b', ')' }, { 2, 0 }, { 'ga', 'if', '_' }, { 'f(', 'a _b', 'aa_b', ')' }, { 1, 1 })
 
   -- Works with `g` as trigger
   load_module({ triggers = { { mode = 'n', keys = 'g' }, { mode = 'o', keys = 'i' } }, window = { delay = 0 } })
@@ -3223,8 +3288,7 @@ T["'mini.nvim' compatibility"]['mini.align'] = function()
 end
 
 T["'mini.nvim' compatibility"]['mini.basics'] = function()
-  local has_basics = setup_mini_module('basics')
-  if not has_basics then MiniTest.skip("Could not load 'mini.basics'.") end
+  child.lua('require("mini.basics").setup()')
 
   load_module({ triggers = { { mode = 'n', keys = 'g' } }, window = { delay = 0 } })
   validate_trigger_keymap('n', 'g')
@@ -3241,8 +3305,7 @@ T["'mini.nvim' compatibility"]['mini.basics'] = function()
 end
 
 T["'mini.nvim' compatibility"]['mini.bracketed'] = function()
-  local has_bracketed = setup_mini_module('bracketed')
-  if not has_bracketed then MiniTest.skip("Could not load 'mini.bracketed'.") end
+  child.lua('require("mini.bracketed").setup()')
 
   load_module({
     triggers = {
@@ -3305,15 +3368,12 @@ end
 T["'mini.nvim' compatibility"]['mini.comment'] = function()
   child.o.commentstring = '## %s'
 
-  local has_comment = setup_mini_module('comment')
-  if not has_comment then MiniTest.skip("Could not load 'mini.comment'.") end
+  child.lua('require("mini.comment").setup()')
 
   -- Works together with 'mini.ai' without `g` as trigger
-  local has_ai = setup_mini_module('ai')
-  if has_ai then
-    load_module({ triggers = { { mode = 'o', keys = 'i' } }, window = { delay = 0 } })
-    validate_edit({ 'aa', 'bb', '', 'cc' }, { 1, 0 }, { 'gc', 'ip' }, { '## aa', '## bb', '', 'cc' }, { 1, 0 })
-  end
+  child.lua('require("mini.ai").setup()')
+  load_module({ triggers = { { mode = 'o', keys = 'i' } }, window = { delay = 0 } })
+  validate_edit({ 'aa', 'bb', '', 'cc' }, { 1, 0 }, { 'gc', 'ip' }, { '## aa', '## bb', '', 'cc' }, { 1, 0 })
 
   -- Works with `g` as trigger
   load_module({
@@ -3363,8 +3423,7 @@ T["'mini.nvim' compatibility"]['mini.comment'] = function()
 end
 
 T["'mini.nvim' compatibility"]['mini.indentscope'] = function()
-  local has_indentscope = setup_mini_module('indentscope')
-  if not has_indentscope then MiniTest.skip("Could not load 'mini.indentscope'.") end
+  child.lua('require("mini.indentscope").setup()')
 
   load_module({
     triggers = {
@@ -3438,16 +3497,13 @@ end
 T["'mini.nvim' compatibility"]['mini.surround'] = function()
   -- `saiw` works as expected when `s` and `i` are triggers: doesn't move cursor, no messages.
 
-  local has_surround = setup_mini_module('surround')
-  if not has_surround then MiniTest.skip("Could not load 'mini.surround'.") end
+  child.lua('require("mini.surround").setup()')
 
   -- Works together with 'mini.ai' without `s` as trigger
-  local has_ai = setup_mini_module('ai')
-  if has_ai then
-    load_module({ triggers = { { mode = 'o', keys = 'i' } }, window = { delay = 0 } })
-    validate_edit1d('aa bb', 0, { 'sa', 'iw', ')' }, '(aa) bb', 1)
-    validate_edit1d('aa ff(bb)', 0, { 'sa', 'if', ']' }, 'aa ff([bb])', 7)
-  end
+  child.lua('require("mini.ai").setup()')
+  load_module({ triggers = { { mode = 'o', keys = 'i' } }, window = { delay = 0 } })
+  validate_edit1d('aa bb', 0, { 'sa', 'iw', ')' }, '(aa) bb', 1)
+  validate_edit1d('aa ff(bb)', 0, { 'sa', 'if', ']' }, 'aa ff([bb])', 7)
 
   -- Works with `s` as trigger
   load_module({ triggers = { { mode = 'n', keys = 's' }, { mode = 'o', keys = 'i' } }, window = { delay = 0 } })

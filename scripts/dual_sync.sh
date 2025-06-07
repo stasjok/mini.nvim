@@ -1,4 +1,11 @@
-# Perform local sync of standalone repositories
+# Perform local sync of standalone repositories, but only if on `main` branch
+branch="$( git symbolic-ref --short HEAD )"
+if [[ $branch != "main" ]]
+then
+  printf "\nDo sync only for 'main' branch, not '$branch'\n\n"
+  exit 2
+fi
+
 repos_dir=dual/repos
 patches_dir=dual/patches
 
@@ -14,23 +21,8 @@ sync_module () {
   repo="$( realpath $repos_dir/mini.$module )"
   patch="$( realpath $patches_dir/mini.$module.patch )"
 
-  printf "\n\033[1mmini.$module\033[0m\n"
-
-  # Possibly pull repository
-  if [[ ! -d $repo ]]
-  then
-    printf "Pulling\n"
-    # Handle 'mini.git' differently because GitHub repo is named 'mini-git'
-    # (".git" suffix is not allowed as repo name on GitHub)
-    if [ $module = "git" ]; then github_repo="mini-git"; else github_repo="mini.$module"; fi
-    git clone --filter=blob:none https://github.com/echasnovski/$github_repo.git $repo
-  else
-    printf "No pulling (already present)\n"
-  fi
-
   # Make patch with commits from 'sync' branch to current HEAD which affect
   # files related to the module
-  printf "Making patch\n"
   git format-patch sync..HEAD --output $patch -- \
     lua/mini/$module.lua \
     doc/mini-$module.txt \
@@ -42,9 +34,11 @@ sync_module () {
   if [[ ! -s $patch ]]
   then
     rm $patch
-    printf "Patch is empty\n"
+    # Return early to skip unnecessary repo pull (saves time)
     return
   fi
+
+  printf "\n\033[1mmini.$module\033[0m\n"
 
   # Tweak patch:
   # - Move 'readmes/mini-xxx.md' to 'README.md'. This should modify only patch
@@ -57,9 +51,19 @@ sync_module () {
   #   which should be corrected manually
   sed -i "s/\[help file\](\.\.\//[help file](/" $patch
 
+  # Possibly pull repository
+  if [[ ! -d $repo ]]
+  then
+    printf "Pulling\n"
+    # Handle 'mini.git' differently because GitHub repo is named 'mini-git'
+    # (".git" suffix is not allowed as repo name on GitHub)
+    if [ $module = "git" ]; then github_repo="mini-git"; else github_repo="mini.$module"; fi
+    git clone --filter=blob:none https://github.com/echasnovski/$github_repo.git $repo >/dev/null 2>&1
+  fi
+
   # Apply patch
   printf "Applying patch\n"
-  cd $repo
+  cd $repo > /dev/null
   git am $patch
   cd - > /dev/null
 }
@@ -89,6 +93,7 @@ sync_module "icons"
 sync_module "indentscope"
 sync_module "jump"
 sync_module "jump2d"
+sync_module "keymap"
 sync_module "map"
 sync_module "misc"
 sync_module "move"
@@ -97,6 +102,7 @@ sync_module "operators"
 sync_module "pairs"
 sync_module "pick"
 sync_module "sessions"
+sync_module "snippets"
 sync_module "splitjoin"
 sync_module "starter"
 sync_module "statusline"

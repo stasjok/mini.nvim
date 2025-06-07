@@ -88,8 +88,9 @@ T['setup()']['creates `config` field'] = function()
   -- Check default values
   local expect_config = function(field, value) eq(child.lua_get('MiniIndentscope.config.' .. field), value) end
 
-  eq(child.lua_get('type(_G.MiniIndentscope.config.draw.animation)'), 'function')
   expect_config('draw.delay', 100)
+  eq(child.lua_get('type(_G.MiniIndentscope.config.draw.animation)'), 'function')
+  eq(child.lua_get('type(_G.MiniIndentscope.config.draw.predicate)'), 'function')
   expect_config('draw.priority', 2)
   expect_config('mappings.goto_bottom', ']i')
   expect_config('mappings.goto_top', '[i')
@@ -97,6 +98,7 @@ T['setup()']['creates `config` field'] = function()
   expect_config('mappings.object_scope_with_border', 'ai')
   expect_config('options.border', 'both')
   expect_config('options.indent_at_cursor', true)
+  expect_config('options.n_lines', 10000)
   expect_config('options.try_as_border', false)
   expect_config('symbol', '╎')
 end
@@ -118,6 +120,7 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ draw = 'a' }, 'draw', 'table')
   expect_config_error({ draw = { delay = 'a' } }, 'draw.delay', 'number')
   expect_config_error({ draw = { animation = 'a' } }, 'draw.animation', 'function')
+  expect_config_error({ draw = { predicate = 'a' } }, 'draw.predicate', 'function')
   expect_config_error({ draw = { priority = 'a' } }, 'draw.priority', 'number')
   expect_config_error({ mappings = 'a' }, 'mappings', 'table')
   expect_config_error({ mappings = { object_scope = 1 } }, 'mappings.object_scope', 'string')
@@ -127,6 +130,7 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ options = 'a' }, 'options', 'table')
   expect_config_error({ options = { border = 1 } }, 'options.border', 'string')
   expect_config_error({ options = { indent_at_cursor = 1 } }, 'options.indent_at_cursor', 'boolean')
+  expect_config_error({ options = { n_lines = 'a' } }, 'options.n_lines', 'number')
   expect_config_error({ options = { try_as_border = 1 } }, 'options.try_as_border', 'boolean')
   expect_config_error({ symbol = 1 }, 'symbol', 'string')
 end
@@ -203,6 +207,38 @@ end
 T['get_scope()']['respects `opts.indent_at_cursor`'] = function()
   set_cursor(3, 1)
   eq(get_cursor_scope({ indent_at_cursor = false }), get_scope(3, math.huge))
+end
+
+T['get_scope()']['respects `opts.n_lines`'] = function()
+  set_lines({ 'aa', '  bb', '  bb', '  bb', '  bb', '  bb', 'aa' })
+  local scope = get_scope(4, 1, { n_lines = 1 })
+  eq(scope.body, { top = 3, bottom = 5, is_incomplete = true, indent = 2 })
+  eq(scope.border, { top = 2, bottom = 6, indent = 2 })
+
+  -- Should still set `is_incomplete` even if only one side is incomplete
+  eq(get_scope(2, 1, { n_lines = 2 }).body, { top = 2, bottom = 4, is_incomplete = true, indent = 2 })
+  eq(get_scope(6, 1, { n_lines = 2 }).body, { top = 4, bottom = 6, is_incomplete = true, indent = 2 })
+
+  -- Setting `math.huge` should be allowed
+  local many_lines = { 'aa' }
+  for _ = 1, 10002 do
+    table.insert(many_lines, '  bb')
+  end
+  table.insert(many_lines, 'aa')
+  set_lines(many_lines)
+
+  eq(get_scope(2, 1).body, { top = 2, bottom = 10002, is_incomplete = true, indent = 2 })
+  eq(get_scope(2, 1, { n_lines = math.huge }).body, { top = 2, bottom = 10003, indent = 2 })
+
+  child.lua('MiniIndentscope.config.options.n_lines = math.huge')
+  eq(get_scope(2, 1).body, { top = 2, bottom = 10003, indent = 2 })
+
+  -- Default value should be taken from `config.options.n_lines`
+  child.lua('MiniIndentscope.config.options.n_lines = 2')
+  eq(get_scope(2, 1).body, { top = 2, bottom = 4, is_incomplete = true, indent = 2 })
+
+  child.b.miniindentscope_config = { options = { n_lines = 3 } }
+  eq(get_scope(2, 1).body, { top = 2, bottom = 5, is_incomplete = true, indent = 2 })
 end
 
 T['get_scope()']['respects `opts.try_as_border`'] = function()
@@ -652,6 +688,60 @@ T['Auto drawing']['implements debounce-style delay'] = function()
   child.expect_screenshot()
   sleep(small_time)
   -- Should start drawing
+  child.expect_screenshot()
+end
+
+T['Auto drawing']['by default is not done for incomplete scope'] = function()
+  set_lines({ 'aa', '  bb', '  bb', '  bb', '  bb', '  bb', 'aa' })
+  child.lua('MiniIndentscope.config.options.n_lines = 2')
+  child.lua('MiniIndentscope.config.draw.delay = ' .. small_time)
+  child.lua('MiniIndentscope.config.draw.animation = function() return 0 end')
+
+  -- Should draw if scope computation is complete
+  set_cursor(4, 0)
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+
+  -- Should undraw immediately if scope is incomplete and never draw
+  set_cursor(3, 0)
+  child.expect_screenshot()
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+
+  type_keys('l')
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+
+  -- Should still draw later for complete scope
+  type_keys('j')
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+end
+
+T['Auto drawing']['respects `config.draw.predicate`'] = function()
+  set_lines({ 'aa', '  bb', 'aa' })
+  child.lua('MiniIndentscope.config.draw.delay = ' .. small_time)
+  child.lua('MiniIndentscope.config.draw.animation = function() return 0 end')
+
+  child.lua([[MiniIndentscope.config.draw.predicate = function(scope)
+    return (scope.body.bottom - scope.body.top + 1) >= _G.min_scope_height
+  end]])
+
+  -- Should not draw as actual height is too low
+  child.lua('_G.min_scope_height = 2')
+  set_cursor(2, 0)
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+
+  child.lua('_G.min_scope_height = 1')
+  type_keys('jk')
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+
+  -- Should respect buffer-local config (and not draw in this case)
+  child.lua('vim.b.miniindentscope_config = { draw = { predicate = function() return false end } }')
+  type_keys('jk')
+  sleep(small_time + small_time)
   child.expect_screenshot()
 end
 

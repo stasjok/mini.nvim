@@ -63,6 +63,8 @@ local validate_unshow_normal_buf = function(fun_name, layout)
   expect.no_equality(new_buf, layout['buf'])
   eq(buf_get_option(new_buf, 'buflisted'), true)
   eq(buf_get_option(new_buf, 'buftype'), '')
+  -- Should be unnamed to allow `:h buffer-reuse`
+  eq(child.api.nvim_buf_get_name(new_buf), '')
 
   eq(win_get_buf(layout['win_left']), new_buf)
   eq(win_get_buf(layout['win_right']), new_buf)
@@ -210,14 +212,13 @@ T['setup()']['creates `config` field'] = function()
   eq(child.lua_get('type(_G.MiniBufremove.config)'), 'table')
 
   -- Check default values
-  eq(child.lua_get('MiniBufremove.config.set_vim_settings'), true)
   eq(child.lua_get('MiniBufremove.config.silent'), false)
 end
 
 T['setup()']['respects `config` argument'] = function()
   unload_module()
-  load_module({ set_vim_settings = false })
-  eq(child.lua_get('MiniBufremove.config.set_vim_settings'), false)
+  load_module({ silent = true })
+  eq(child.lua_get('MiniBufremove.config.silent'), true)
 end
 
 T['setup()']['validates `config` argument'] = function()
@@ -228,7 +229,6 @@ T['setup()']['validates `config` argument'] = function()
   end
 
   expect_config_error('a', 'config', 'table')
-  expect_config_error({ set_vim_settings = 'a' }, 'set_vim_settings', 'boolean')
   expect_config_error({ silent = 'a' }, 'silent', 'boolean')
 end
 
@@ -244,7 +244,7 @@ T['unshow()']['uses `bprevious`'] = function()
   eq(buf_get_option(layout['buf'], 'buflisted'), true)
 end
 
-T['unshow()']['creates a normal buffer'] = function()
+T['unshow()']['creates a stand-in listed buffer'] = function()
   validate_unshow_normal_buf('unshow', layout)
   eq(buf_get_option(layout['buf'], 'buflisted'), true)
 end
@@ -338,7 +338,7 @@ T['delete()']['uses `bprevious`'] = function()
   eq(buf_get_option(layout['buf'], 'buflisted'), false)
 end
 
-T['delete()']['creates a normal buffer'] = function()
+T['delete()']['creates a stand-in listed buffer'] = function()
   validate_unshow_normal_buf('delete', layout)
   eq(buf_get_option(layout['buf'], 'buflisted'), false)
 end
@@ -378,7 +378,7 @@ T['wipeout()']['uses `bprevious`'] = function()
   eq(child.api.nvim_buf_is_valid(layout['buf']), false)
 end
 
-T['wipeout()']['creates a normal buffer'] = function()
+T['wipeout()']['creates a stand-in listed buffer'] = function()
   validate_unshow_normal_buf('wipeout', layout)
   eq(child.api.nvim_buf_is_valid(layout['buf']), false)
 end

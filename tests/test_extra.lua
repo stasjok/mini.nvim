@@ -237,9 +237,7 @@ T['setup()']['creates side effects'] = function()
   eq(child.lua_get('type(_G.MiniExtra)'), 'table')
 end
 
-T['General'] = new_set()
-
-T['General']['pickers are added to `MiniPick.registry`'] = new_set(
+T['setup()']['pickers are added to `MiniPick.registry`'] = new_set(
   { parametrize = { { 'pick_first' }, { 'extra_first' } } },
   {
     test = function(init_order)
@@ -260,6 +258,16 @@ T['General']['pickers are added to `MiniPick.registry`'] = new_set(
     end,
   }
 )
+
+T['setup()']['does not override user picker in `MiniPick.registry`'] = function()
+  child.lua([[
+    require('mini.pick').setup()
+    MiniPick.registry.buf_lines = function() _G.hello = 'world' end
+  ]])
+  load_module()
+  child.lua_notify('MiniPick.registry.buf_lines()')
+  eq(child.lua_get('_G.hello'), 'world')
+end
 
 T['gen_ai_spec'] = new_set({ hooks = { pre_case = load_module } })
 
@@ -728,11 +736,36 @@ T['pickers'] = new_set({
       load_module()
       child.lua([[require('mini.pick').setup()]])
 
-      -- Make picker border differentiable in screenshots
-      child.cmd('hi MiniPickBorder ctermfg=2')
+      -- Make some UI elements differentiable in screenshots
+      child.cmd('hi MiniPickBorder guifg=Red ctermfg=1')
+      child.cmd('hi MiniPickPrompt guifg=Green ctermfg=2')
+      child.cmd('hi MiniPickPromptCaret guifg=Yellow ctermfg=3')
+      child.cmd('hi MiniPickPromptPrefix guifg=Azure ctermfg=4')
     end,
   },
 })
+
+local validate_active_picker = function() eq(child.lua_get('require("mini.pick").get_picker_state() ~= nil'), true) end
+
+local validate_global_source_options = function(picker_start, check_preview, check_choose)
+  child.lua([[
+    MiniPick.config.source.preview = function(buf_id, item)
+      vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, { "My preview" })
+      _G.custom_preview = true
+    end
+    MiniPick.config.source.choose = function(item)
+      _G.custom_choose = true
+    end
+  ]])
+  picker_start()
+  local ref_custom_preview = check_preview == false and vim.NIL or true
+  type_keys('<Tab>')
+  eq(child.lua_get('_G.custom_preview'), ref_custom_preview)
+  local ref_custom_choose = check_choose == false and vim.NIL or true
+  type_keys('<CR>')
+  eq(child.lua_get('_G.custom_choose'), ref_custom_choose)
+  type_keys('<C-c>')
+end
 
 T['pickers']["validate no 'mini.pick'"] = function()
   child.lua([[require = function(module) error() end]])
@@ -794,6 +827,11 @@ T['pickers']['buf_lines()']['works'] = function()
 
   -- Should return chosen value with proper structure
   eq(child.lua_get('_G.return_item'), { bufnr = buffers[1], lnum = 2, text = 'buffer-1\0002\000  buffer 1' })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_buf_lines()
+  validate_active_picker()
 end
 
 T['pickers']['buf_lines()']['respects `local_opts.scope`'] = function()
@@ -887,11 +925,173 @@ T['pickers']['buf_lines()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['buf_lines()']['respects global source options'] = function()
+  validate_global_source_options(pick_buf_lines, true, true)
+end
+
 T['pickers']['buf_lines()']['validates arguments'] = function()
   local validate = function(local_opts, error_pattern)
     expect.error(function() child.lua('MiniExtra.pickers.buf_lines(...)', { local_opts }) end, error_pattern)
   end
   validate({ scope = '1' }, '`pickers%.buf_lines`.*"scope".*"1".*one of')
+end
+
+T['pickers']['colorschemes()'] = new_set()
+
+local pick_colorschemes = forward_lua_notify('MiniExtra.pickers.colorschemes')
+
+T['pickers']['colorschemes()']['works'] = function()
+  child.lua_notify('_G.return_item = MiniExtra.pickers.colorschemes()')
+  validate_picker_name('Colorschemes')
+  type_keys('^mini')
+
+  -- Should find minicyan and minischeme
+  child.expect_screenshot({ ignore_text = { 14 } })
+
+  -- Should have proper preview
+  type_keys('<Tab>')
+  eq(child.g.colors_name, 'minicyan')
+  child.expect_screenshot({ ignore_text = { 14 } })
+
+  -- Should properly choose
+  type_keys('<CR>')
+  eq(child.g.colors_name, 'minicyan')
+  expect.match(child.cmd_capture('hi Normal'), 'guibg=#0a2a2a')
+
+  -- Should return chosen value
+  eq(child.lua_get('_G.return_item'), 'minicyan')
+end
+
+T['pickers']['colorschemes()']['works with preview'] = function()
+  pick_colorschemes()
+  type_keys('^mini')
+
+  -- Preview should actually apply the color scheme
+  local validate = function(ref_name, ref_normal_bg)
+    eq(child.g.colors_name, ref_name)
+    expect.match(child.cmd_capture('hi Normal'), 'guibg=' .. ref_normal_bg)
+    child.expect_screenshot({ ignore_text = { 14 } })
+  end
+
+  type_keys('<Tab>')
+  validate('minicyan', '#0a2a2a')
+
+  type_keys('<C-n>')
+  validate('minischeme', '#112641')
+
+  type_keys('<C-p>')
+  validate('minicyan', '#0a2a2a')
+end
+
+T['pickers']['colorschemes()']['previews with original background'] = function()
+  child.cmd('set rtp+=tests/dir-extra/colorschemes')
+
+  child.o.background = 'dark'
+  pick_colorschemes()
+  type_keys('^mini', '<C-n>', '<Tab>')
+  eq(child.o.background, 'light')
+  eq(child.g.colors_name, 'miniforcebg')
+
+  type_keys('<C-n>')
+  eq(child.o.background, 'dark')
+  eq(child.g.colors_name, 'minischeme')
+end
+
+T['pickers']['colorschemes()']['can choose marked'] = function()
+  pick_colorschemes()
+  type_keys('^mini')
+  type_keys('<C-x>', '<C-n>', '<C-x>', '<M-CR>')
+  eq(child.g.colors_name, 'minicyan')
+end
+
+T['pickers']['colorschemes()']["can cancel with 'mini.colors'"] = function()
+  child.cmd('colorscheme minischeme')
+  -- These customizations should persist even if there was preview
+  child.api.nvim_set_hl(0, 'Normal', { fg = '#000000' })
+  child.g.terminal_color_0 = '#010101'
+
+  child.lua_notify('_G.return_item = MiniExtra.pickers.colorschemes()')
+  type_keys('^mini', '<Tab>')
+  eq(child.g.colors_name, 'minicyan')
+
+  -- Should trigger 'ColorScheme' event
+  child.cmd('au ColorScheme * lua _G.n = (_G.n or 0) + 1')
+  type_keys('<C-c>')
+  eq(child.lua_get('_G.n'), child.fn.has('nvim-0.10') == 1 and 1 or 2)
+
+  eq(child.lua_get('_G.return_item'), vim.NIL)
+  eq(child.g.colors_name, 'minischeme')
+  expect.match(child.cmd_capture('hi Normal'), 'guifg=#000000')
+  eq(child.g.terminal_color_0, '#010101')
+end
+
+T['pickers']['colorschemes()']["can cancel without 'mini.colors'"] = function()
+  -- Mock absent 'mini.colors'
+  child.lua([[
+    local require_orig = require
+    require = function(modname)
+      if modname == 'mini.colors' then error("module 'mini.colors' not found") end
+      return require_orig(modname)
+    end
+  ]])
+
+  child.cmd('colorscheme minischeme')
+  -- These customizations can not persist even if there was preview
+  child.api.nvim_set_hl(0, 'Normal', { fg = '#000000' })
+  child.g.terminal_color_0 = '#010101'
+
+  child.lua_notify('_G.return_item = MiniExtra.pickers.colorschemes()')
+  type_keys('^mini', '<Tab>')
+  eq(child.g.colors_name, 'minicyan')
+
+  type_keys('<C-c>')
+
+  eq(child.lua_get('_G.return_item'), vim.NIL)
+  eq(child.g.colors_name, 'minischeme')
+  expect.match(child.cmd_capture('hi Normal'), 'guifg=#e2e98f')
+  eq(child.g.terminal_color_0, '#112641')
+
+  -- Should work if there is no `g:colors_name` defined before starting picker
+  child.g.colors_name = nil
+  pick_colorschemes()
+  type_keys('^mini', '<Tab>', '<C-c>')
+  eq(child.cmd_capture('messages'), '')
+end
+
+T['pickers']['colorschemes()']['restores original color scheme only if needed'] = function()
+  pick_colorschemes()
+  child.cmd('au ColorScheme * lua _G.n = (_G.n or 0) + 1')
+  type_keys('<C-c>')
+  eq(child.lua_get('_G.n'), vim.NIL)
+end
+
+T['pickers']['colorschemes()']['respects `local_opts.names`'] = function()
+  pick_colorschemes({ names = { 'randomhue', 'minischeme' } })
+  eq(get_picker_items(), { 'randomhue', 'minischeme' })
+  type_keys('<Tab>')
+  eq(child.g.colors_name, 'randomhue')
+  type_keys('<C-c>')
+
+  -- Should validate
+  expect.error(function() child.lua('MiniExtra.pickers.colorschemes({ names = 1 })') end, '`names`.*array')
+  expect.error(function() child.lua('MiniExtra.pickers.colorschemes({ names = { "xxx" } })') end, '"xxx".*not')
+end
+
+T['pickers']['colorschemes()']['respects `local_opts.preview_hl_groups`'] = function()
+  pick_colorschemes({ preview_hl_groups = { 'Normal', 'MiniPickBorder' } })
+  type_keys('^mini', '<Tab>')
+  child.expect_screenshot({ ignore_text = { 14 } })
+
+  -- Should validate
+  expect.error(
+    function() child.lua('MiniExtra.pickers.colorschemes({ preview_hl_groups = 1 })') end,
+    '`preview_hl_groups`.*array'
+  )
+end
+
+T['pickers']['colorschemes()']['respects `opts`'] = function()
+  pick_colorschemes({}, { source = { name = 'My name' } })
+  validate_picker_name('My name')
 end
 
 T['pickers']['commands()'] = new_set()
@@ -904,12 +1104,12 @@ T['pickers']['commands()']['works'] = function()
   child.lua_notify('_G.return_item = MiniExtra.pickers.commands()')
   validate_picker_name('Commands')
   type_keys("'chdir")
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 9 } })
 
   -- Should have proper preview
   type_keys('<Tab>')
   -- - No data for built-in commands is yet available
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 9 } })
 
   -- Should properly choose
   type_keys('<CR>')
@@ -918,6 +1118,11 @@ T['pickers']['commands()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), 'chdir')
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_commands()
+  validate_active_picker()
 end
 
 T['pickers']['commands()']['respects user commands'] = function()
@@ -932,9 +1137,9 @@ T['pickers']['commands()']['respects user commands'] = function()
 
   -- Should have proper preview with data
   type_keys('<Tab>')
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 24 } })
   type_keys('<C-n>')
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_text = { 24 } })
 
   -- Should on choose execute command if it is without arguments
   type_keys('<C-p>', '<CR>')
@@ -946,6 +1151,10 @@ end
 T['pickers']['commands()']['respects `opts`'] = function()
   pick_commands({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['commands()']['respects global source options'] = function()
+  validate_global_source_options(pick_commands, false, false)
 end
 
 T['pickers']['diagnostic()'] = new_set({
@@ -1006,6 +1215,11 @@ T['pickers']['diagnostic()']['works'] = function()
     message  = 'Error 2',
     text     = 'E │ tests/dir-extra/mocks/diagnostic-file-1 │ Error 2',
   })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_diagnostic()
+  validate_active_picker()
 end
 
 T['pickers']['diagnostic()']['respects `local_opts.get_opts`'] = function()
@@ -1087,6 +1301,10 @@ T['pickers']['diagnostic()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['diagnostic()']['respects global source options'] = function()
+  validate_global_source_options(pick_diagnostic, true, false)
+end
+
 T['pickers']['diagnostic()']['does not modify diagnostic table'] = function()
   local diagnostic_current = child.lua_get('vim.diagnostic.get()')
   pick_diagnostic()
@@ -1154,6 +1372,11 @@ T['pickers']['explorer()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), { fs_type = 'file', path = init_dir .. '/file3', text = 'file3' })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_explorer()
+  validate_active_picker()
 end
 
 T['pickers']['explorer()']['works with query'] = function()
@@ -1188,12 +1411,14 @@ end
 
 T['pickers']['explorer()']['respects `local_opts.cwd`'] = function()
   local validate = function(cwd, ref_picker_cwd)
-    local nvim_cwd = child.fn.getcwd()
+    local init_win_id, init_cwd = child.api.nvim_get_current_win(), child.fn.getcwd()
+    local cwd_absolute = cwd == '..' and vim.fn.fnamemodify(init_cwd, ':h') or full_path(cwd)
     pick_explorer({ cwd = cwd })
     validate_picker_cwd(ref_picker_cwd)
 
-    -- Neovim's directory should not change
-    eq(child.fn.getcwd(), nvim_cwd)
+    -- Picker window's directory should change, but other should stay the same
+    eq(child.fn.getcwd(0), cwd_absolute)
+    eq(child.fn.getcwd(init_win_id), init_cwd)
 
     -- Cleanup
     stop_picker()
@@ -1279,6 +1504,10 @@ T['pickers']['explorer()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['explorer()']['respects global source options'] = function()
+  validate_global_source_options(pick_explorer, true, false)
+end
+
 T['pickers']['explorer()']['validates arguments'] = function()
   local validate = function(local_opts, error_pattern)
     expect.error(function() child.lua('MiniExtra.pickers.explorer(...)', { local_opts }) end, error_pattern)
@@ -1336,11 +1565,18 @@ T['pickers']['git_branches()']['works'] = function()
   type_keys('<CR>')
 
   eq(get_lines(), log_lines)
-  eq(buf_init ~= child.api.nvim_get_current_buf(), true)
+  local buf_cur = child.api.nvim_get_current_buf()
+  eq(buf_init ~= buf_cur, true)
   eq(child.bo.buftype, 'nofile')
+  eq(child.api.nvim_buf_get_name(buf_cur), 'miniextra://' .. buf_cur .. '/main')
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), branch_lines[1])
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_git_branches()
+  validate_active_picker()
 end
 
 T['pickers']['git_branches()']['respects `local_opts.path`'] = function()
@@ -1398,6 +1634,10 @@ T['pickers']['git_branches()']['respects `opts`'] = function()
   mock_git_repo(repo_dir)
   pick_git_branches({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['git_branches()']['respects global source options'] = function()
+  validate_global_source_options(pick_git_branches, false, false)
 end
 
 T['pickers']['git_branches()']['validates git'] = function()
@@ -1471,13 +1711,20 @@ T['pickers']['git_commits()']['works'] = function()
   type_keys('<CR>')
 
   eq(get_lines(), show_commit_lines)
-  eq(buf_init ~= child.api.nvim_get_current_buf(), true)
+  local buf_cur = child.api.nvim_get_current_buf()
+  eq(buf_init ~= buf_cur, true)
   eq(child.bo.buftype, 'nofile')
+  eq(child.api.nvim_buf_get_name(buf_cur), 'miniextra://' .. buf_cur .. '/1111111')
   eq(child.bo.syntax, 'git')
   eq(child.bo.filetype, 'git')
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), log_lines[#log_lines])
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_git_commits()
+  validate_active_picker()
 end
 
 T['pickers']['git_commits()']['respects `local_opts.path`'] = function()
@@ -1520,6 +1767,10 @@ T['pickers']['git_commits()']['respects `opts`'] = function()
   mock_git_repo(repo_dir)
   pick_git_commits({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['git_commits()']['respects global source options'] = function()
+  validate_global_source_options(pick_git_branches, false, false)
 end
 
 T['pickers']['git_commits()']['validates git'] = function()
@@ -1579,6 +1830,11 @@ T['pickers']['git_files()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), 'git-files/git-file-1')
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_git_files()
+  validate_active_picker()
 end
 
 T['pickers']['git_files()']['respects `local_opts.path`'] = function()
@@ -1651,6 +1907,14 @@ T['pickers']['git_files()']['respects `opts`'] = function()
   mock_git_repo(repo_dir)
   pick_git_files({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['git_files()']['respects global source options'] = function()
+  local repo_dir = test_dir_absolute
+  child.fn.chdir(repo_dir)
+  mock_git_repo(repo_dir)
+  mock_cli_return({ 'git-files/git-file-1', 'git-files/git-file-2' })
+  validate_global_source_options(pick_git_files, true, true)
 end
 
 T['pickers']['git_files()']['validates git'] = function()
@@ -1727,6 +1991,11 @@ T['pickers']['git_hunks()']['works'] = function()
   eq(return_item_keys, { 'header', 'hunk', 'lnum', 'path', 'text' })
   eq(return_item.path, 'git-files/git-file-2')
   eq(return_item.lnum, 12)
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_git_hunks()
+  validate_active_picker()
 end
 
 T['pickers']['git_hunks()']['respects `local_opts.n_context`'] = new_set({ parametrize = { { 0 }, { 20 } } }, {
@@ -1842,6 +2111,15 @@ T['pickers']['git_hunks()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['git_hunks()']['respects global source options'] = function()
+  local repo_dir = test_dir_absolute
+  child.fn.chdir(repo_dir)
+  mock_git_repo(repo_dir)
+  local diff_lines = child.fn.readfile(join_path('mocks', 'git-diff'))
+  mock_cli_return(diff_lines)
+  validate_global_source_options(pick_git_hunks, false, true)
+end
+
 T['pickers']['git_hunks()']['validates git'] = function()
   -- CLI
   mock_fn_executable({})
@@ -1949,6 +2227,11 @@ T['pickers']['hipatterns()']['works'] = function()
     end_col = 4,
     text = 'minmax │ Buffer_3│3│1│max',
   })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_hipatterns()
+  validate_active_picker()
 end
 
 T['pickers']['hipatterns()']['respects `local_opts.scope`'] = function()
@@ -1977,6 +2260,11 @@ T['pickers']['hipatterns()']['respects `opts`'] = function()
   setup_hipatterns()
   pick_hipatterns({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['hipatterns()']['respects global source options'] = function()
+  setup_hipatterns()
+  validate_global_source_options(pick_hipatterns, true, true)
 end
 
 T['pickers']['hipatterns()']["checks for present 'mini.hipatterns'"] = function()
@@ -2049,6 +2337,11 @@ T['pickers']['history()']['works'] = function()
   -- Should return chosen value with proper structure
   type_keys('<CR>')
   eq(child.lua_get('_G.return_item'), ': lua _G.n = _G.n + 2')
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_history()
+  validate_active_picker()
 end
 
 T['pickers']['history()']['works for command-line history'] = function()
@@ -2065,9 +2358,8 @@ T['pickers']['history()']['works for command-line history'] = function()
   -- Should work with aliases
   pick_history({ scope = ':' })
   validate_picker_name('History (:)')
-  -- - NOTE: now it doesn't update command line history, but probably should
-  --   (just couldn't find a way to achieve this)
-  eq(get_picker_items(), { ': lua _G.n = _G.n + 2', ': lua _G.n = _G.n + 1' })
+  -- Should update command line history
+  eq(get_picker_items(), { ': lua _G.n = _G.n + 1', ': lua _G.n = _G.n + 2' })
 end
 
 T['pickers']['history()']['works for search history'] = function()
@@ -2088,6 +2380,7 @@ T['pickers']['history()']['works for search history'] = function()
   -- Should work with aliases
   pick_history({ scope = '/' })
   validate_picker_name('History (/)')
+  -- - Should have updated the history
   eq(get_picker_items(), { '/ aaa', '/ bbb' })
   stop_picker()
 
@@ -2131,9 +2424,19 @@ T['pickers']['history()']['works for input history'] = function()
   eq(get_picker_items(), { '@ input 2', '@ input 1' })
 end
 
+T['pickers']['history()']['works with too wide entries'] = function()
+  child.set_size(10, 15)
+  pick_history({ scope = 'cmd' })
+  eq(get_picker_items(), { ': lua _G.n = _G.n + 2', ': lua _G.n = _G.n + 1' })
+end
+
 T['pickers']['history()']['respects `opts`'] = function()
   pick_history({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['history()']['respects global source options'] = function()
+  validate_global_source_options(pick_history, false, false)
 end
 
 T['pickers']['history()']['validates arguments'] = function()
@@ -2152,8 +2455,8 @@ T['pickers']['hl_groups()']['works'] = function()
 
   child.lua_notify('_G.return_item = MiniExtra.pickers.hl_groups()')
   validate_picker_name('Highlight groups')
-  type_keys('^Diff')
-  child.expect_screenshot({ ignore_lines = { 9 } })
+  type_keys('^Spell')
+  child.expect_screenshot({ ignore_text = { 9 } })
 
   -- Should use same group for line highlighting
   local matches = get_picker_matches().all
@@ -2166,15 +2469,20 @@ T['pickers']['hl_groups()']['works'] = function()
 
   -- Should have proper preview
   type_keys('<Tab>')
-  child.expect_screenshot({ ignore_lines = { 9 } })
+  child.expect_screenshot({ ignore_text = { 9 } })
 
   -- Should properly choose
   type_keys('<CR>')
-  eq(child.fn.getcmdline(), 'hi DiffAdd guibg=#343700')
-  eq(child.fn.getcmdpos(), 25)
+  eq(child.fn.getcmdline(), 'hi SpellBad cterm=undercurl gui=undercurl guisp=#eab3d9')
+  eq(child.fn.getcmdpos(), 56)
 
   -- Should return chosen value
-  eq(child.lua_get('_G.return_item'), 'DiffAdd')
+  eq(child.lua_get('_G.return_item'), 'SpellBad')
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_hl_groups()
+  validate_active_picker()
 end
 
 T['pickers']['hl_groups()']['respects non-default/linked highlight groups'] = function()
@@ -2194,6 +2502,10 @@ end
 T['pickers']['hl_groups()']['respects `opts`'] = function()
   pick_hl_groups({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['hl_groups()']['respects global source options'] = function()
+  validate_global_source_options(pick_hl_groups, false, false)
 end
 
 T['pickers']['keymaps()'] = new_set()
@@ -2247,6 +2559,11 @@ T['pickers']['keymaps()']['works'] = function()
     maparg = ref_maparg,
     text = 'n @ │ <Space>b   │ <Cmd>lua _G.res = "buf"<CR>',
   })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_keymaps()
+  validate_active_picker()
 end
 
 T['pickers']['keymaps()']['can be chosen in non-Normal modes'] = function()
@@ -2333,6 +2650,10 @@ end
 T['pickers']['keymaps()']['respects `opts`'] = function()
   pick_keymaps({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['keymaps()']['respects global source options'] = function()
+  validate_global_source_options(pick_keymaps, false, false)
 end
 
 T['pickers']['keymaps()']['validates arguments'] = function()
@@ -2454,12 +2775,12 @@ T['pickers']['list()']['works for `change`'] = function()
 
   -- Should properly choose by moving to position
   type_keys('<CR>')
-  eq(get_cursor(), { 1, 9 })
+  eq(get_cursor(), { 1, 10 })
 
   -- Should return chosen value
   validate_partial_equal_arr(
     { child.lua_get('_G.return_item') },
-    { { bufnr = 1, col = 10, coladd = 0, lnum = 1, text = path .. '│1│10' } }
+    { { bufnr = 1, col = 11, coladd = 0, lnum = 1, text = path .. '│1│11' } }
   )
 end
 
@@ -2481,6 +2802,14 @@ T['pickers']['list()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['list()']['respects global source options'] = function()
+  local path = real_file('a.lua')
+  child.cmd('edit ' .. path)
+  type_keys('G')
+  type_keys('gg')
+  validate_global_source_options(function() pick_list({ scope = 'jump' }) end, true, false)
+end
+
 T['pickers']['list()']['validates arguments'] = function()
   local validate = function(local_opts, error_pattern)
     expect.error(function() child.lua('MiniExtra.pickers.list(...)', { local_opts }) end, error_pattern)
@@ -2497,24 +2826,32 @@ local pick_lsp = forward_lua_notify('MiniExtra.pickers.lsp')
 local setup_lsp = function()
   child.set_size(15, 90)
 
-  -- Mock
-  local mock_file = join_path(test_dir, 'mocks', 'lsp.lua')
-  local lua_cmd = string.format('dofile(%s)', vim.inspect(mock_file))
-  child.lua(lua_cmd)
-
-  -- Set up
+  -- Set up file
   local file_path = real_file('a.lua')
   child.cmd('edit ' .. file_path)
 
+  -- Mock server
+  child.cmd('luafile tests/mock-lsp/extra.lua')
+
   return file_path, full_path(file_path)
 end
+
+local scope_to_request = {
+  declaration = 'textDocument/declaration',
+  definition = 'textDocument/definition',
+  document_symbol = 'textDocument/documentSymbol',
+  implementation = 'textDocument/implementation',
+  references = 'textDocument/references',
+  type_definition = 'textDocument/typeDefinition',
+  workspace_symbol = 'workspace/symbol',
+}
 
 local validate_location_scope = function(scope)
   local file_path, file_path_full = setup_lsp()
 
   mock_slash_path_sep()
   pick_lsp({ scope = scope })
-  eq(child.lua_get('_G.lsp_buf_calls'), { scope })
+  eq(child.lua_get('_G.lsp_requests'), { scope_to_request[scope] })
   validate_picker_name('LSP (' .. scope .. ')')
   child.expect_screenshot()
 
@@ -2529,14 +2866,28 @@ local validate_location_scope = function(scope)
     path = file_path_full,
     lnum = 3,
     col = 16,
+    end_lnum = 3,
+    end_col = 17,
     text = file_path:gsub('\\', '/') .. '│3│16│   x = math.max(a, 2),',
+    user_data = {
+      range = { start = { line = 2, character = 15 }, ['end'] = { line = 2, character = 16 } },
+      uri = 'file://' .. (helpers.is_windows() and '/' or '') .. file_path_full:gsub('\\', '/'),
+    },
   }
+  if child.fn.has('nvim-0.11') == 0 then
+    ref_item.end_lnum, ref_item.end_col = nil, nil
+  end
+  if child.fn.has('nvim-0.10') == 0 then ref_item.user_data = nil end
   eq(get_picker_items()[1], ref_item)
 
   -- Should properly choose by moving to the position
   type_keys('<CR>')
   validate_buf_name(0, file_path)
   eq(get_cursor(), { 3, 15 })
+
+  -- Should open path in relative form for nicer `:buffers`.
+  -- It isn't testing much as `vim.lsp.buf` is mocked, but just in case.
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]' .. vim.pesc(file_path:gsub('\\', '/')))
 end
 
 local validate_symbol_scope = function(scope, skip_preview)
@@ -2545,8 +2896,8 @@ local validate_symbol_scope = function(scope, skip_preview)
   mock_slash_path_sep()
   pick_lsp({ scope = scope })
   validate_picker_name('LSP (' .. scope .. ')')
-  eq(child.lua_get('_G.lsp_buf_calls'), { scope })
-  if scope == 'workspace_symbol' then eq(child.lua_get('_G.workspace_symbol_query'), '') end
+  eq(child.lua_get('_G.lsp_requests'), { scope_to_request[scope] })
+  if scope == 'workspace_symbol' then eq(child.lua_get('_G.params.query'), '') end
   child.expect_screenshot()
 
   -- Should highlight some symbols
@@ -2583,16 +2934,25 @@ local validate_symbol_scope = function(scope, skip_preview)
     path = file_path_full,
     lnum = 1,
     col = 7,
+    end_lnum = 1,
+    end_col = 8,
     kind = 'Number',
     text = text_prefix .. '[' .. kind_name .. '] a',
     hl = ref_extmark_data[1].hl_group,
   }
+  if child.fn.has('nvim-0.11') == 0 then
+    ref_item.end_lnum, ref_item.end_col = nil, nil
+  end
   eq(get_picker_items()[1], ref_item)
 
   -- Should properly choose by moving to the position
   type_keys('<CR>')
   validate_buf_name(0, file_path)
   eq(get_cursor(), { 1, 6 })
+
+  -- Should open path in relative form for nicer `:buffers`.
+  -- It isn't testing much as `vim.lsp.buf` is mocked, but just in case.
+  expect.match(child.cmd_capture('buffers'):gsub('\\', '/'), '[^/]' .. vim.pesc(file_path:gsub('\\', '/')))
 end
 
 local validate_symbol_scope_with_tweaked_kind = function(scope, tweak_lsp_kind_mode)
@@ -2630,7 +2990,7 @@ T['pickers']['lsp()']['works for `references`'] = function()
   mock_slash_path_sep()
   pick_lsp({ scope = 'references' })
   validate_picker_name('LSP (references)')
-  eq(child.lua_get('_G.lsp_buf_calls'), { 'references' })
+  eq(child.lua_get('_G.lsp_requests'), { 'textDocument/references' })
   child.expect_screenshot()
 
   -- Should preview position
@@ -2644,8 +3004,18 @@ T['pickers']['lsp()']['works for `references`'] = function()
     path = file_path_full,
     lnum = 3,
     col = 16,
+    end_lnum = 3,
+    end_col = 17,
     text = file_path:gsub('\\', '/') .. '│3│16│   x = math.max(a, 2),',
+    user_data = {
+      uri = 'file://' .. (helpers.is_windows() and '/' or '') .. file_path_full:gsub('\\', '/'),
+      range = { start = { line = 2, character = 15 }, ['end'] = { line = 2, character = 16 } },
+    },
   }
+  if child.fn.has('nvim-0.11') == 0 then
+    ref_item.end_lnum, ref_item.end_col = nil, nil
+  end
+  if child.fn.has('nvim-0.10') == 0 then ref_item.user_data = nil end
   eq(get_picker_items()[2], ref_item)
 
   -- Should properly choose by moving to the position
@@ -2673,13 +3043,18 @@ T['pickers']['lsp()']['respects `local_opts.symbol_query`'] = function()
   setup_lsp()
 
   pick_lsp({ scope = 'workspace_symbol', symbol_query = 'aaa' })
-  eq(child.lua_get('_G.workspace_symbol_query'), 'aaa')
+  eq(child.lua_get('_G.params.query'), 'aaa')
 end
 
 T['pickers']['lsp()']['respects `opts`'] = function()
   setup_lsp()
   pick_lsp({ scope = 'references' }, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['lsp()']['respects global source options'] = function()
+  setup_lsp()
+  validate_global_source_options(function() pick_lsp({ scope = 'document_symbol' }) end, true, false)
 end
 
 T['pickers']['lsp()']['validates arguments'] = function()
@@ -2751,6 +3126,11 @@ T['pickers']['marks()']['works'] = function()
   local path_slash = path:gsub('\\', '/')
   local ref_item = { col = 6, lnum = 1, path = path_slash, text = 'A │ ' .. path_slash .. '│1│6' }
   eq(child.lua_get('_G.return_item'), ref_item)
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_marks()
+  validate_active_picker()
 end
 
 T['pickers']['marks()']['respects `local_opts.scope`'] = function()
@@ -2776,6 +3156,11 @@ end
 T['pickers']['marks()']['respects `opts`'] = function()
   pick_marks({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['marks()']['respects global source options'] = function()
+  setup_marks()
+  validate_global_source_options(pick_marks, true, true)
 end
 
 T['pickers']['marks()']['validates arguments'] = function()
@@ -2819,6 +3204,11 @@ T['pickers']['oldfiles()']['works'] = function()
   --stylua: ignore
   -- Should return chosen value with proper structure
   eq(child.lua_get('_G.return_item'), path_1_slash)
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_oldfiles()
+  validate_active_picker()
 end
 
 T['pickers']['oldfiles()']['works with empty `v:oldfiles`'] = function()
@@ -2866,6 +3256,13 @@ T['pickers']['oldfiles()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['oldfiles()']['respects global source options'] = function()
+  local path_1, path_2 = real_file('LICENSE'), make_testpath('mocks', 'diagnostic.lua')
+  local ref_oldfiles = { full_path(path_1), full_path(path_2), 'not-existing' }
+  child.v.oldfiles = ref_oldfiles
+  validate_global_source_options(pick_oldfiles, true, true)
+end
+
 T['pickers']['oldfiles()']['respects `opts.source.cwd`'] = function()
   child.set_size(10, 70)
   local ref_oldfiles = { full_path(real_file('LICENSE')), full_path(make_testpath('mocks', 'diagnostic.lua')) }
@@ -2888,11 +3285,11 @@ T['pickers']['options()']['works'] = function()
   child.lua_notify('_G.return_item = MiniExtra.pickers.options()')
   validate_picker_name('Options (all)')
   type_keys('^cursor')
-  child.expect_screenshot({ ignore_lines = { 34 } })
+  child.expect_screenshot({ ignore_text = { 34 } })
 
   -- Should have proper preview
   type_keys('<Tab>')
-  child.expect_screenshot({ ignore_lines = { 34 } })
+  child.expect_screenshot({ ignore_text = { 34 } })
 
   -- - Should use proper highlight group for headers
   validate_partial_equal_arr(get_extra_picker_extmarks(0, -1), {
@@ -2907,6 +3304,11 @@ T['pickers']['options()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), { text = 'cursorbind', info = child.api.nvim_get_option_info('cursorbind') })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_options()
+  validate_active_picker()
 end
 
 T['pickers']['options()']['respects set options'] = function()
@@ -2943,10 +3345,12 @@ T['pickers']['options()']['correctly chooses non-binary options'] = function()
 end
 
 T['pickers']['options()']['correctly previews deprecated options'] = function()
+  -- There shouldn't be "deprecated" options listed after Neovim 0.11 refactors
+  if child.fn.has('nvim-0.11') == 1 then return end
   child.set_size(10, 115)
   pick_options()
   type_keys('^aleph', '<Tab>')
-  child.expect_screenshot({ ignore_lines = { 9 } })
+  child.expect_screenshot({ ignore_text = { 9 } })
 end
 
 T['pickers']['options()']['respects `local_opts.scope`'] = function()
@@ -2973,6 +3377,10 @@ end
 T['pickers']['options()']['respects `opts`'] = function()
   pick_options({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['options()']['respects global source options'] = function()
+  validate_global_source_options(pick_options, false, false)
 end
 
 T['pickers']['options()']['validates arguments'] = function()
@@ -3025,6 +3433,11 @@ T['pickers']['registers()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), { regname = 'a', regcontents = 'Register a', text = 'a │ Register a' })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_registers()
+  validate_active_picker()
 end
 
 T['pickers']['registers()']['can be chosen in non-Normal modes'] = function()
@@ -3100,6 +3513,11 @@ T['pickers']['registers()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['registers()']['respects global source options'] = function()
+  setup_registers()
+  validate_global_source_options(pick_registers, false, false)
+end
+
 T['pickers']['spellsuggest()'] = new_set()
 
 local pick_spellsuggest = forward_lua_notify('MiniExtra.pickers.spellsuggest')
@@ -3129,6 +3547,11 @@ T['pickers']['spellsuggest()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), { index = 1, text = 'world' })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_spellsuggest()
+  validate_active_picker()
 end
 
 T['pickers']['spellsuggest()']['respects `local_opts.n_suggestions`'] = function()
@@ -3141,6 +3564,11 @@ T['pickers']['spellsuggest()']['respects `opts`'] = function()
   setup_spell()
   pick_spellsuggest({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['spellsuggest()']['respects global source options'] = function()
+  setup_spell()
+  validate_global_source_options(pick_spellsuggest, false, false)
 end
 
 T['pickers']['spellsuggest()']['validates arguments'] = function()
@@ -3193,6 +3621,11 @@ T['pickers']['treesitter()']['works'] = function()
     lnum = 1,
     text = ' assignment_statement (1│7 - 1│12)',
   })
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_treesitter()
+  validate_active_picker()
 end
 
 T['pickers']['treesitter()']['checks for active tree-sitter'] = function()
@@ -3203,6 +3636,11 @@ T['pickers']['treesitter()']['respects `opts`'] = function()
   setup_treesitter()
   pick_treesitter({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['treesitter()']['respects global source options'] = function()
+  setup_treesitter()
+  validate_global_source_options(pick_treesitter, true, true)
 end
 
 local setup_visits = function()
@@ -3248,6 +3686,11 @@ T['pickers']['visit_paths()']['works'] = function()
 
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), 'real-files/a.lua')
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_visit_paths()
+  validate_active_picker()
 end
 
 T['pickers']['visit_paths()']['respects `local_opts.cwd`'] = function()
@@ -3306,6 +3749,11 @@ T['pickers']['visit_paths()']['respects `opts`'] = function()
   validate_picker_name('My name')
 end
 
+T['pickers']['visit_paths()']['respects global source options'] = function()
+  setup_visits()
+  validate_global_source_options(pick_visit_paths, true, true)
+end
+
 T['pickers']['visit_paths()']["checks for present 'mini.visits'"] = function()
   child.lua([[
     local require_orig = require
@@ -3342,6 +3790,11 @@ T['pickers']['visit_labels()']['works'] = function()
 
   -- Should return chosen path
   eq(child.lua_get('_G.return_item'), 'real-files/a.lua')
+
+  -- Should work without set up 'mini.pick'
+  child.mini_unload('pick')
+  pick_visit_labels()
+  validate_active_picker()
 end
 
 T['pickers']['visit_labels()']['respects `local_opts.cwd`'] = function()
@@ -3386,6 +3839,11 @@ end
 T['pickers']['visit_labels()']['respects `opts`'] = function()
   pick_visit_labels({}, { source = { name = 'My name' } })
   validate_picker_name('My name')
+end
+
+T['pickers']['visit_labels()']['respects global source options'] = function()
+  setup_visits()
+  validate_global_source_options(pick_visit_labels, false, false)
 end
 
 T['pickers']['visit_labels()']["checks for present 'mini.visits'"] = function()

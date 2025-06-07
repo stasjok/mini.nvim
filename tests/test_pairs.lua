@@ -507,26 +507,32 @@ end
 
 T['map()/map_buf()']['respect `opts` or `pair_info` argument'] = function(fun_name)
   -- Throws error because mapping `(` should already exist
-  expect.error(function() apply_map(fun_name, [['i', '(', { action = 'open', pair = '()' }, { unique = true })]]) end)
+  expect.error(
+    function() apply_map(fun_name, [['i', '(', { action = 'open', pair = '()' }, { unique = true }]]) end,
+    '[Mm]apping.*exists'
+  )
 end
 
 T['map()/map_buf()']['create mappings for `<BS>` in new mode'] = function(fun_name)
-  expect.match(child.cmd_capture('cmap <BS>'), 'No mapping found')
-  validate_no('bs', 'c', '<>')
+  -- Should not override existing one
+  child.cmd('cnoremap <BS> <Cmd>echo "Hello"<CR>')
+  apply_map(fun_name, '"c", "<", { action = "open", pair = "<>" }')
+  expect.match(child.cmd_capture('cmap <BS>'), 'echo "Hello"')
+  child.cmd('cunmap <BS>')
 
-  apply_map(fun_name, [['c', '<', { action = 'open', pair = '<>' }]])
-
+  apply_map(fun_name, '"c", "<", { action = "open", pair = "<>" }')
+  expect.match(child.cmd_capture('cmap <BS>'), 'MiniPairs%.bs')
   validate_bs('c', '<>')
 end
 
 T['map()/map_buf()']['create mappings for `<CR>` in new mode'] = function(fun_name)
-  child.api.nvim_del_keymap('i', '<CR>')
+  -- Should not override existing one
+  child.cmd('inoremap <CR> <Cmd>echo "Hello"<CR>')
+  apply_map(fun_name, '"i", "<", { action = "open", pair = "<>" }')
+  expect.match(child.cmd_capture('imap <CR>'), 'echo "Hello"')
+  child.cmd('iunmap <CR>')
 
-  expect.match(child.cmd_capture('imap <CR>'), 'No mapping found')
-  validate_no('cr', '<>')
-
-  apply_map(fun_name, [['i', '<', { action = 'open', pair = '<>' }]])
-
+  apply_map(fun_name, '"i", "<", { action = "open", pair = "<>" }')
   expect.match(child.cmd_capture('imap <CR>'), 'MiniPairs%.cr')
   validate_cr('<>')
 end
@@ -597,7 +603,7 @@ T['unmap()/unmap_buf()']['respect `mode` argument'] = function(fun_name)
 end
 
 T['unmap()/unmap_buf()']['require explicit `pair` argument'] = function(fun_name)
-  expect.error(function() apply_unmap(fun_name, [['i', '(']]) end)
+  expect.error(function() apply_unmap(fun_name, [['i', '(']]) end, 'pair.*string')
 end
 
 T['unmap()/unmap_buf()']['allow empty string for `pair` argument to not unregister pair'] = function(fun_name)
@@ -624,6 +630,44 @@ T['Open action']['works'] = function()
 
   -- There should be no side effects
   eq(child.o.lazyredraw, false)
+end
+
+T['Open action']['works with multibyte characters'] = function()
+  -- Insert mode
+  child.lua('MiniPairs.map("i", "ы", { action = "open", pair = "ы」" } )')
+  type_keys('i', 'ы')
+  eq(get_lines(), { 'ы」' })
+  eq(get_cursor(), { 1, 2 })
+  type_keys('ы')
+  eq(get_lines(), { 'ыы」」' })
+  eq(get_cursor(), { 1, 4 })
+
+  -- - Should also work for `<BS>`
+  type_keys('<BS>')
+  eq(get_lines(), { 'ы」' })
+  eq(get_cursor(), { 1, 2 })
+
+  -- - Should also work for `<CR>`
+  type_keys('<CR>')
+  eq(get_lines(), { 'ы', '', '」' })
+  eq(get_cursor(), { 2, 0 })
+
+  -- Command-line mode
+  child.ensure_normal_mode()
+  child.lua('MiniPairs.map("c", "ы", { action = "open", pair = "ы」" } )')
+  type_keys(':', 'ы')
+  eq(child.fn.getcmdline(), 'ы」')
+  eq(child.fn.getcmdpos(), 3)
+  type_keys('ы')
+  eq(child.fn.getcmdline(), 'ыы」」')
+  eq(child.fn.getcmdpos(), 5)
+
+  -- - Should also work for `<BS>`
+  type_keys('<BS>')
+  eq(child.fn.getcmdline(), 'ы」')
+  eq(child.fn.getcmdpos(), 3)
+
+  -- Omit testing Terminal mode in the hope that it is the same
 end
 
 T['Open action']['does not break undo sequence in Insert mode'] = function()
@@ -666,6 +710,50 @@ T['Close action']['works'] = function()
   validate_close('i', ')', '()')
   validate_close('i', ']', '[]')
   validate_close('i', '}', '{}')
+end
+
+T['Close action']['works with multibyte characters'] = function()
+  -- Insert mode
+  child.lua('MiniPairs.map("i", "」", { action = "close", pair = "ы」" } )')
+  type_keys('i', 'ы', '」', '<Left>')
+  eq(get_lines(), { 'ы」' })
+  eq(get_cursor(), { 1, 2 })
+  type_keys('」')
+  eq(get_lines(), { 'ы」' })
+  eq(get_cursor(), { 1, 5 })
+  type_keys('」')
+  eq(get_lines(), { 'ы」」' })
+  eq(get_cursor(), { 1, 8 })
+
+  -- - Should also work for `<BS>`
+  type_keys('<Left>', '<Left>', '<BS>')
+  eq(get_lines(), { '」' })
+  eq(get_cursor(), { 1, 0 })
+
+  -- - Should also work for `<CR>`
+  type_keys('<C-v>', 'ы', '<CR>')
+  eq(get_lines(), { 'ы', '', '」' })
+  eq(get_cursor(), { 2, 0 })
+
+  -- Command-line mode
+  child.ensure_normal_mode()
+  child.lua('MiniPairs.map("c", "」", { action = "close", pair = "ы」" } )')
+  type_keys(':', 'ы', '」', '<Left>')
+  eq(child.fn.getcmdline(), 'ы」')
+  eq(child.fn.getcmdpos(), 3)
+  type_keys('」')
+  eq(child.fn.getcmdline(), 'ы」')
+  eq(child.fn.getcmdpos(), 6)
+  type_keys('」')
+  eq(child.fn.getcmdline(), 'ы」」')
+  eq(child.fn.getcmdpos(), 9)
+
+  -- - Should also work for `<BS>`
+  type_keys('<Left>', '<Left>', '<BS>')
+  eq(child.fn.getcmdline(), '」')
+  eq(child.fn.getcmdpos(), 1)
+
+  -- Omit testing Terminal mode in the hope that it is the same
 end
 
 T['Close action']['does not break undo sequence in Insert mode'] = function()
@@ -718,6 +806,50 @@ T['Closeopen action']['works'] = function()
   validate_close('i', '"', '""')
   validate_close('i', "'", "''")
   validate_close('i', '`', '``')
+end
+
+T['Closeopen action']['works with multibyte characters'] = function()
+  -- Insert mode
+  child.lua('MiniPairs.map("i", "」", { action = "closeopen", pair = "」」" } )')
+  type_keys('i', '」')
+  eq(get_lines(), { '」」' })
+  eq(get_cursor(), { 1, 3 })
+  type_keys('」')
+  eq(get_lines(), { '」」' })
+  eq(get_cursor(), { 1, 6 })
+  type_keys('」')
+  eq(get_lines(), { '」」」」' })
+  eq(get_cursor(), { 1, 9 })
+
+  -- - Should also work for `<BS>`
+  type_keys('<BS>')
+  eq(get_lines(), { '」」' })
+  eq(get_cursor(), { 1, 6 })
+
+  -- - Should also work for `<CR>`
+  type_keys('<Left>', '<CR>')
+  eq(get_lines(), { '」', '', '」' })
+  eq(get_cursor(), { 2, 0 })
+
+  -- Command-line mode
+  child.ensure_normal_mode()
+  child.lua('MiniPairs.map("c", "」", { action = "closeopen", pair = "」」" } )')
+  type_keys(':', '」')
+  eq(child.fn.getcmdline(), '」」')
+  eq(child.fn.getcmdpos(), 4)
+  type_keys('」')
+  eq(child.fn.getcmdline(), '」」')
+  eq(child.fn.getcmdpos(), 7)
+  type_keys('」')
+  eq(child.fn.getcmdline(), '」」」」')
+  eq(child.fn.getcmdpos(), 10)
+
+  -- - Should also work for `<BS>`
+  type_keys('<BS>')
+  eq(child.fn.getcmdline(), '」」')
+  eq(child.fn.getcmdpos(), 7)
+
+  -- Omit testing Terminal mode in the hope that it is the same
 end
 
 T['Closeopen action']['does not break undo sequence in Insert mode'] = function()

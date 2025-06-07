@@ -206,8 +206,8 @@ T['setup()']['resets <CR> mapping in quickfix window'] = function()
   child.set_size(20, 50)
   set_lines({ 'Hello World' })
   child.cmd([[cexpr ['Hello', 'Quickfix'] | copen]])
-  type_keys('<CR>')
-  child.expect_screenshot()
+  -- Should create not remappable buffer-local mapping
+  expect.match(child.cmd_capture('nmap <CR>'), '%*@<CR>')
 end
 
 T['setup()']['resets <CR> mapping in command-line window'] = function()
@@ -295,6 +295,10 @@ T['start()']['highlights unique labels with different highlight group'] = functi
 end
 
 T['start()']['uses only visible lines'] = function()
+  -- Check this only on Neovim>=0.11, as there is a slight change in
+  -- highlighting command line area
+  if child.fn.has('nvim-0.11') == 0 then return end
+
   set_lines({ '1xxx', '2xxx', '3xxx', '4xxx' })
 
   -- Make window show only lines 2 and 3
@@ -310,7 +314,7 @@ T['start()']['uses only visible lines'] = function()
   eq(get_cursor(), { 3, 3 })
 end
 
-T['start()']['does not account for current cursor position during label computation'] = new_set({
+T['start()']['ignores cursor position during label computation'] = new_set({
   parametrize = { { 1, 1 }, { 2, 0 }, { 3, 0 }, { 3, 3 } },
 }, {
   test = function(line, col)
@@ -393,7 +397,7 @@ T['start()']['stops jumping if not label was typed'] = new_set({
   end,
 })
 
-T['start()']['does not account for current window during label computation'] = new_set({
+T['start()']['ignores current window during label computation'] = new_set({
   parametrize = { { 'topright' }, { 'bottomleft' } },
 }, {
   test = function(window_name)
@@ -581,7 +585,7 @@ T['start()']['handles very big `view.n_steps_ahead`'] = function()
 end
 
 T['start()']['handles overlapping multi-step labels'] = function()
-  child.lua([[MiniJump2d.config.spotter = MiniJump2d.gen_pattern_spotter('.')]])
+  child.lua([[MiniJump2d.config.spotter = MiniJump2d.gen_spotter.pattern('.')]])
   start({ labels = 'jk', view = { n_steps_ahead = 2 } })
   child.expect_screenshot()
 
@@ -672,9 +676,9 @@ T['start()']['respects `allowed_windows`'] = new_set({
   parametrize = { { { current = false } }, { { not_current = false } }, { { current = false, not_current = false } } },
 }, {
   test = function(allowed_windows_opts)
-    -- Check this only on Neovim>=0.10, as there is a slight change in
+    -- Check this only on Neovim>=0.11, as there is a slight change in
     -- highlighting command line area
-    if child.fn.has('nvim-0.10') == 0 then return end
+    if child.fn.has('nvim-0.11') == 0 then return end
 
     child.set_size(6, 40)
     -- Make all showed messages full width
@@ -897,7 +901,9 @@ T['stop()']['works even if not jumping'] = function()
   eq(get_cursor(), init_cursor)
 end
 
-T['gen_pattern_spotter()'] = new_set({
+T['gen_spotter'] = new_set()
+
+T['gen_spotter']['pattern()'] = new_set({
   hooks = {
     pre_case = function()
       set_lines({ 'xxx x_x x.x xxx' })
@@ -908,25 +914,25 @@ T['gen_pattern_spotter()'] = new_set({
 
 local start_gen_pattern = function(pattern, side)
   local command = string.format(
-    [[MiniJump2d.start({ spotter = MiniJump2d.gen_pattern_spotter(%s, %s) })]],
+    [[MiniJump2d.start({ spotter = MiniJump2d.gen_spotter.pattern(%s, %s) })]],
     vim.inspect(pattern),
     vim.inspect(side)
   )
   child.lua(command)
 end
 
-T['gen_pattern_spotter()']['works'] = function()
+T['gen_spotter']['pattern()']['works'] = function()
   start_gen_pattern(nil, nil)
   -- By default it matches group of non-whitespace non-punctuation
   child.expect_screenshot()
 end
 
-T['gen_pattern_spotter()']['respects `pattern` argument'] = function()
+T['gen_spotter']['pattern()']['respects `pattern` argument'] = function()
   start_gen_pattern('%s', nil)
   child.expect_screenshot()
 end
 
-T['gen_pattern_spotter()']['respects `side` argument'] = new_set({
+T['gen_spotter']['pattern()']['respects `side` argument'] = new_set({
   parametrize = { { '%S+', 'start' }, { '%S+', 'end' }, { '.().', 'none' } },
 }, {
   test = function(pattern, side)
@@ -935,7 +941,7 @@ T['gen_pattern_spotter()']['respects `side` argument'] = new_set({
   end,
 })
 
-T['gen_pattern_spotter()']['handles patterns with "^" and "$"'] = new_set({
+T['gen_spotter']['pattern()']['handles patterns with "^" and "$"'] = new_set({
   parametrize = {
     { '^...', 'start' },
     { '^...', 'end' },
@@ -952,7 +958,7 @@ T['gen_pattern_spotter()']['handles patterns with "^" and "$"'] = new_set({
   end,
 })
 
-T['gen_pattern_spotter()']['works with multibyte characters'] = function()
+T['gen_spotter']['pattern()']['works with multibyte characters'] = function()
   set_lines({ 'ы ыыы ы_ы ыы' })
   start_gen_pattern('%S')
   child.expect_screenshot()
@@ -965,31 +971,83 @@ T['gen_pattern_spotter()']['works with multibyte characters'] = function()
   child.expect_screenshot()
 end
 
-T['gen_pattern_spotter()']['works in edge cases'] = function()
+T['gen_spotter']['pattern()']['works in edge cases'] = function()
   start_gen_pattern('.%f[%W]')
   child.expect_screenshot()
 end
 
-T['gen_union_spotter()'] = new_set()
+T['gen_spotter']['vimpattern'] = new_set({
+  hooks = {
+    pre_case = function()
+      set_lines({ 'x x xx_xx xx.xx xxx' })
+      child.set_size(5, 20)
+    end,
+  },
+})
 
-T['gen_union_spotter()']['works'] = function()
+local start_gen_vimpattern = function(pattern)
+  local command =
+    string.format([[MiniJump2d.start({ spotter = MiniJump2d.gen_spotter.vimpattern(%s) })]], vim.inspect(pattern))
+  child.lua(command)
+end
+
+T['gen_spotter']['vimpattern']['works'] = function()
+  start_gen_vimpattern()
+  child.expect_screenshot()
+  child.lua('MiniJump2d.stop()')
+
+  child.o.iskeyword = child.o.iskeyword .. ',.'
+  start_gen_vimpattern()
+  child.expect_screenshot()
+end
+
+T['gen_spotter']['vimpattern']['respects `pattern` argument'] = function()
+  start_gen_vimpattern('\\k*\\zs\\k')
+  child.expect_screenshot()
+end
+
+T['gen_spotter']['vimpattern']['works with multibyte characters'] = function()
+  set_lines({ 'ы ыыы ы_ы ыы.ыы ыы' })
+  start_gen_vimpattern()
+  child.expect_screenshot()
+end
+
+T['gen_spotter']['vimpattern']['works with anchored patterns'] = function()
+  child.set_size(7, 20)
+  child.api.nvim_buf_set_lines(0, 0, -1, false, { 'xxx xxx', 'xxx xxx', 'xx' })
+
+  local validate = function(pattern)
+    start_gen_vimpattern(pattern)
+    child.expect_screenshot()
+    child.lua('MiniJump2d.stop()')
+  end
+
+  validate('^')
+  validate('$')
+  validate('^...\\zs')
+  validate('\\zs...$')
+end
+
+T['gen_spotter']['union()'] = new_set()
+
+T['gen_spotter']['union()']['works'] = function()
   child.set_size(5, 25)
 
   child.lua([[
-    local nonblank_start = MiniJump2d.gen_pattern_spotter('%S+', 'start')
+    local nonblank_start = MiniJump2d.gen_spotter.pattern('%S+', 'start')
     _G.args_log = {}
     _G.spotter_1 = function(...)
       table.insert(_G.args_log, { ... })
       return nonblank_start(...)
     end
 
-    local word_start = MiniJump2d.gen_pattern_spotter('%w+', 'start')
+    local word_start = MiniJump2d.gen_spotter.pattern('%w+', 'start')
     _G.spotter_2 = function(...)
       table.insert(_G.args_log, { ... })
       return word_start(...)
     end
 
-    _G.union_spotter = MiniJump2d.gen_union_spotter(_G.spotter_1, _G.spotter_2)
+    _G.union_spotter = MiniJump2d.gen_spotter.union(_G.spotter_1, _G.spotter_2)
   ]])
 
   set_lines({ 'xxx x_x x_x xxx' })
@@ -997,15 +1055,15 @@ T['gen_union_spotter()']['works'] = function()
   child.expect_screenshot()
 end
 
-T['gen_union_spotter()']['validates arguments'] = function()
+T['gen_spotter']['union()']['validates arguments'] = function()
   expect.error(
-    function() child.lua('MiniJump2d.gen_union_spotter(function() end, 1, function() end)') end,
+    function() child.lua('MiniJump2d.gen_spotter.union(function() end, 1, function() end)') end,
     'All.*callable'
   )
 end
 
-T['gen_union_spotter()']['works with no arguments'] = function()
-  child.lua('_G.spotter = MiniJump2d.gen_union_spotter()')
+T['gen_spotter']['union()']['works with no arguments'] = function()
+  child.lua('_G.spotter = MiniJump2d.gen_spotter.union()')
 
   set_lines({ 'xxx x_x x_x xxx' })
   eq(child.lua_get('_G.spotter(1, {})'), {})
@@ -1072,13 +1130,19 @@ end
 T['builtin_opts.word_start'] = new_set({ hooks = { pre_case = function() child.set_size(5, 20) end } })
 
 T['builtin_opts.word_start']['works'] = function()
-  set_lines({ 'x xx xxx _xx' })
+  set_lines({ 'x xx xx.xx _xx' })
+  child.lua('MiniJump2d.start(MiniJump2d.builtin_opts.word_start)')
+  child.expect_screenshot()
+  child.lua('MiniJump2d.stop()')
+
+  -- Should respect 'iskeyword' when computing word boundaries
+  child.o.iskeyword = child.o.iskeyword .. ',.'
   child.lua('MiniJump2d.start(MiniJump2d.builtin_opts.word_start)')
   child.expect_screenshot()
 end
 
 T['builtin_opts.word_start']['works with multibyte characters'] = function()
-  set_lines({ 'ы ыы ыыы _ыы' })
+  set_lines({ 'ы ыы ыы.ыы _ыы' })
   child.lua('MiniJump2d.start(MiniJump2d.builtin_opts.word_start)')
   child.expect_screenshot()
 end

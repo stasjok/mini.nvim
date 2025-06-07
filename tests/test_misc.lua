@@ -75,7 +75,7 @@ T['setup()']['validates `config` argument'] = function()
 
   expect_config_error('a', 'config', 'table')
   expect_config_error({ make_global = 'a' }, 'make_global', 'table')
-  expect_config_error({ make_global = { 'a' } }, 'make_global', 'actual fields')
+  expect_config_error({ make_global = { 'a' } }, 'make_global', "exported 'mini.misc' methods")
 end
 
 T['setup()']['creates global functions'] = function()
@@ -347,6 +347,33 @@ T['setup_auto_root()']['works in buffers without path'] = function()
   eq(getcwd(), cur_dir)
 end
 
+T['setup_auto_root()']['works only for current buffer'] = function()
+  setup_auto_root()
+  init_mock_git('file')
+
+  child.lua('_G.log = {}')
+  child.lua('_G.path_1 = ' .. vim.inspect(test_file_makefile))
+  child.lua('_G.path_2 = ' .. vim.inspect(test_file_git))
+  child.cmd('autocmd DirChanged * lua table.insert(_G.log, vim.fn.getcwd())')
+
+  child.lua([[
+    vim.cmd('edit ' .. vim.fn.fnameescape(_G.path_1))
+    local buf_id_1 = vim.api.nvim_get_current_buf()
+    vim.cmd('edit ' .. vim.fn.fnameescape(_G.path_2))
+    vim.api.nvim_buf_delete(buf_id_1, { force = true })
+  ]])
+  local log = vim.tbl_map(fs_normalize, child.lua_get('_G.log'))
+  eq(log, { git_repo_path })
+  eq(child.cmd_capture('messages'), '')
+end
+
+T['setup_auto_root()']['triggers nested autocommands'] = function()
+  setup_auto_root()
+  child.cmd('au DirChanged * lua _G.hello = "world"')
+  child.cmd('edit ' .. test_file_makefile)
+  eq(child.lua_get('_G.hello'), 'world')
+end
+
 T['find_root()'] = new_set({ hooks = { post_case = cleanup_mock_git } })
 
 local find_root = function(...) return child.lua_get('MiniMisc.find_root(...)', { ... }) end
@@ -368,7 +395,8 @@ T['find_root()']['works'] = function()
 end
 
 T['find_root()']['validates arguments'] = function()
-  expect.error(function() find_root('a') end, '`buf_id`.*number')
+  expect.error(function() find_root('a') end, '`buf_id`.*buffer id')
+  expect.error(function() find_root(-1) end, '`buf_id`.*buffer id')
   expect.error(function() find_root(0, 1) end, '`names`.*string')
   expect.error(function() find_root(0, '.git') end, '`names`.*array')
   expect.error(function() find_root(0, { '.git' }, 1) end, '`fallback`.*callable')
@@ -467,36 +495,48 @@ T['setup_termbg_sync()'] = new_set({
   },
 })
 
-T['setup_termbg_sync()']['works'] = function()
-  skip_if_no_010()
-
-  local eq_log = function(ref_log)
-    eq(child.lua_get('_G.log'), ref_log)
-    child.lua('_G.log = {}')
-  end
-
-  child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
-  child.lua('MiniMisc.setup_termbg_sync()')
-
-  -- Should first ask if terminal emulator supports the feature
-  eq_log({ { '\027]11;?\007' } })
-
-  -- Mock typical response assuming '#11262d' as background color
-  child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;rgb:1111/2626/2d2d' })
-
-  -- Should sync immediately
-  eq_log({ { '\027]11;#dddddd\007' } })
-
-  -- Should sync on appropriate events
-  local validate_event = function(event, log_entry)
-    child.api.nvim_exec_autocmds(event, {})
-    eq_log({ { log_entry } })
-  end
-  validate_event('VimResume', '\027]11;#dddddd\007')
-  validate_event('ColorScheme', '\027]11;#dddddd\007')
-  validate_event('VimLeavePre', '\027]11;#11262d\007')
-  validate_event('VimSuspend', '\027]11;#11262d\007')
+local validate_termbg_augroup = function(ref)
+  local has_augroup = pcall(child.api.nvim_get_autocmds, { group = 'MiniMiscTermbgSync', event = 'TermResponse' })
+  eq(has_augroup, ref)
 end
+
+T['setup_termbg_sync()']['works'] = new_set(
+  -- Neovim=0.10 uses string sequence as response, while Neovim>=0.11 sets it
+  -- in `sequence` table field
+  { parametrize = { { '\27]11;rgb:1111/2626/2d2d' }, { { sequence = '\27]11;rgb:1111/2626/2d2d' } } } },
+  {
+    test = function(response_data)
+      skip_if_no_010()
+
+      local eq_log = function(ref_log)
+        eq(child.lua_get('_G.log'), ref_log)
+        child.lua('_G.log = {}')
+      end
+
+      child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
+      child.lua('MiniMisc.setup_termbg_sync()')
+
+      -- Should first ask if terminal emulator supports the feature
+      eq_log({ { '\027]11;?\007' } })
+
+      -- Mock typical response assuming '#11262d' as background color
+      child.api.nvim_exec_autocmds('TermResponse', { data = response_data })
+
+      -- Should sync immediately
+      eq_log({ { '\027]11;#dddddd\007' } })
+
+      -- Should sync on appropriate events
+      local validate_event = function(event, log_entry)
+        child.api.nvim_exec_autocmds(event, {})
+        eq_log({ { log_entry } })
+      end
+      validate_event('VimResume', '\027]11;#dddddd\007')
+      validate_event('ColorScheme', '\027]11;#dddddd\007')
+      validate_event('VimLeavePre', '\027]11;#11262d\007')
+      validate_event('VimSuspend', '\027]11;#11262d\007')
+    end,
+  }
+)
 
 T['setup_termbg_sync()']['can be called multiple times'] = function()
   skip_if_no_010()
@@ -541,18 +581,15 @@ T['setup_termbg_sync()']['handles no response from terminal emulator'] = functio
 
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
-  local validate_n_autocmds = function(ref_n)
-    eq(#child.api.nvim_get_autocmds({ group = 'MiniMiscTermbgSync', event = 'TermResponse' }), ref_n)
-  end
-  validate_n_autocmds(1)
+  validate_termbg_augroup(true)
 
   -- If there is no response from terminal emulator for 1s, delete autocmd
-  vim.loop.sleep(no_term_response_delay + small_time)
-  validate_n_autocmds(0)
+  child.loop.sleep(no_term_response_delay + small_time)
+  validate_termbg_augroup(false)
 
   -- Should show informative notification
   local ref_notify = {
-    '(mini.misc) `setup_termbg_sync()` did not get response from terminal emulator',
+    '(mini.misc) `setup_termbg_sync()` did not get proper response from terminal emulator',
     child.lua_get('vim.log.levels.WARN'),
   }
   eq(child.lua_get('_G.notify_log'), { ref_notify })
@@ -563,17 +600,53 @@ T['setup_termbg_sync()']['handles bad response from terminal emulator'] = functi
 
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
-  child.api.nvim_exec_autocmds('TermResponse', { data = 'something-bad' })
-  -- Should not create any delete 'TermResponse' autocommand and not create any
-  -- new ones
-  eq(#child.api.nvim_get_autocmds({ group = 'MiniMiscTermbgSync' }), 0)
 
-  -- Should show informative notification
+  -- Should not delete augroup/autocommand or show notification yet, because
+  -- proper response might comer later
+  child.api.nvim_exec_autocmds('TermResponse', { data = 'something-bad' })
+  validate_termbg_augroup(true)
+  eq(child.lua_get('_G.notify_log'), {})
+
+  child.api.nvim_exec_autocmds('TermResponse', { data = 'other-bad' })
+  validate_termbg_augroup(true)
+  eq(child.lua_get('_G.notify_log'), {})
+
+  -- After timeout delay it should cleanup and show all bad responses
+  child.loop.sleep(no_term_response_delay + small_time)
+  validate_termbg_augroup(false)
   local ref_notify = {
-    '(mini.misc) `setup_termbg_sync()` could not parse terminal emulator response "something-bad"',
+    '(mini.misc) `setup_termbg_sync()` did not get proper response from terminal emulator,'
+      .. ' only these: { "something-bad", "other-bad" }',
     child.lua_get('vim.log.levels.WARN'),
   }
   eq(child.lua_get('_G.notify_log'), { ref_notify })
+end
+
+T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = function()
+  skip_if_no_010()
+
+  child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
+  child.lua('MiniMisc.setup_termbg_sync()')
+
+  local validate_n_termresponse = function(ref_n)
+    eq(#child.api.nvim_get_autocmds({ group = 'MiniMiscTermbgSync', event = 'TermResponse' }), ref_n)
+  end
+
+  -- After receiving bad response should still wait for possible proper one
+  child.api.nvim_exec_autocmds('TermResponse', { data = 'something-bad' })
+  validate_termbg_augroup(true)
+  validate_n_termresponse(1)
+  eq(child.lua_get('_G.notify_log'), {})
+
+  -- After receiving proper response should immediately stop waiting for it and
+  -- set up proper `termbg` autocommands
+  local seq = '\27]11;rgb:1111/2626/2d2d'
+  local data = child.fn.has('nvim-0.11') == 1 and { sequence = seq } or seq
+  child.api.nvim_exec_autocmds('TermResponse', { data = data })
+  validate_termbg_augroup(true)
+  validate_n_termresponse(0)
+  eq(#child.api.nvim_get_autocmds({ group = 'MiniMiscTermbgSync' }) > 0, true)
+  eq(child.lua_get('_G.notify_log'), {})
 end
 
 T['setup_termbg_sync()']['handles different color formats'] = function()
@@ -824,6 +897,11 @@ local get_floating_windows = function()
   )
 end
 
+local validate_dims = function(win_id, height, width)
+  local config = child.api.nvim_win_get_config(win_id)
+  eq({ config.height, config.width }, { height, width })
+end
+
 T['zoom()']['works'] = function()
   child.set_size(5, 20)
   set_lines({ 'aaa', 'bbb' })
@@ -837,8 +915,7 @@ T['zoom()']['works'] = function()
   eq(#floating_wins, 1)
   local win_id = floating_wins[1]
   eq(child.api.nvim_win_get_buf(win_id), buf_id)
-  local config = child.api.nvim_win_get_config(win_id)
-  eq({ config.height, config.width }, { 1000, 1000 })
+  validate_dims(win_id, 4, 20)
   eq(child.api.nvim_win_get_option(win_id, 'winblend'), 0)
 
   -- No statusline should be present
@@ -857,15 +934,64 @@ end
 T['zoom()']['respects `config` argument'] = function()
   child.set_size(5, 30)
 
-  local custom_config = { width = 20 }
-  child.lua('MiniMisc.zoom(...)', { 0, custom_config })
-  local floating_wins = get_floating_windows()
+  local validate = function(config, ref_height, ref_width)
+    child.lua('MiniMisc.zoom(...)', { 0, config })
+    local floating_wins = get_floating_windows()
 
-  eq(#floating_wins, 1)
-  local config = child.api.nvim_win_get_config(floating_wins[1])
-  eq({ config.height, config.width }, { 1000, 20 })
+    eq(#floating_wins, 1)
+    validate_dims(floating_wins[1], ref_height, ref_width)
+    child.expect_screenshot()
 
+    child.cmd('quit')
+  end
+
+  validate({ width = 20 }, 4, 20)
+
+  -- Should adjust in reaction to border
+  validate({ border = 'double' }, 2, 28)
+
+  -- Should truncate possible title
+  validate({ width = 20, border = 'single', title = 'Custom title to check truncation' }, 2, 20)
+end
+
+T['zoom()']["respects 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.set_size(5, 30)
+
+  child.o.winborder = 'rounded'
+  child.lua('MiniMisc.zoom()')
   child.expect_screenshot()
+  child.cmd('quit')
+
+  -- Should prefer explicitly configured value over 'winborder'
+  child.lua('MiniMisc.zoom(0, { border = "double" })')
+  child.expect_screenshot()
+end
+
+T['zoom()']['reacts to relevant UI changes'] = function()
+  child.set_size(5, 30)
+  child.lua('MiniMisc.zoom()')
+  local win_id = get_floating_windows()[1]
+
+  validate_dims(win_id, 4, 30)
+  child.o.lines = 10
+  validate_dims(win_id, 9, 30)
+  child.o.columns = 20
+  validate_dims(win_id, 9, 20)
+  child.o.cmdheight = 0
+  validate_dims(win_id, 10, 20)
+  child.o.cmdheight = 3
+  validate_dims(win_id, 7, 20)
+end
+
+T['zoom()']['can be safely closed manually'] = function()
+  child.set_size(5, 30)
+  child.lua('MiniMisc.zoom()')
+  child.cmd('quit')
+
+  expect.no_error(function() child.cmd_capture('au MiniMiscZoom') end)
+  child.o.lines = 10
+  expect.error(function() child.cmd_capture('au MiniMiscZoom') end, 'No such group')
 end
 
 return T

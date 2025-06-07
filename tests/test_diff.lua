@@ -20,6 +20,15 @@ local get_buf = function() return child.api.nvim_get_current_buf() end
 local set_buf = function(buf_id) child.api.nvim_set_current_buf(buf_id) end
 --stylua: ignore end
 
+-- Tweak `expect_screenshot()` to test only on Neovim>=0.9, as some technical
+-- approach doesn't seem to work on Neovim<=0.8. Use `expect_screenshot_orig()`
+-- for original testing.
+local expect_screenshot_orig = child.expect_screenshot
+child.expect_screenshot = function(...)
+  if child.fn.has('nvim-0.9') == 0 then return end
+  expect_screenshot_orig(...)
+end
+
 -- TODO: Remove after compatibility with Neovim=0.9 is dropped
 local islist = vim.fn.has('nvim-0.10') == 1 and vim.islist or vim.tbl_islist
 
@@ -52,7 +61,7 @@ local edit = function(path)
 end
 
 local set_ref_text = function(...)
-  local res = child.lua_get([[require('mini.diff').set_ref_text(...)]], { ... })
+  child.lua([[require('mini.diff').set_ref_text(...)]], { ... })
   -- Slow context needs a small delay to get things up to date
   if helpers.is_slow() then sleep(small_time) end
 end
@@ -80,6 +89,7 @@ local is_buf_enabled = function(buf_id) return get_buf_data(buf_id) ~= vim.NIL e
 -- - Dummy source, which is set by default in most tests
 local setup_with_dummy_source = function(text_change_delay)
   text_change_delay = text_change_delay or dummy_text_change_delay
+  child.lua('_G.text_change_delay = ' .. text_change_delay)
   child.lua([[
     _G.dummy_log = {}
     _G.dummy_source = {
@@ -88,15 +98,8 @@ local setup_with_dummy_source = function(text_change_delay)
       detach = function(...) table.insert(_G.dummy_log, { 'detach', { ... } }) end,
       apply_hunks = function(...) table.insert(_G.dummy_log, { 'apply_hunks', { ... } }) end,
     }
+    require('mini.diff').setup({ source = _G.dummy_source, delay = { text_change = _G.text_change_delay } })
   ]])
-  local lua_cmd = string.format(
-    [[require('mini.diff').setup({
-    delay = { text_change = %d },
-    source = _G.dummy_source,
-  })]],
-    text_change_delay
-  )
-  child.lua(lua_cmd)
 end
 
 local validate_dummy_log = function(ref_log) eq(child.lua_get('_G.dummy_log'), ref_log) end
@@ -196,12 +199,22 @@ local get_viz_extmarks = function(buf_id)
   local full_extmarks = child.api.nvim_buf_get_extmarks(buf_id, ns_id, 0, -1, { details = true })
   local res = {}
   for _, e in ipairs(full_extmarks) do
-    table.insert(res, {
-      line = e[2] + 1,
-      sign_hl_group = e[4].sign_hl_group,
-      sign_text = e[4].sign_text,
-      number_hl_group = e[4].number_hl_group,
-    })
+    -- Do not test with dummy extmark (placed to ensure visible signcolumn)
+    local is_dummy_extmark = e[2] == 0
+      and e[3] == 0
+      -- Have fallback for `sign_` details as Neovim<0.9 doesn't provide those
+      and (e[4].sign_text or '  ') == '  '
+      and (e[4].sign_hl_group or 'SignColumn') == 'SignColumn'
+      and (e[4].cursorline_hl_group or 'CursorLineSign') == 'CursorLineSign'
+      and (e[4].right_gravity == false)
+    if not is_dummy_extmark then
+      table.insert(res, {
+        line = e[2] + 1,
+        sign_hl_group = e[4].sign_hl_group,
+        sign_text = e[4].sign_text,
+        number_hl_group = e[4].number_hl_group,
+      })
+    end
   end
   return res
 end
@@ -214,7 +227,7 @@ end
 
 local get_overlay_extmarks = function(buf_id, from_line, to_line)
   local ns_id = child.api.nvim_get_namespaces().MiniDiffOverlay
-  return child.api.nvim_buf_get_extmarks(buf_id, ns_id, { from_line - 1, 0 }, { to_line - 1, 0 }, { details = true })
+  return child.api.nvim_buf_get_extmarks(buf_id, ns_id, { from_line - 1, 0 }, { to_line - 1, -1 }, { details = true })
 end
 
 -- Output test set ============================================================
@@ -255,7 +268,9 @@ T['setup()']['creates side effects'] = function()
   validate_hl_group('MiniDiffSignDelete', 'links to ' .. (is_010 and 'Removed' or 'diffRemoved'))
   validate_hl_group('MiniDiffOverAdd', 'links to DiffAdd')
   validate_hl_group('MiniDiffOverChange', 'links to DiffText')
+  validate_hl_group('MiniDiffOverChangeBuf', 'links to MiniDiffOverChange')
   validate_hl_group('MiniDiffOverContext', 'links to DiffChange')
+  eq(child.fn.hlexists('MiniFilesFile'), 1)
   validate_hl_group('MiniDiffOverDelete', 'links to DiffDelete')
 end
 
@@ -337,18 +352,33 @@ T['setup()']['ensures colors'] = function()
   expect.match(child.cmd_capture('hi MiniDiffOverAdd'), 'links to DiffAdd')
 end
 
-T['setup()']['auto enables in all existing buffers'] = function()
-  local buf_id_normal = new_buf()
-  set_buf(buf_id_normal)
+T['setup()']['auto enables in all existing loaded buffers'] = function()
+  unload_module()
+
+  local buf_id_cur_normal = new_buf()
+  set_buf(buf_id_cur_normal)
+  local buf_id_other_normal = new_buf()
 
   local buf_id_bad_1 = new_scratch_buf()
   local buf_id_bad_2 = new_buf()
   child.api.nvim_buf_set_lines(buf_id_bad_2, 0, -1, false, { '\0' })
 
-  -- Only normal valid text buffers should be auto enabled
-  eq(is_buf_enabled(buf_id_normal), true)
+  local buf_id_bad_3 = new_buf()
+  child.api.nvim_buf_delete(buf_id_bad_3, { unload = true })
+  eq(child.api.nvim_buf_is_loaded(buf_id_bad_3), false)
+  child.api.nvim_set_option_value('buflisted', true, { buf = buf_id_bad_3 })
+
+  setup_with_dummy_source()
+
+  -- Only normal valid loaded text buffers should be auto enabled
+  eq(is_buf_enabled(buf_id_cur_normal), true)
+  eq(is_buf_enabled(buf_id_other_normal), true)
   eq(is_buf_enabled(buf_id_bad_1), false)
   eq(is_buf_enabled(buf_id_bad_2), false)
+  eq(is_buf_enabled(buf_id_bad_3), false)
+
+  -- Should not force load unloaded buffers
+  eq(child.api.nvim_buf_is_loaded(buf_id_bad_3), false)
 end
 
 T['setup()']['can not create mappings'] = function()
@@ -461,7 +491,7 @@ T['disable()']['works'] = function()
   set_lines({ 'aaa', 'bbb' })
   set_ref_text(0, { 'aaa' })
   eq(child.b.minidiff_summary == vim.NIL, false)
-  eq(child.b.minidiff_summary == vim.NIL, false)
+  eq(child.b.minidiff_summary_string == vim.NIL, false)
 
   disable(buf_id)
   eq(is_buf_enabled(buf_id), false)
@@ -471,7 +501,7 @@ T['disable()']['works'] = function()
 
   -- Should delete buffer-local variables
   eq(child.b.minidiff_summary == vim.NIL, true)
-  eq(child.b.minidiff_summary == vim.NIL, true)
+  eq(child.b.minidiff_summary_string == vim.NIL, true)
 
   -- Should detach source
   validate_dummy_log({ { 'detach', { buf_id } } })
@@ -591,23 +621,25 @@ T['export()']['works with "qf" format'] = function()
   child.api.nvim_buf_set_lines(buf_id_2, 0, -1, false, { 'AAA', 'uuu', 'BBB', 'CcC', 'DDD', 'FFF' })
   set_ref_text(buf_id_2, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF' })
 
+  --stylua: ignore
   local ref = {
-    { bufnr = buf_id_1, lnum = 2, end_lnum = 2, type = 'A', filename = test_file_path },
-    { bufnr = buf_id_2, lnum = 2, end_lnum = 2, type = 'A', filename = '' },
-    { bufnr = buf_id_2, lnum = 4, end_lnum = 4, type = 'C', filename = '' },
-    { bufnr = buf_id_2, lnum = 5, end_lnum = 5, type = 'D', filename = '' },
+    { bufnr = buf_id_1, lnum = 2, col = 1, end_lnum = 2, end_col = 4, type = 'A', text = 'Add',    filename = test_file_path },
+    { bufnr = buf_id_2, lnum = 2, col = 1, end_lnum = 2, end_col = 4, type = 'A', text = 'Add',    filename = '' },
+    { bufnr = buf_id_2, lnum = 4, col = 1, end_lnum = 4, end_col = 4, type = 'C', text = 'Change', filename = '' },
+    { bufnr = buf_id_2, lnum = 5, col = 1, end_lnum = 5, end_col = 1, type = 'D', text = 'Delete', filename = '' },
   }
   eq(export('qf'), ref)
 end
 
 T['export()']['works with multiline hunks'] = function()
   local buf_id_1 = new_buf()
-  child.api.nvim_buf_set_lines(buf_id_1, 0, -1, false, { 'AAA', 'uuu', 'vvv', 'BBB', 'CcC', 'DdD', 'EEE', 'HHH' })
+  child.api.nvim_buf_set_lines(buf_id_1, 0, -1, false, { 'AAA', 'uuu', 'vv', 'BBB', 'CcC', 'DdD', 'EEE', 'HHH' })
   set_ref_text(buf_id_1, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH' })
+  --stylua: ignore
   local ref = {
-    { bufnr = buf_id_1, lnum = 2, end_lnum = 3, type = 'A', filename = '' },
-    { bufnr = buf_id_1, lnum = 5, end_lnum = 6, type = 'C', filename = '' },
-    { bufnr = buf_id_1, lnum = 7, end_lnum = 7, type = 'D', filename = '' },
+    { bufnr = buf_id_1, lnum = 2, col = 1, end_lnum = 3, end_col = 3, type = 'A', text = 'Add',    filename = '' },
+    { bufnr = buf_id_1, lnum = 5, col = 1, end_lnum = 6, end_col = 4, type = 'C', text = 'Change', filename = '' },
+    { bufnr = buf_id_1, lnum = 7, col = 1, end_lnum = 7, end_col = 1, type = 'D', text = 'Delete', filename = '' },
   }
   eq(export('qf'), ref)
 end
@@ -623,7 +655,8 @@ T['export()']['respects `opts.scope`'] = function()
   eq(export('qf', { scope = 'current' }), {})
 
   set_buf(buf_id_1)
-  eq(export('qf', { scope = 'current' }), { { bufnr = 2, lnum = 2, end_lnum = 2, type = 'A', filename = '' } })
+  local ref_entry = { bufnr = 2, lnum = 2, col = 1, end_lnum = 2, end_col = 4, type = 'A', text = 'Add', filename = '' }
+  eq(export('qf', { scope = 'current' }), { ref_entry })
 end
 
 T['export()']['validates arguments'] = function()
@@ -1069,6 +1102,28 @@ T['gen_source']['git()']['works with errors during attach'] = function()
   eq(is_buf_enabled(0), false)
 end
 
+T['gen_source']['git()']['works with wiped out target buffer'] = function()
+  child.lua([[_G.stdio_queue = { { { 'out', _G.git_dir } } }]])
+
+  child.lua('_G.path = ' .. vim.inspect(git_file_path))
+  local buf_id = child.lua([[
+    vim.cmd('edit ' .. vim.fn.fnameescape(_G.path))
+    local buf_id = vim.api.nvim_get_current_buf()
+    -- Should not result in an error
+    vim.schedule(function() vim.api.nvim_buf_delete(buf_id, { force = true }) end)
+    return buf_id
+  ]])
+
+  eq(is_buf_enabled(0), false)
+  eq(child.api.nvim_buf_is_valid(buf_id), false)
+  eq(child.cmd_capture('messages'), '')
+
+  local ref_git_spawn_log = {
+    { args = { 'rev-parse', '--path-format=absolute', '--git-dir' }, cwd = git_dir_path },
+  }
+  validate_git_spawn_log(ref_git_spawn_log)
+end
+
 T['gen_source']['git()']['works with errors during getting reference text'] = function()
   -- Should attach but reset ref text (to react if it *gets* in index)
   child.lua([[
@@ -1191,9 +1246,18 @@ T['gen_source']['save()']['works'] = function()
   child.cmd('write')
   validate_ref_text('aaa\nuuu\nvvv\n')
 
+  -- Should work with trailing empty/blank lines
+  type_keys('G', 'o', '<Esc>')
+  child.cmd('write')
+  validate_ref_text('aaa\nuuu\nvvv\n\n')
+
+  type_keys('G', 'o', ' ', '<Esc>')
+  child.cmd('write')
+  validate_ref_text('aaa\nuuu\nvvv\n\n \n')
+
   -- Should still work after `:edit`
   child.cmd('edit')
-  validate_ref_text('aaa\nuuu\nvvv\n')
+  validate_ref_text('aaa\nuuu\nvvv\n\n \n')
 
   -- Should update reference text when file change outside buffer
   child.fn.writefile({ 'bbb', 'xxx' }, test_file_path)
@@ -1216,6 +1280,30 @@ T['gen_source']['save()']['works'] = function()
   eq(has_save_autocommands(), true)
   disable()
   eq(has_save_autocommands(), false)
+end
+
+T['gen_source']['save()']['works with BOM bytes'] = function()
+  child.lua('MiniDiff.config.source = MiniDiff.gen_source.save()')
+  local path = test_dir_absolute .. '/file-bom'
+  edit(path)
+
+  local init_content = child.fn.readblob(path, 'b')
+  MiniTest.finally(function()
+    local file = io.open(path, 'w')
+    assert(file)
+    file:write(init_content)
+    file:close()
+  end)
+
+  local validate_ref_text = function(ref) eq(get_buf_data(0).ref_text, ref) end
+
+  eq(child.bo.fileencoding, 'utf-8')
+  local utf8_bom_bytes = string.char(0xef, 0xbb, 0xbf)
+  validate_ref_text(utf8_bom_bytes .. 'bbb\nvvv\n')
+
+  type_keys('G', 'o', 'hello', '<Esc>')
+  child.cmd('write')
+  validate_ref_text(utf8_bom_bytes .. 'bbb\nvvv\nhello\n')
 end
 
 T['do_hunks()'] = new_set()
@@ -1838,10 +1926,17 @@ T['textobject()'] = new_set()
 
 T['textobject()']['is present'] = function() eq(child.lua_get('type(MiniDiff.textobject)'), 'function') end
 
+-- More thorough tests are done in "Multiple source" set of "Integration tests"
+T['fail_attach()'] = new_set()
+
+T['fail_attach()']['validates arguments'] = function()
+  expect.error(function() child.lua('MiniDiff.fail_attach("a")') end, '`buf_id`.*valid buffer id')
+end
+
 -- Integration tests ==========================================================
 T['Auto enable'] = new_set()
 
-T['Auto enable']['properly enables on `BufEnter`'] = function()
+T['Auto enable']['works'] = function()
   local buf_id = new_buf()
   set_buf(buf_id)
   eq(is_buf_enabled(buf_id), true)
@@ -1856,6 +1951,16 @@ T['Auto enable']['properly enables on `BufEnter`'] = function()
   eq(is_buf_enabled(buf_id), false)
   set_buf(buf_id)
   eq(is_buf_enabled(buf_id), true)
+
+  -- Should not error if buffer is not valid
+  expect.no_error(function()
+    child.lua([[
+      local buf_id = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_set_current_buf(buf_id)
+      vim.api.nvim_buf_delete(buf_id, { force = true })
+    ]])
+    eq(child.cmd_capture('1messages'), '')
+  end)
 end
 
 T['Auto enable']['does not enable in not proper buffers'] = function()
@@ -1933,6 +2038,31 @@ T['Visualization']['works'] = function()
     { line = 7, sign_hl_group = 'MiniDiffSignAdd', sign_text = '▒ ' },
     { line = 8, sign_hl_group = 'MiniDiffSignAdd', sign_text = '▒ ' },
   })
+end
+
+T['Visualization']['does not appear if there is no gutter'] = function()
+  child.o.signcolumn, child.o.number = 'no', false
+  disable()
+  enable()
+
+  set_lines({ 'AAA', 'uuu', 'BBB', 'CcC', 'DDD', 'FFF' })
+  set_ref_text(0, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF' })
+  -- Shouldn't force neither sign nor number column
+  child.expect_screenshot()
+end
+
+T['Visualization']['can be visually disabled'] = function()
+  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Neovim<0.9 still forces sign column to appear') end
+  child.lua('MiniDiff.config.view.style = "sign"')
+  child.lua('MiniDiff.config.view.signs = { add = "", change = "", delete = "" }')
+  disable()
+  enable()
+
+  set_lines({ 'AAA', 'uuu', 'BBB', 'CcC', 'DDD', 'FFF' })
+  set_ref_text(0, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF' })
+  -- Shouldn't show sign column, although extmarks are still placed
+  child.expect_screenshot()
+  eq(#get_viz_extmarks(0) > 0, true)
 end
 
 T['Visualization']['works with "add" hunks'] = function()
@@ -2013,7 +2143,7 @@ T['Visualization']['works when "change" overlaps with "delete"'] = function()
 end
 
 T['Visualization']['reacts to hunk lines delete/move'] = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Reaction to line delete/move is available on Neovim>0.10.') end
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Reaction to line delete/move is available on Neovim>=0.10.') end
   child.o.signcolumn = 'yes'
 
   set_lines({ 'aaa', 'bbb', 'uuu', 'vvv', 'ccc', 'ddd' })
@@ -2088,6 +2218,35 @@ T['Visualization']['respects `view.style`'] = function()
   set_ref_text(0, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF' })
   validate_viz_extmarks(0, viz_extmarks)
   expect_screenshot()
+end
+
+T['Visualization']['shows signcolumn even if hunks are outside of view'] = function()
+  -- Make sure that extmark has no visible side effects
+  child.o.signcolumn = 'auto:2'
+  child.o.cursorline = true
+  child.cmd('hi CursrLineSign guibg=Red ctermbg=Red')
+  child.cmd('hi SignColumn guibg=Blue ctermbg=Blue')
+
+  child.lua('MiniDiff.config.delay.text_change = ' .. small_time)
+  disable()
+  enable()
+
+  local lines = { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ' }
+  set_lines(lines)
+  table.insert(lines, 'uuu')
+  set_ref_text(0, lines)
+  sleep(small_time + small_time)
+  child.expect_screenshot()
+
+  -- Should be deleted when not needed, making sign column still only single
+  -- "sign width" wide (2 cells)
+  type_keys('gg', 'O', '<CR>', '<Esc>')
+  sleep(small_time + small_time)
+  local ns_id = child.api.nvim_get_namespaces().MiniDiffViz
+  local extmarks = child.api.nvim_buf_get_extmarks(0, ns_id, 0, -1, { details = true })
+  eq(#extmarks, 2)
+  -- Neovim>=0.11 has signs combine attributes, so check screenshot only there
+  if child.fn.has('nvim-0.11') == 1 then child.expect_screenshot() end
 end
 
 T['Visualization']['respects `view.signs`'] = function()
@@ -2198,6 +2357,30 @@ T['Overlay']['always highlights whole lines'] = function()
   child.expect_screenshot()
 end
 
+T['Overlay']['scrolls along with buffer lines'] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip('Virtual line scroll is available only on Neovim>=0.11') end
+
+  child.set_size(10, 15)
+  child.o.wrap = false
+  local l = 'abcdefghijklmnopqrstuvwxyz'
+  local L = l:upper()
+  local ref_lines = { 1 .. l, 2 .. l, 3 .. l, 4 .. l, 5 .. l, 6 .. l }
+  set_lines({ 1 .. l, 3 .. l, 4 .. L, 6 .. l })
+  set_cursor(1, 0)
+  set_ref_text(0, ref_lines)
+
+  -- Should scroll virtual lines for deleted and changed with linematch hunks
+  type_keys('zL')
+  child.expect_screenshot()
+
+  -- Should also scroll virtual lines for change hunks without linematch
+  child.lua('MiniDiff.config.options.linematch = 0')
+  set_cursor(1, 0)
+  set_ref_text(0, ref_lines)
+  type_keys('zL')
+  child.expect_screenshot()
+end
+
 T['Overlay']['works at edge lines'] = function()
   child.set_size(10, 15)
   -- Virtual lines above first line need scroll to become visible
@@ -2229,37 +2412,70 @@ T['Overlay']['works when "change" overlaps with "delete"'] = function()
   child.expect_screenshot()
 end
 
-T['Overlay']['should use correct highlight groups'] = function()
+T['Overlay']['uses correct highlight groups'] = function()
   set_lines({ 'AAA', 'uuu', 'BBB', 'CcC', 'DDD', 'FFF' })
   set_ref_text(0, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF' })
 
   -- 'Add'
-  local add_extmarks = get_overlay_extmarks(0, 2, 3)
+  local add_extmarks = get_overlay_extmarks(0, 2, 2)
+  eq(#add_extmarks, 1)
   eq(add_extmarks[1][4].hl_group, 'MiniDiffOverAdd')
 
   -- 'Change'
-  local change_extmarks = get_overlay_extmarks(0, 4, 5)
+  local change_extmarks = get_overlay_extmarks(0, 4, 4)
+  eq(#change_extmarks, 3)
 
-  -- - Reference part of changed line
-  local change_virt_lines = change_extmarks[1][4].virt_lines
-  eq(change_extmarks[1][4].virt_lines_above, true)
+  -- - Context of buffer changes as whole line highlighting
+  local change_details_1 = change_extmarks[1][4]
+  eq(change_extmarks[1][2], 3)
+  eq(change_extmarks[1][3], 0)
+  eq(change_details_1.end_row, 4)
+  eq(change_details_1.end_col, 0)
+  eq(change_details_1.hl_eol, true)
+  eq(change_details_1.hl_group, 'MiniDiffOverContextBuf')
+  eq(change_details_1.priority, 198)
+
+  -- - Context and change of reference text (as virtual line)
+  local change_virt_lines = change_extmarks[2][4].virt_lines
   eq(#change_virt_lines, 1)
   eq(change_virt_lines[1][1], { 'C', 'MiniDiffOverContext' })
   eq(change_virt_lines[1][2], { 'C', 'MiniDiffOverChange' })
   eq(change_virt_lines[1][3], { 'C', 'MiniDiffOverContext' })
+  eq(change_extmarks[2][4].virt_lines_above, true)
 
-  -- - Buffer part of changed line
-  eq(change_extmarks[2][4].hl_group, 'MiniDiffOverChange')
+  -- - Buffer changes as separate extmarks
+  eq(change_extmarks[3][4].hl_group, 'MiniDiffOverChangeBuf')
 
   -- 'Delete'
-  local delete_extmarks = get_overlay_extmarks(0, 5, 6)
-  eq(delete_extmarks[1][4].virt_lines_above, false)
+  local delete_extmarks = get_overlay_extmarks(0, 5, 5)
+  eq(#delete_extmarks, 1)
 
+  eq(delete_extmarks[1][4].virt_lines_above, false)
+  eq(delete_extmarks[1][4].virt_lines_above, false)
   local delete_virt_lines = delete_extmarks[1][4].virt_lines
-
-  eq(delete_extmarks[1][4].virt_lines_above, false)
   eq(#delete_virt_lines, 1)
   eq(delete_virt_lines[1][1], { 'EEE', 'MiniDiffOverDelete' })
+end
+
+T['Overlay']['uses correct highlight groups in uneven change hunks'] = function()
+  child.lua('MiniDiff.config.options.linematch = 0')
+  set_lines({ 'aaa', 'eee', 'fff', 'ggg', 'ddd' })
+  set_ref_text(0, { 'aaa', 'bbb', 'ccc', 'ddd' })
+  local extmarks = get_overlay_extmarks(0, 1, 5)
+
+  eq(#extmarks, 1)
+  -- Both changed reference lines should be shown as virtual lines
+  local virt_lines = extmarks[1][4].virt_lines
+  eq(virt_lines[1][1][2], 'MiniDiffOverChange')
+  eq(virt_lines[2][1][2], 'MiniDiffOverChange')
+
+  -- All three changed lines should be highlighted as whole lines
+  eq(extmarks[1][2], 1)
+  eq(extmarks[1][3], 0)
+  eq(extmarks[1][4].end_row, 4)
+  eq(extmarks[1][4].end_col, 0)
+  eq(extmarks[1][4].hl_eol, true)
+  eq(extmarks[1][4].hl_group, 'MiniDiffOverContextBuf')
 end
 
 T['Overlay']['respects `view.priority`'] = function()
@@ -2270,7 +2486,10 @@ T['Overlay']['respects `view.priority`'] = function()
   set_ref_text(0, { 'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF' })
   local overlay_extmarks = get_overlay_extmarks(0, 1, 6)
   local priorities = vim.tbl_map(function(t) return t[4].priority end, overlay_extmarks)
-  eq(priorities, vim.tbl_map(function() return ref_priority end, priorities))
+  -- Some extmarks (for context of changed buffer text) have one less of
+  -- reference priority to be below highlighting for changed buffer text
+  local is_proper = vim.tbl_map(function(p) return p == ref_priority or p == (ref_priority - 1) end, priorities)
+  eq(is_proper, vim.tbl_map(function() return true end, priorities))
 end
 
 T['Overlay']['word diff'] = new_set()
@@ -2327,6 +2546,19 @@ T['Overlay']['word diff']['works with multibyte characters'] = function()
 
   validate({ 'ыxx', 'xыx', 'xxы' }, { 'xxx', 'xxx', 'xxx' })
   validate({ 'xxx', 'xxx', 'xxx' }, { 'ыxx', 'xыx', 'xxы' })
+end
+
+T['Overlay']['word diff']['works with BOM bytes'] = function()
+  local path = test_dir_absolute .. '/file-bom'
+  edit(path)
+  local content = child.fn.readblob(path, 'b'):gsub('\r', '')
+
+  toggle_overlay(0)
+  set_lines({ 'bBb', 'vvv' })
+  set_ref_text(0, content)
+
+  type_keys('<C-y>')
+  child.expect_screenshot()
 end
 
 T['Diff'] = new_set({ hooks = { pre_case = setup_enabled_buffer } })
@@ -2451,6 +2683,43 @@ T['Diff']['respects `options.linematch`'] = function()
     { buf_start = 2, buf_count = 2, ref_start = 2, ref_count = 1, type = 'change' },
   }
   eq(get_buf_hunks(0), nolinematch_hunks)
+end
+
+T['Diff']['works with BOM bytes'] = function()
+  local small_text_change_delay = 3 * small_time
+  child.lua('MiniDiff.config.delay.text_change = ' .. small_text_change_delay)
+  local lines = { 'aaa', 'bbb' }
+
+  local validate_bom_buffer = function(fileencoding, bytes)
+    -- Mock buffer with BOM bytes
+    local buf_id = new_scratch_buf()
+    set_buf(buf_id)
+
+    child.api.nvim_buf_set_lines(buf_id, 0, -1, false, lines)
+    child.api.nvim_set_option_value('fileencoding', fileencoding, { buf = buf_id })
+    child.api.nvim_set_option_value('bomb', true, { buf = buf_id })
+
+    local text_lines = vim.deepcopy(lines)
+    text_lines[1] = bytes .. text_lines[1]
+    set_ref_text(buf_id, text_lines)
+
+    -- Should respect BOM bytes and not report first line as "change" hunk
+    eq(get_buf_data().hunks, {})
+
+    type_keys('G', 'o', 'hello', '<Esc>')
+    sleep(small_text_change_delay + small_time)
+    eq(get_buf_data().hunks, { { type = 'add', buf_start = 3, buf_count = 1, ref_start = 2, ref_count = 0 } })
+  end
+
+  validate_bom_buffer('utf-8', string.char(0xef, 0xbb, 0xbf))
+  validate_bom_buffer('utf-16be', string.char(0xfe, 0xff))
+  validate_bom_buffer('utf-16', string.char(0xfe, 0xff))
+  validate_bom_buffer('utf-16le', string.char(0xff, 0xfe))
+  validate_bom_buffer('ucs-4be', string.char(0x00, 0x00, 0xfe, 0xff))
+  validate_bom_buffer('ucs-4', string.char(0x00, 0x00, 0xfe, 0xff))
+  validate_bom_buffer('ucs-4le', string.char(0xff, 0xfe, 0x00, 0x00))
+
+  validate_bom_buffer('unknown', '')
 end
 
 T['Diff']['redraws statusline when diff is updated'] = function()
@@ -2972,6 +3241,229 @@ T['Goto']['works with different mappings'] = function()
   validate('[g', { 3, 0 })
   validate(']g', { 5, 0 })
   validate(']G', { 7, 0 })
+end
+
+T['Array of sources'] = new_set()
+
+local setup_array_sources = function(n_attach_fails, fail_delay, text_change_delay)
+  child.lua('_G.n_attach_fails = ' .. (n_attach_fails or 2))
+  child.lua('_G.fail_delay = ' .. (fail_delay or (2 * small_time)))
+  child.lua('_G.text_change_delay = ' .. (text_change_delay or (3 * small_time)))
+
+  child.lua([[
+    _G.log = {}
+    local make_source = function(id, do_attach, fail)
+      return {
+        name = 'Source ' .. id,
+        attach = function(buf_id)
+          table.insert(_G.log, 'Source ' .. id .. ' attach')
+          if not do_attach() then return fail(buf_id, 'Source ' .. id) end
+          MiniDiff.set_ref_text(buf_id, 'This is source ' .. id .. '\n')
+          table.insert(_G.log, 'Source ' .. id .. ' attach success')
+        end,
+        detach = function(buf_id) table.insert(_G.log, 'Source ' .. id .. ' detach') end,
+        apply_hunks = function(buf_id, hunks)
+          table.insert(_G.log, 'Source ' .. id .. ' apply hunks')
+          MiniDiff.set_ref_text(buf_id, 'This is source ' .. id .. '\nAfter applying hunks\n')
+        end,
+      }
+    end
+
+    _G.n_attach_tries = 0
+    local do_attach = function()
+      _G.n_attach_tries = _G.n_attach_tries + 1
+      return _G.n_attach_tries > _G.n_attach_fails
+    end
+
+    local fail_now = function(_, source_name)
+      table.insert(_G.log, source_name .. ' attach fail')
+      return false
+    end
+    local fail_later = function(buf_id, source_name)
+      vim.defer_fn(function()
+        table.insert(_G.log, source_name .. ' attach fail')
+        MiniDiff.fail_attach(buf_id)
+      end, _G.fail_delay)
+    end
+
+    local source_1 = make_source(1, do_attach, fail_now)
+    local source_2 = make_source(2, do_attach, fail_later)
+    local source_3 = make_source(3, do_attach, fail_now)
+
+    require('mini.diff').setup({
+      -- Supplying array of sources should try to attach them in order
+      source = { source_1, source_2, source_3 },
+      delay = { text_change = text_change_delay },
+    })
+  ]])
+end
+
+T['Array of sources']['works'] = function()
+  local n_attach_fails, fail_delay, text_change_delay = 2, 2 * small_time, 3 * small_time
+  setup_array_sources(n_attach_fails, fail_delay, text_change_delay)
+
+  set_buf(new_scratch_buf())
+  set_lines({ 'This is' })
+  enable(0)
+
+  local ref_log = {
+    -- First source fails immediately
+    'Source 1 attach',
+    'Source 1 attach fail',
+    -- Second source delays its fail
+    'Source 2 attach',
+  }
+  eq(child.lua_get('_G.log'), ref_log)
+
+  -- - No source should be yet attached
+  eq(get_buf_data(0).ref_text, nil)
+  eq(child.b.minidiff_summary, vim.NIL)
+
+  -- After waiting for source 2 to fail, it should attach source 3
+  sleep(fail_delay + small_time)
+  vim.list_extend(ref_log, { 'Source 2 attach fail', 'Source 3 attach', 'Source 3 attach success' })
+
+  eq(child.lua_get('_G.log'), ref_log)
+  eq(get_buf_data(0).ref_text, 'This is source 3\n')
+
+  local ref_summary = { add = 0, change = 1, delete = 0, n_ranges = 1, source_name = 'Source 3' }
+  eq(child.b.minidiff_summary, ref_summary)
+
+  -- Should react to text change
+  set_lines({ 'This is', 'new', 'lines' })
+  sleep(text_change_delay + small_time)
+  ref_summary.add = 2
+  eq(child.b.minidiff_summary, ref_summary)
+
+  -- Should use methods from proper source
+  child.lua('_G.log = {}')
+  do_hunks(0, 'apply')
+  eq(child.lua_get('_G.log'), { 'Source 3 apply hunks' })
+
+  child.lua('_G.log = {}')
+  disable(0)
+  eq(child.lua_get('_G.log'), { 'Source 3 detach' })
+end
+
+T['Array of sources']['can not attach'] = function()
+  local n_attach_fails, fail_delay, text_change_delay = 4, 2 * small_time, 3 * small_time
+  setup_array_sources(n_attach_fails, fail_delay, text_change_delay)
+
+  set_buf(new_scratch_buf())
+  enable(0)
+
+  -- Should fail at all three attaches and not call any `detach`
+  sleep(fail_delay + small_time)
+  --stylua: ignore
+  local ref_log = {
+    'Source 1 attach', 'Source 1 attach fail',
+    'Source 2 attach', 'Source 2 attach fail',
+    'Source 3 attach', 'Source 3 attach fail',
+  }
+  eq(child.lua_get('_G.log'), ref_log)
+
+  -- Should properly clean up buffer
+  eq(is_buf_enabled(), false)
+  eq(child.b.minidiff_summary, vim.NIL)
+  eq(child.api.nvim_get_autocmds({ buffer = get_buf() }), {})
+
+  -- Next enable should try attaching from first source
+  child.lua('_G.log = {}')
+  enable(0)
+  sleep(fail_delay + small_time)
+  ref_log = { 'Source 1 attach', 'Source 1 attach fail', 'Source 2 attach', 'Source 2 attach success' }
+  eq(child.lua_get('_G.log'), ref_log)
+
+  local ref_summary = { add = 0, change = 1, delete = 0, n_ranges = 1, source_name = 'Source 2' }
+  eq(child.b.minidiff_summary, ref_summary)
+
+  -- Should still properly track changes
+  set_lines({ 'This is', 'new', 'lines' })
+  sleep(text_change_delay + small_time)
+  ref_summary.add = 2
+  eq(child.b.minidiff_summary, ref_summary)
+end
+
+T['Array of sources']['works after `:edit`'] = function()
+  local n_attach_fails, fail_delay, text_change_delay = 1, 2 * small_time, 3 * small_time
+  setup_array_sources(n_attach_fails, fail_delay, text_change_delay)
+
+  edit(test_file_path)
+  sleep(text_change_delay + small_time)
+
+  local ref_log = {
+    -- First source fails immediately
+    'Source 1 attach',
+    'Source 1 attach fail',
+    -- Second source attaches successfully (also immediately)
+    'Source 2 attach',
+    'Source 2 attach success',
+  }
+  eq(child.lua_get('_G.log'), ref_log)
+  eq(get_buf_data(0).ref_text, 'This is source 2\n')
+
+  local ref_summary = { add = 1, change = 1, delete = 0, n_ranges = 1, source_name = 'Source 2' }
+  eq(child.b.minidiff_summary, ref_summary)
+
+  -- Should try attaching from first source
+  child.lua('_G.log = {}')
+  child.cmd('edit')
+  ref_log = { 'Source 2 detach', 'Source 1 attach', 'Source 1 attach success' }
+  eq(child.lua_get('_G.log'), ref_log)
+
+  -- Should properly track changes
+  set_lines({ 'This is' })
+  sleep(text_change_delay + small_time)
+  ref_summary.add, ref_summary.source_name = 0, 'Source 1'
+  eq(child.b.minidiff_summary, ref_summary)
+end
+
+T['Array of sources']['respects buffer-local config'] = function()
+  local n_attach_fails, fail_delay, text_change_delay = 1, 2 * small_time, 3 * small_time
+  setup_array_sources(n_attach_fails, fail_delay, text_change_delay)
+
+  set_buf(new_scratch_buf())
+  child.lua('vim.b.minidiff_config = { source = { MiniDiff.config.source[3], MiniDiff.config.source[2] } }')
+  set_lines({ 'This is' })
+  enable(0)
+
+  local ref_log = { 'Source 3 attach', 'Source 3 attach fail', 'Source 2 attach', 'Source 2 attach success' }
+  eq(child.lua_get('_G.log'), ref_log)
+end
+
+T['Array of sources']['works with built-in sources'] = function()
+  mock_spawn()
+  child.lua([[
+    -- Fails to attach
+    _G.stdio_queue = {
+      { {} }, -- Get path to repo's Git dir
+    }
+    _G.process_mock_data = { { exit_code = 1 } }
+  ]])
+
+  local text_change_delay = 3 * small_time
+  child.lua('_G.text_change_delay = ' .. text_change_delay)
+
+  child.lua([[
+    MiniDiff.config.source = { MiniDiff.gen_source.git(), MiniDiff.gen_source.save() }
+    MiniDiff.config.delay.text_change = _G.text_change_delay
+  ]])
+  edit(git_file_path)
+  local init_lines = get_lines()
+  MiniTest.finally(function() child.fn.writefile(init_lines, git_file_path) end)
+
+  eq(is_buf_enabled(0), true)
+  local ref_summary_saved = { add = 0, change = 0, delete = 0, n_ranges = 0, source_name = 'save' }
+  eq(child.b.minidiff_summary, ref_summary_saved)
+
+  -- Should properly track changes
+  set_lines({ 'This is' })
+  sleep(text_change_delay + small_time)
+  local ref_summary_modified = { add = 0, change = 1, delete = 4, n_ranges = 1, source_name = 'save' }
+  eq(child.b.minidiff_summary, ref_summary_modified)
+
+  child.cmd('write')
+  eq(child.b.minidiff_summary, ref_summary_saved)
 end
 
 return T

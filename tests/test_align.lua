@@ -133,7 +133,7 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ mappings = { start = 1 } }, 'mappings.start', 'string')
   expect_config_error({ mappings = { start_with_preview = 1 } }, 'mappings.start_with_preview', 'string')
   expect_config_error({ modifiers = 'a' }, 'modifiers', 'table')
-  expect_config_error({ modifiers = { x = 1 } }, 'modifiers["x"]', 'function')
+  expect_config_error({ modifiers = { x = 1 } }, 'modifiers["x"]', 'callable')
   expect_config_error({ options = 'a' }, 'options', 'table')
   expect_config_error({ steps = { pre_split = 1 } }, 'steps.pre_split', 'array of steps')
   expect_config_error({ steps = { split = 1 } }, 'steps.split', 'step')
@@ -440,6 +440,13 @@ T['align_strings()']['works with multibyte characters'] = function()
     { split_pattern = 'ф', justify_side = 'center', merge_delimiter = 'ю' },
     { ' ы юфюфюццц', 'ыыыюфюфю ц' }
   )
+end
+
+T['align_strings()']['works in edge cases'] = function()
+  validate_align_strings({}, {}, {})
+  validate_align_strings({ '' }, {}, { '' })
+  validate_align_strings({ '', '' }, {}, { '', '' })
+  validate_align_strings({ '', ' ' }, {}, { '', ' ' })
 end
 
 T['align_strings()']['does not affect input array'] = function()
@@ -953,6 +960,13 @@ T['gen_step']['default_merge()']['works'] = function()
   )
 end
 
+T['gen_step']['default_merge()']['works in edge cases'] = function()
+  validate_align_strings({}, {}, {})
+  validate_align_strings({ '' }, {}, { '' })
+  validate_align_strings({ '', '' }, {}, { '', '' })
+  validate_align_strings({ '', ' ' }, {}, { '', ' ' })
+end
+
 T['gen_step']['default_merge()']['verifies relevant options'] = function()
   expect.error(
     function() child.lua([[MiniAlign.align_strings({ 'a' }, { merge_delimiter = 1 }, {})]]) end,
@@ -966,6 +980,23 @@ T['gen_step']['default_merge()']['does not merge empty strings in parts'] = func
   -- Shouldn't result into adding extra merge
   validate_align_strings({ 'a===b' }, { merge_delimiter = '-' }, { 'a-=-=-=-b' })
   validate_align_strings({ '=a' }, { merge_delimiter = '-' }, { '=-a' })
+end
+
+T['gen_step']['default_merge()']['preserves indentation with whitespace in merge delimmiter'] = function()
+  set_config_opts({ split_pattern = '=' })
+
+  -- Should not add whitespace to the first part if all of them are indent
+  validate_align_strings({ ' =a=b', '  =c=d' }, { merge_delimiter = ' ' }, { '  = a = b', '  = c = d' })
+  validate_align_strings({ ' =a=b', '=c=d' }, { merge_delimiter = ' ' }, { ' = a = b', ' = c = d' })
+  validate_align_strings({ '=a=b', '=c=d' }, { merge_delimiter = ' ' }, { '= a = b', '= c = d' })
+
+  validate_align_strings({ ' =a=b', '  =c=d' }, { merge_delimiter = ' _' }, { '  _= _a _= _b', '  _= _c _= _d' })
+
+  validate_align_strings({ ' =a=b', 'x=c=d' }, { merge_delimiter = ' ' }, { '  = a = b', 'x = c = d' })
+
+  child.o.tabstop = 2
+  validate_align_strings({ '\t=a=b', '\t\t=c=d' }, { merge_delimiter = '\t' }, { '\t  =\ta\t=\tb', '\t\t=\tc\t=\td' })
+  validate_align_strings({ '\t=a=b', '\t\t=c=d' }, { merge_delimiter = ' ' }, { '\t  = a = b', '\t\t= c = d' })
 end
 
 T['gen_step']['filter()'] = new_set()
@@ -1241,6 +1272,15 @@ T['Align']['works in Visual blockwise mode'] = function()
 
   -- Correctly works in presence of multibyte characters
   validate_keys({ 'ыы_ф', 'ыыы_ф' }, { '1l', '<C-v>', '1j3l', 'ga', '_' }, { 'ыы _ф', 'ыыы_ф' })
+
+  -- Correctly selects in presence of wide characters
+  validate_keys({ 'の', '_', 'a_' }, { '<C-v>2j', 'ga', '_' }, { 'の', ' _', 'a_' })
+end
+
+T['Align']['works independently with :normal command'] = function()
+  -- Works for each line individually when running under :normal command
+  validate_keys({ 'a   _b', 'aa  _b', 'aaa _b' }, { ':%normal ga_t_<CR>' }, { 'a_b', 'aa_b', 'aaa_b' })
+  validate_keys({ 'a   _  b', 'aa  _  b', 'aaa _  b' }, { ':%normal ga_ A;<CR>' }, { 'a _ b;', 'aa _ b;', 'aaa _ b;' })
 end
 
 T['Align']['registers visual selection'] = function()
@@ -1272,11 +1312,26 @@ T['Align']['works with different mapping'] = function()
 end
 
 T['Align']['works with multibyte characters'] = function()
-  validate_keys(
-    { 'ыффцццф', 'ыыыффцф' },
-    { 'Vj', 'ga', 'ф' },
-    { 'ы  ффцццф', 'ыыыффц  ф' }
-  )
+  local before, after = { 'ыффцццф', 'ыыыффцф' }, { 'ы  ффцццф', 'ыыыффц  ф' }
+  validate_keys(before, { 'Vj', 'ga', 'ф' }, after)
+  validate_keys(before, { '<C-v>$j', 'ga', 'ф' }, after)
+end
+
+T['Align']['works with wide characters'] = function()
+  -- Wide characters may or may not be designed to occupy more than a one cell
+  -- NOTE: deliberately do not account for 'ambiwidth=double' option as it does
+  -- not look reasonable (two cells for Cyrillic) and adds extra complexity
+  local before, after = { 'ыыффццф', 'ыфのфцф' }, { 'ыыф  фццф', 'ы фのфц ф' }
+  validate_keys(before, { 'Vj', 'ga', 'ф' }, after)
+  validate_keys(before, { '<C-v>$j', 'ga', 'ф' }, after)
+end
+
+T['Align']['works with combining characters'] = function(mode)
+  -- 0xCC 0x81 is the UTF-8 representation of U+0301 COMBINING ACUTE ACCENT. It
+  -- is zero-width when combined with the preceding character.
+  local before, after = { 'aá_e\xcc\x81e_', 'aa_e_' }, { 'aá_e\xcc\x81e_', 'aa_e _' }
+  validate_keys(before, { 'Vj', 'ga', '_' }, after)
+  validate_keys(before, { '<C-v>$j', 'ga', '_' }, after)
 end
 
 T['Align']['does not ask for modifier if `split_pattern` is not default'] = function()
@@ -1338,9 +1393,9 @@ T['Align']['prompts helper message after one idle second'] = new_set({
   parametrize = { { 'Normal' }, { 'Visual' } },
 }, {
   test = function(test_mode)
-    -- Check this only on Neovim>=0.10, as there is a slight change in
+    -- Check this only on Neovim>=0.11, as there is a slight change in
     -- highlighting command line area
-    if child.fn.has('nvim-0.10') == 0 then return end
+    if child.fn.has('nvim-0.11') == 0 then return end
     helpers.skip_if_slow()
 
     local expect_screenshot = function() child.expect_screenshot({ redraw = false }) end
@@ -1887,6 +1942,8 @@ end
 T['Modifiers']['<equal sign>'] = function() validate_common_split({ 'a=b', 'aaa=bbb' }, '=') end
 
 T['Modifiers']['<comma>'] = function() validate_common_split({ 'a,b', 'aaa,bbb' }, ',') end
+
+T['Modifiers']['<bar>'] = function() validate_common_split({ '|a|b|', '|aaa|bbb|' }, '|') end
 
 T['Modifiers']['<space bar>'] = function() validate_common_split({ '  a  b', '    aaa    bbb', 'a b' }, ' ') end
 

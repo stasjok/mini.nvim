@@ -21,13 +21,15 @@
 ---   relevant actions (`read`, `delete`, `select`) with file names as session
 ---   names (including possible extension).
 ---
+--- - No automated new session creation. Use |MiniSessions.write()| manually.
+---
 --- - Store information about detected sessions in separate table
 ---   (|MiniSessions.detected|) and operate only on it. Meaning if this information
 ---   changes, there will be no effect until next detection. To avoid confusion,
 ---   don't directly use |mksession| / |source| for writing / reading session files.
 ---
 --- Features:
---- - Autoread default session (local if detected, latest written otherwise) if
+--- - Autoread default session (local if detected, else latest written global) if
 ---   Neovim was called without intention to show something else.
 ---
 --- - Autowrite currently read session before quitting Neovim.
@@ -68,6 +70,15 @@ local H = {}
 ---   require('mini.sessions').setup({}) -- replace {} with your config table
 --- <
 MiniSessions.setup = function(config)
+  -- TODO: Remove after Neovim=0.8 support is dropped
+  if vim.fn.has('nvim-0.9') == 0 then
+    vim.notify(
+      '(mini.sessions) Neovim<0.9 is soft deprecated (module works but not supported).'
+        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
+        .. ' Please update your Neovim version.'
+    )
+  end
+
   -- Export module
   _G.MiniSessions = MiniSessions
 
@@ -393,44 +404,33 @@ H.default_config = vim.deepcopy(MiniSessions.config)
 -- Helper functionality =======================================================
 -- Settings -------------------------------------------------------------------
 H.setup_config = function(config)
-  -- General idea: if some table elements are not present in user-supplied
-  -- `config`, take them from default config
-  vim.validate({ config = { config, 'table', true } })
+  H.check_type('config', config, 'table', true)
   config = vim.tbl_deep_extend('force', vim.deepcopy(H.default_config), config or {})
 
-  -- Validate per nesting level to produce correct error message
-  vim.validate({
-    autoread = { config.autoread, 'boolean' },
-    autowrite = { config.autowrite, 'boolean' },
-    directory = { config.directory, 'string' },
-    file = { config.file, 'string' },
-    force = { config.force, 'table' },
-    hooks = { config.hooks, 'table' },
-    verbose = { config.verbose, 'table' },
-  })
+  H.check_type('autoread', config.autoread, 'boolean')
+  H.check_type('autowrite', config.autowrite, 'boolean')
+  H.check_type('directory', config.directory, 'string')
+  H.check_type('file', config.file, 'string')
 
-  vim.validate({
-    ['force.read'] = { config.force.read, 'boolean' },
-    ['force.write'] = { config.force.write, 'boolean' },
-    ['force.delete'] = { config.force.delete, 'boolean' },
+  H.check_type('force', config.force, 'table')
+  H.check_type('force.read', config.force.read, 'boolean')
+  H.check_type('force.write', config.force.write, 'boolean')
+  H.check_type('force.delete', config.force.delete, 'boolean')
 
-    ['hooks.pre'] = { config.hooks.pre, 'table' },
-    ['hooks.post'] = { config.hooks.post, 'table' },
+  H.check_type('hooks', config.hooks, 'table')
+  H.check_type('hooks.pre', config.hooks.pre, 'table')
+  H.check_type('hooks.pre.read', config.hooks.pre.read, 'function', true)
+  H.check_type('hooks.pre.write', config.hooks.pre.write, 'function', true)
+  H.check_type('hooks.pre.delete', config.hooks.pre.delete, 'function', true)
+  H.check_type('hooks.post', config.hooks.post, 'table')
+  H.check_type('hooks.post.read', config.hooks.post.read, 'function', true)
+  H.check_type('hooks.post.write', config.hooks.post.write, 'function', true)
+  H.check_type('hooks.post.delete', config.hooks.post.delete, 'function', true)
 
-    ['verbose.read'] = { config.verbose.read, 'boolean' },
-    ['verbose.write'] = { config.verbose.write, 'boolean' },
-    ['verbose.delete'] = { config.verbose.delete, 'boolean' },
-  })
-
-  vim.validate({
-    ['hooks.pre.read'] = { config.hooks.pre.read, 'function', true },
-    ['hooks.pre.write'] = { config.hooks.pre.write, 'function', true },
-    ['hooks.pre.delete'] = { config.hooks.pre.delete, 'function', true },
-
-    ['hooks.post.read'] = { config.hooks.post.read, 'function', true },
-    ['hooks.post.write'] = { config.hooks.post.write, 'function', true },
-    ['hooks.post.delete'] = { config.hooks.post.delete, 'function', true },
-  })
+  H.check_type('verbose', config.verbose, 'table')
+  H.check_type('verbose.read', config.verbose.read, 'boolean')
+  H.check_type('verbose.write', config.verbose.write, 'boolean')
+  H.check_type('verbose.delete', config.verbose.delete, 'boolean')
 
   return config
 end
@@ -560,6 +560,13 @@ H.name_to_path = function(session_name)
 end
 
 -- Utilities ------------------------------------------------------------------
+H.error = function(msg) error('(mini.sessions) ' .. msg, 0) end
+
+H.check_type = function(name, val, ref, allow_nil)
+  if type(val) == ref or (ref == 'callable' and vim.is_callable(val)) or (allow_nil and val == nil) then return end
+  H.error(string.format('`%s` should be %s, not %s', name, ref, type(val)))
+end
+
 H.echo = function(msg, is_important)
   -- Construct message chunks
   msg = type(msg) == 'string' and { { msg } } or msg
@@ -582,8 +589,6 @@ end
 
 H.message = function(msg) H.echo(msg, true) end
 
-H.error = function(msg) error(('(mini.sessions) %s'):format(msg)) end
-
 H.default_opts = function(action)
   local config = MiniSessions.config
   return {
@@ -595,7 +600,7 @@ end
 
 H.is_readable_file = function(path) return vim.fn.isdirectory(path) ~= 1 and vim.fn.getfperm(path):sub(1, 1) == 'r' end
 
-H.fs_normalize = vim.fs.normalize
+H.fs_normalize = function(...) return vim.fs.normalize(...) end
 if vim.fn.has('nvim-0.9') == 0 then
   H.fs_normalize = function(...) return vim.fs.normalize(...):gsub('(.)/+$', '%1') end
 end
