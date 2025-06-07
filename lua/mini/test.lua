@@ -891,9 +891,14 @@ do
   --- Whether to forcefully create reference screenshot.
   --- Temporary useful during test writing. Default: `false`.
   ---@field force? boolean
-  --- Array of line numbers to ignore during compare.
-  --- Default: `nil` to check all lines.
-  ---@field ignore_lines? integer[]
+  --- Whether to ignore all or some text lines.
+  ---   If `true` - ignore all, if number array - ignore text of those lines,
+  ---   if `false` - do not ignore any. Default: `false`.
+  ---@field ignore_text? boolean|integer[]
+  --- Whether to ignore all or some attr lines.
+  ---   If `true` - ignore all, if number array - ignore attr of those lines,
+  ---   if `false` - do not ignore any. Default: `false`.
+  ---@field ignore_attr? boolean|integer[]
   --- Directory where automatically constructed `path` is located.
   --- Default: "tests/screenshots".
   ---@field directory? string
@@ -1742,6 +1747,7 @@ MiniTest.new_child_neovim = function()
     child.diagnostic = vim.diagnostic
     child.fn = vim.fn
     child.highlight = vim.highlight
+    child.hl = vim.hl
     child.json = vim.json
     child.loop = vim.uv
     child.lsp = vim.lsp
