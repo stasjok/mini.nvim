@@ -85,6 +85,11 @@ local mock_timestamp = function(timestamp)
   child.lua(lua_cmd)
 end
 
+local mock_bad_env_vars = function()
+  child.fn.setenv('GIT_DIR', test_dir_absolute .. '/.git')
+  child.fn.setenv('GIT_WORK_TREE', test_dir_absolute)
+end
+
 local mock_hide_path = function(path)
   path = path or test_dir_absolute
   -- NOTE: use "^" as pattern separator because "/" can cause troubles
@@ -103,6 +108,10 @@ local get_spawn_log = function() return child.lua_get('_G.spawn_log') end
 local validate_git_spawn_log = function(ref_log)
   local spawn_log = get_spawn_log()
 
+  local ref_env = child.fn.environ()
+  -- Should never include environment variables that can affect Git operations
+  ref_env.GIT_DIR, ref_env.GIT_WORK_TREE = nil, nil
+
   local n = math.max(#spawn_log, #ref_log)
   for i = 1, n do
     local real, ref = spawn_log[i], ref_log[i]
@@ -114,22 +123,24 @@ local validate_git_spawn_log = function(ref_log)
       -- Assume default `git` options
       local args = { '-c', 'gc.auto=0' }
       vim.list_extend(args, ref)
-      eq(real, { executable = 'git', options = { args = args, cwd = real.options.cwd } })
+      local opts = { args = args, cwd = real.options.cwd, env = ref_env, clear_env = true }
+      local ref_val = { executable = 'git', options = opts }
+      eq(real, ref_val)
     else
       local opts = vim.deepcopy(ref)
       -- Assume default `git` options
       local args = { '-c', 'gc.auto=0' }
       opts.args = vim.list_extend(args, opts.args)
+      if opts.env == nil then
+        opts.env = opts.env or ref_env
+        opts.clear_env = true
+      end
       eq(real, { executable = 'git', options = opts })
     end
   end
 end
 
-local clear_spawn_log = function() child.lua('_G.spawn_log = {}') end
-
 local get_process_log = function() return child.lua_get('_G.process_log') end
-
-local clear_process_log = function() child.lua('_G.process_log = {}') end
 
 -- Work with notifications
 local mock_notify = function()
@@ -541,6 +552,9 @@ T['add()']['Install'] = new_set({
 })
 
 T['add()']['Install']['works'] = function()
+  mock_bad_env_vars()
+  local ref_environ = child.fn.environ()
+
   child.lua([[
     _G.stdio_queue = {
       { out = 'git version 2.43.0'}, -- Check Git executable
@@ -596,6 +610,9 @@ T['add()']['Install']['works'] = function()
     { '(mini.deps) (1/1) Installed `new_plugin`', 'INFO' },
   }
   validate_notifications(ref_notify_log)
+
+  -- Should not affect any environment variables
+  eq(child.fn.environ(), ref_environ)
 end
 
 T['add()']['Install']['checks for executable Git'] = function()
@@ -1222,6 +1239,8 @@ local update = forward_lua('MiniDeps.update')
 
 T['update()']['works'] = function()
   child.set_size(40, 80)
+  mock_bad_env_vars()
+  local ref_environ = child.fn.environ()
 
   -- By default should update all plugins in session
   add('plugin_1')
@@ -1310,6 +1329,9 @@ T['update()']['works'] = function()
   mock_hide_path(test_dir_absolute)
   child.expect_screenshot()
   validate_confirm_buf('confirm-update')
+
+  -- Should not affect any environment variables
+  eq(child.fn.environ(), ref_environ)
 end
 
 T['update()']['checks for executable Git'] = function()
@@ -1371,6 +1393,9 @@ T['update()']['Confirm buffer'] = new_set({
 })
 
 T['update()']['Confirm buffer']['can apply changes'] = function()
+  mock_bad_env_vars()
+  local ref_environ = child.fn.environ()
+
   -- Should run `update()` on buffer write with only valid plugin names
   -- Remove 'plugin_1' from being updated
   child.cmd('g/^+++ plugin_1/normal! dd/')
@@ -1379,6 +1404,9 @@ T['update()']['Confirm buffer']['can apply changes'] = function()
   -- Should update and close confirmation buffer
   eq(child.lua_get('_G.update_args'), { { 'plugin_2' }, { force = true, offline = true } })
   validate_not_confirm_buf()
+
+  -- Should not affect any environment variables
+  eq(child.fn.environ(), ref_environ)
 end
 
 T['update()']['Confirm buffer']['can cancel'] = function()
