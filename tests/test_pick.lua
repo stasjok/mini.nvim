@@ -4746,6 +4746,10 @@ T['Overall view']['correctly infers footer empty space'] = function()
       { '%', 'Normal' }, { '^', 'Normal' }, { '&', 'Normal' }, { '*', 'Normal' }
     },
   })
+
+  -- Should respect `content_from_bottom`
+  child.lua('MiniPick.config.options.content_from_bottom = true')
+  validate({ border = { '!', '@', '#', '$', '%', '^', '&', '*' } })
 end
 
 T['Overall view']['does not show footer if items are not set'] = function()
