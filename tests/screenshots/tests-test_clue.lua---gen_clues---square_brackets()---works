@@ -26,7 +26,7 @@
 25|│ <C-D>   │ Go to first macro def with cursor word               │
 26|│ <C-L>   │ :lpfile                                              │
 27|│ <C-Q>   │ :cpfile                                              │
-28|│ <C-T>   │  :ptprevious                                         │
+28|│ <C-T>   │ :ptprevious                                          │
 29|│ <Space> │ Add empty line above cursor                          │
 30|│ <Tab>   │ Go to first match with cursor word                   │
 31|│ #       │ Go to previous unmatched #if/#else/#ifdef            │

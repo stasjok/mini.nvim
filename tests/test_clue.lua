@@ -803,7 +803,8 @@ T['gen_clues']['square_brackets()']['works'] = function()
   ]])
 
   type_keys('[')
-  child.expect_screenshot()
+  local ignore_text = child.fn.has('nvim-0.12') == 0 and { 28 } or {}
+  child.expect_screenshot({ ignore_text = ignore_text })
   type_keys('<Esc>')
   type_keys(']')
   child.expect_screenshot()
