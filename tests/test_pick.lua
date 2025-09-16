@@ -260,6 +260,10 @@ T['setup()']['creates side effects'] = function()
   validate_hl_group('MiniPickPrompt', 'links to DiagnosticFloatingInfo')
   validate_hl_group('MiniPickPromptCaret', 'links to MiniPickPrompt')
   validate_hl_group('MiniPickPromptPrefix', 'links to MiniPickPrompt')
+
+  -- `vim.ui.select` implementation
+  child.lua_notify('vim.ui.select({ "a", "b" }, {}, function() end)')
+  eq(child.lua_get('MiniPick.get_picker_items() ~= nil'), true)
 end
 
 T['setup()']['creates `config` field'] = function()
