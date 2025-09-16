@@ -3131,7 +3131,7 @@ T['builtin.help()']['works'] = function()
   eq(child.lua_get('_G.help_item'), item)
 
   -- Should open help page as choosing
-  child.expect_screenshot({ ignore_text = { 13 } })
+  child.expect_screenshot({ ignore_text = { 13 }, ignore_attr = child.fn.has('nvim-0.12') == 0 })
 end
 
 T['builtin.help()']['has proper preview'] = function()
@@ -3214,7 +3214,7 @@ T['builtin.help()']['works when help window is already opened'] = function()
 
   -- Should open help in already opened help window (just like `:help`)
   type_keys('<CR>')
-  child.expect_screenshot({ ignore_text = { 13 } })
+  child.expect_screenshot({ ignore_text = { 13 }, ignore_attr = child.fn.has('nvim-0.12') == 0 })
   eq(#child.api.nvim_list_wins(), 2)
 end
 
@@ -3233,7 +3233,7 @@ T['builtin.help()']['handles consecutive applications'] = function()
   set_picker_query({ ':helpg' })
   type_keys('<CR>')
 
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_attr = child.fn.has('nvim-0.12') == 0 })
 end
 
 T['builtin.help()']['works with `builtin.resume()`'] = function()
@@ -3241,7 +3241,8 @@ T['builtin.help()']['works with `builtin.resume()`'] = function()
   set_picker_query({ ':help' })
   type_keys('<CR>')
   sleep(small_time)
-  child.expect_screenshot()
+  local ignore_attr = child.fn.has('nvim-0.12') == 0
+  child.expect_screenshot({ ignore_attr = ignore_attr })
 
   child.cmd('close')
   eq(#child.api.nvim_list_wins(), 1)
@@ -3249,7 +3250,7 @@ T['builtin.help()']['works with `builtin.resume()`'] = function()
   child.lua_notify('MiniPick.builtin.resume()')
   type_keys('<CR>')
   sleep(small_time)
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_attr = ignore_attr })
 end
 
 T['builtin.help()']['respects `opts`'] = function()
