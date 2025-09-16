@@ -39,6 +39,10 @@ There are following change types:
 
 ## mini.completion
 
+### Evolve
+
+- Update `setup()` to remove "t" flag from 'complete' option (if not previously set and fallback action is default) as it leads to visible lags.
+
 ### Expand
 
 - Add `MiniCompletionWindowOpen` and `MiniCompletionWindowUpdate` events.

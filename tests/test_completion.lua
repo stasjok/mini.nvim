@@ -276,13 +276,16 @@ T['setup()']['sets recommended option values'] = function()
   expect.match(child.o.shortmess, 'c')
   expect.match(child.o.shortmess, 'C')
   eq(child.o.completeopt, 'menuone,noselect')
+  eq(child.o.complete:find('t'), nil)
 
   -- Should not set if was previously set
   child.o.shortmess = 'ltToO'
   child.o.completeopt = 'menu,noinsert'
+  child.o.complete = '.,w,b,u,t'
   reload_module()
   eq(child.o.shortmess, 'ltToO')
   eq(child.o.completeopt, 'menu,noinsert')
+  eq(child.o.complete, '.,w,b,u,t')
 end
 
 T['default_process_items()'] = new_set({
