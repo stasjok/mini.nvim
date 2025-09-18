@@ -857,6 +857,15 @@ T['gen_spec']['treesitter()']['works with parent of injected language'] = functi
   validate_find(lines, { 3, 0 }, { 'a', 'F' }, { { 1, 13 }, { 5, 3 } })
 end
 
+T['gen_spec']['treesitter()']['works with row-exclusive, col-0 end range'] = function()
+  child.lua([[MiniAi.config.custom_textobjects = {
+    c = MiniAi.gen_spec.treesitter({ a = '@chunk.outer', i = '@chunk.outer' }),
+  }]])
+
+  local lines = get_lines()
+  validate_find(lines, { 1, 0 }, { 'a', 'c' }, { { 1, 1 }, { 13, 9 } })
+end
+
 T['gen_spec']['treesitter()']['respects plugin options'] = function()
   local lines = get_lines()
 
