@@ -108,9 +108,13 @@ local get_spawn_log = function() return child.lua_get('_G.spawn_log') end
 local validate_git_spawn_log = function(ref_log)
   local spawn_log = get_spawn_log()
 
-  local ref_env = child.fn.environ()
+  local env_map = child.fn.environ()
   -- Should never include environment variables that can affect Git operations
-  ref_env.GIT_DIR, ref_env.GIT_WORK_TREE = nil, nil
+  env_map.GIT_DIR, env_map.GIT_WORK_TREE = nil, nil
+  local ref_env_map = {}
+  for k, v in pairs(env_map) do
+    ref_env_map[k .. '=' .. tostring(v)] = true
+  end
 
   local n = math.max(#spawn_log, #ref_log)
   for i = 1, n do
@@ -123,7 +127,7 @@ local validate_git_spawn_log = function(ref_log)
       -- Assume default `git` options
       local args = { '-c', 'gc.auto=0' }
       vim.list_extend(args, ref)
-      local opts = { args = args, cwd = real.options.cwd, env = ref_env, clear_env = true }
+      local opts = { args = args, cwd = real.options.cwd, env = real.options.env }
       local ref_val = { executable = 'git', options = opts }
       eq(real, ref_val)
     else
@@ -131,12 +135,17 @@ local validate_git_spawn_log = function(ref_log)
       -- Assume default `git` options
       local args = { '-c', 'gc.auto=0' }
       opts.args = vim.list_extend(args, opts.args)
-      if opts.env == nil then
-        opts.env = opts.env or ref_env
-        opts.clear_env = true
-      end
+      opts.env = real.options.env
       eq(real, { executable = 'git', options = opts })
     end
+
+    -- Validate environment variables separately because it is a string array
+    -- without order guarantee
+    local real_env_map = {}
+    for _, v in ipairs(real.options.env) do
+      real_env_map[v] = true
+    end
+    eq(real_env_map, ref_env_map)
   end
 end
 
