@@ -158,6 +158,7 @@ T['setup()']['creates side effects'] = function()
   child.cmd('hi clear')
   load_module()
   expect.match(child.cmd_capture('hi MiniCompletionActiveParameter'), 'links to LspSignatureActiveParameter')
+  expect.match(child.cmd_capture('hi MiniCompletionDeprecated'), 'links to DiagnosticDeprecated')
   expect.match(child.cmd_capture('hi MiniCompletionInfoBorderOutdated'), 'links to DiagnosticFloatingWarn')
 end
 
@@ -328,6 +329,28 @@ T['default_process_items()']['works'] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("Only Neovim>=0.11 has 'fuzzy' flag in 'completeopt'") end
   child.o.completeopt = 'menuone,noselect,fuzzy'
   eq(child.lua_get('MiniCompletion.default_process_items(_G.items, "l")'), ref_fuzzy_items)
+end
+
+T['default_process_items()']['highlights deprecated items'] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'abbr_hlgroup' field is present on Neovim>=0.11") end
+
+  child.lua([[
+    _G.items[1].deprecated = true
+    _G.items[6].tags = { vim.lsp.protocol.CompletionTag.Deprecated }
+    -- Should not override already set `abbr_hlgroup`
+    _G.items[7].abbr_hlgroup = 'String'
+  ]])
+  local tags = child.lua_get('{ vim.lsp.protocol.CompletionTag.Deprecated }')
+
+  local ref_processed_items = {
+    { abbr_hlgroup = 'MiniCompletionDeprecated', deprecated = true, kind = 1, label = 'January', sortText = '001' },
+    { abbr_hlgroup = 'String', kind = 3, label = 'June', sortText = '006' },
+    { abbr_hlgroup = 'MiniCompletionDeprecated', tags = tags, kind = 100, label = 'July', sortText = '007' },
+  }
+  eq(child.lua_get('MiniCompletion.default_process_items(_G.items, "J")'), ref_processed_items)
+
+  -- Should not modify original items
+  eq(child.lua_get('_G.items[1].abbr_hlgroup'), vim.NIL)
 end
 
 T['default_process_items()']["highlights LSP kind if 'mini.icons' is enabled"] = function()
@@ -1196,6 +1219,26 @@ T['Manual completion']['respects `itemDefaults` from LSP response'] = function()
     eq(item.textEdit.insert, item.textEdit.insert or edit_range.insert)
     eq(item.textEdit.replace, item.textEdit.replace or edit_range.replace)
   end
+end
+
+T['Manual completion']['respects `abbr_hlgroup` as item field'] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip('Abbreviation highlighting is available on Neovim>=0.11') end
+  child.set_size(10, 40)
+  set_lines({})
+
+  child.lua([[
+    MiniCompletion.config.lsp_completion.process_items = function(items, base)
+      local res = vim.tbl_filter(function(x) return vim.startswith(x.label, base) end, items)
+      table.sort(res, function(a, b) return a.sortText < b.sortText end)
+      for _, item in ipairs(res) do
+        if item.label == 'January' then item.abbr_hlgroup = 'String' end
+        if item.label == 'June' then item.abbr_hlgroup = 'Comment' end
+      end
+      return res
+    end
+  ]])
+  type_keys('i', 'J', '<C-Space>')
+  child.expect_screenshot()
 end
 
 T['Manual completion']['respects `kind_hlgroup` as item field'] = function()

@@ -56,6 +56,8 @@ There are following change types:
 
 - Add `MiniCompletionWindowOpen` and `MiniCompletionWindowUpdate` events.
 
+- Add support for highlighting LSP item label via setting `abbr_hlgroup` field as part of an LSP item (like inside `config.lsp_completion.process_items`).
+
 ## mini.clue
 
 ### Expand
