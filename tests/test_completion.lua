@@ -359,15 +359,22 @@ T['default_process_items()']["highlights LSP kind if 'mini.icons' is enabled"] =
   mock_miniicons()
   local ref_hlgroup = child.lua_get('_G.ref_hlgroup')
   local ref_processed_items = {
-    { kind = 1, kind_hlgroup = ref_hlgroup.text, label = 'January', sortText = '001' },
-    { kind = 3, kind_hlgroup = ref_hlgroup.func, label = 'June', sortText = '006' },
+    { kind_hlgroup = ref_hlgroup.text, kind = 1, label = 'January', sortText = '001' },
+    { kind_hlgroup = ref_hlgroup.func, kind = 3, label = 'June', sortText = '006' },
     -- Unknown kind should not get highlighted
-    { kind = 100, kind_hlgroup = nil, label = 'July', sortText = '007' },
+    { kind_hlgroup = nil, kind = 100, label = 'July', sortText = '007' },
   }
   eq(child.lua_get('MiniCompletion.default_process_items(_G.items, "J")'), ref_processed_items)
 
   -- Should not modify original items
   eq(child.lua_get('_G.items[1].kind_hlgroup'), vim.NIL)
+
+  -- Should not override already set `kind_hlgroup`
+  local out = child.lua([[
+    _G.items[5].kind_hlgroup = 'Comment'
+    return MiniCompletion.default_process_items(_G.items, 'F')
+  ]])
+  eq(out, { { kind_hlgroup = 'Comment', kind = 1, label = 'February', sortText = '002' } })
 end
 
 T['default_process_items()']['works after `MiniIcons.tweak_lsp_kind()`'] = function()
