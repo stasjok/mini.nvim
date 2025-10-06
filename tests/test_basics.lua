@@ -219,7 +219,7 @@ T['Options']['respect `config.options.win_borders`'] = function()
 
   load_module({ options = { basic = false, win_borders = 'double' } })
 
-  local ref_value = 'horiz:═,horizdown:╦,horizup:╩,vert:║,verthoriz:╬,vertleft:╣,vertright:╠'
+  local ref_value = 'horiz:═,horizdown:╦,horizup:╩,msgsep:═,vert:║,verthoriz:╬,vertleft:╣,vertright:╠'
   eq(child.o.fillchars, ref_value)
 end
 
