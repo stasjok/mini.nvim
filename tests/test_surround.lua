@@ -171,6 +171,10 @@ T['setup()']['properly handles `config.mappings`'] = function()
   -- Regular mappings
   eq(has_map('sa', 'surround'), true)
 
+  -- Should map "s" to <Nop>, but only if needed
+  eq(child.fn.maparg('s', 'n'), '<Nop>')
+  eq(child.fn.maparg('s', 'x'), '<Nop>')
+
   unload_module()
   child.api.nvim_del_keymap('n', 'sa')
 
@@ -194,6 +198,32 @@ T['setup()']['properly handles `config.mappings`'] = function()
   eq(has_map('sdn', 'next'), false)
   eq(has_map('srl', 'previous'), false)
   eq(has_map('srn', 'next'), true)
+
+  -- Should precisely set 's' keymap
+  unload_module()
+  child.api.nvim_del_keymap('n', 'sa')
+  child.api.nvim_del_keymap('n', 's')
+  child.api.nvim_del_keymap('x', 's')
+
+  load_module({ mappings = { add = 'cs' } })
+  eq(child.fn.maparg('s', 'n'), '<Nop>')
+  eq(child.fn.maparg('s', 'x'), '')
+
+  child.api.nvim_del_keymap('n', 's')
+  load_module({
+    mappings = {
+      add = 'ys',
+      delete = 'ds',
+      find = '',
+      find_left = '',
+      highlight = '',
+      replace = 'cs',
+      suffix_last = '',
+      suffix_next = '',
+    },
+  })
+  eq(child.fn.maparg('s', 'n'), '')
+  eq(child.fn.maparg('s', 'x'), '')
 end
 
 T['update_n_lines()'] = new_set({
