@@ -4671,7 +4671,7 @@ T[':Pick']['correctly parses arguments'] = function()
 end
 
 T[':Pick']['has proper complete'] = function()
-  child.set_size(10, 20)
+  child.set_size(10, 30)
   local validate = function(keys)
     type_keys(':Pick ', keys, '<Tab>')
     child.expect_screenshot()

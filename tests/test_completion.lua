@@ -594,7 +594,7 @@ T['Autocompletion']['works without LSP clients'] = function()
 
   -- Completion menu is filtered after entering characters
   type_keys('a')
-  child.set_size(10, 20)
+  child.set_size(10, 30)
   child.expect_screenshot()
 end
 
@@ -642,7 +642,7 @@ T['Autocompletion']['forces new LSP completion at LSP trigger'] = new_set(
     test = function(source_func)
       reload_module({ lsp_completion = { source_func = source_func } })
       mock_completefunc_lsp_tracking()
-      child.set_size(16, 20)
+      child.set_size(16, 30)
       child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false))
 
       --stylua: ignore

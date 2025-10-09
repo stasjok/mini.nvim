@@ -2840,7 +2840,7 @@ T[':Git']['collects data about available subcommands'] = function()
 end
 
 T[':Git']['completion']['works with options'] = function()
-  child.set_size(20, 32)
+  child.set_size(20, 40)
   child.lua('table.insert(_G.stdio_queue, _G.help_output)')
 
   -- Should get output by making CLI call
@@ -2879,7 +2879,7 @@ T[':Git']['completion']['works with options'] = function()
   eq(#spawn_log, 5)
 
   -- Works with "old" forced formatting in output
-  child.set_size(10, 20)
+  child.set_size(10, 30)
   child.lua([[
     local old_format_lines = {
       'N\bNA\bAM\bME\bE', 'add', '',
@@ -2893,7 +2893,7 @@ T[':Git']['completion']['works with options'] = function()
 end
 
 T[':Git']['completion']['works with explicit paths'] = function()
-  child.set_size(15, 40)
+  child.set_size(15, 50)
 
   -- Should incrementally suggest paths relative to root after explicit " -- "
   type_keys(':Git add -- ', '<Tab>')
@@ -2916,6 +2916,7 @@ T[':Git']['completion']['works with explicit paths'] = function()
 end
 
 T[':Git']['completion']['uses correct working directory for paths'] = function()
+  child.set_size(15, 40)
   mock_init_track_stdio_queue()
   child.lua([[_G.stdio_queue = {
     _G.init_track_stdio_queue[1],
@@ -2935,7 +2936,7 @@ end
 
 --stylua: ignore
 T[':Git']['completion']['works with subcommand targets'] = function()
-  child.set_size(15, 20)
+  child.set_size(15, 40)
   child.lua([[
     _G.subcommands_with_special_targets = {
       'add', 'mv', 'restore', 'rm',
@@ -3026,9 +3027,7 @@ T[':Git']['completion']['works with subcommand targets'] = function()
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
   validate_command_completion(':Git push origin v')
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
-  child.set_size(15, 30)
   validate_command_completion(':Git push origin main ')
-  child.set_size(15, 20)
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
 
   validate_command_completion(':Git pull ') -- CLI
@@ -3039,9 +3038,7 @@ T[':Git']['completion']['works with subcommand targets'] = function()
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
   validate_command_completion(':Git pull origin v')
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
-  child.set_size(15, 30)
   validate_command_completion(':Git pull origin main ')
-  child.set_size(15, 20)
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
 
   validate_command_completion(':Git checkout ') -- CLI
@@ -3050,14 +3047,17 @@ T[':Git']['completion']['works with subcommand targets'] = function()
   validate_command_completion(':Git config ') -- CLI
   validate_latest_spawn_args({ '--no-pager', 'help', '--config-for-completion' })
 
+  child.set_size(30, 30)
   validate_command_completion(':Git help ') -- Supported commands plus a bit
 
   -- Should also work with aliases
+  child.set_size(10, 30)
   validate_command_completion(':Git l ') -- CLI, same as log
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
 end
 
 T[':Git']['completion']['works with not supported command'] = function()
+  child.set_size(17, 40)
   -- Should suggest commands
   type_keys(':Git doesnotexist ', '<Tab>')
   child.expect_screenshot()
