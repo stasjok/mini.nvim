@@ -166,10 +166,10 @@ T['setup()']['ensures colors'] = function()
 end
 
 T['setup()']['properly handles `config.mappings`'] = function()
-  local has_map = function(lhs, pattern) return child.cmd_capture('nmap ' .. lhs):find(pattern) ~= nil end
+  local has_surround_map = function(lhs, mode) return child.fn.maparg(lhs, mode):find('[Ss]urround') ~= nil end
 
   -- Regular mappings
-  eq(has_map('sa', 'surround'), true)
+  eq(has_surround_map('sa', 'n'), true)
 
   -- Should map "s" to <Nop>, but only if needed
   eq(child.fn.maparg('s', 'n'), '<Nop>')
@@ -180,11 +180,11 @@ T['setup()']['properly handles `config.mappings`'] = function()
 
   -- Supplying empty string should mean "don't create keymap"
   load_module({ mappings = { add = '' } })
-  eq(has_map('sa', 'surround'), false)
+  eq(has_surround_map('sa', 'n'), false)
 
   -- Extended mappings
-  eq(has_map('sdl', 'previous'), true)
-  eq(has_map('sdn', 'next'), true)
+  eq(has_surround_map('sdl', 'n'), true)
+  eq(has_surround_map('sdn', 'n'), true)
 
   unload_module()
   child.api.nvim_del_keymap('n', 'sd')
@@ -194,10 +194,10 @@ T['setup()']['properly handles `config.mappings`'] = function()
   child.api.nvim_del_keymap('n', 'srn')
 
   load_module({ mappings = { delete = '', suffix_last = '' } })
-  eq(has_map('sdl', 'previous'), false)
-  eq(has_map('sdn', 'next'), false)
-  eq(has_map('srl', 'previous'), false)
-  eq(has_map('srn', 'next'), true)
+  eq(has_surround_map('sdl', 'n'), false)
+  eq(has_surround_map('sdn', 'n'), false)
+  eq(has_surround_map('srl', 'n'), false)
+  eq(has_surround_map('srn', 'n'), true)
 
   -- Should precisely set 's' keymap
   unload_module()
@@ -209,21 +209,27 @@ T['setup()']['properly handles `config.mappings`'] = function()
   eq(child.fn.maparg('s', 'n'), '<Nop>')
   eq(child.fn.maparg('s', 'x'), '')
 
-  child.api.nvim_del_keymap('n', 's')
-  load_module({
-    mappings = {
-      add = 'ys',
-      delete = 'ds',
-      find = '',
-      find_left = '',
-      highlight = '',
-      replace = 'cs',
-      suffix_last = '',
-      suffix_next = '',
-    },
-  })
-  eq(child.fn.maparg('s', 'n'), '')
+  local vim_surround_mappings = {
+    add = 'ys',
+    delete = 'ds',
+    find = '',
+    find_left = '',
+    highlight = '',
+    replace = 'cs',
+    suffix_last = '',
+    suffix_next = '',
+  }
+  -- - Should also not override already present user mapping for `s`
+  child.cmd('nmap s <Cmd>echo 1<CR>')
+  load_module({ mappings = vim_surround_mappings })
+  eq(child.fn.maparg('s', 'n'), '<Cmd>echo 1<CR>')
   eq(child.fn.maparg('s', 'x'), '')
+
+  -- - Should allow creating a plain `s` as a mapping
+  vim_surround_mappings.add = 's'
+  load_module({ mappings = vim_surround_mappings })
+  eq(has_surround_map('s', 'n'), true)
+  eq(has_surround_map('s', 'x'), true)
 end
 
 T['update_n_lines()'] = new_set({
