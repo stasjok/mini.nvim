@@ -195,6 +195,7 @@ end
 ---   If it is whitespace - highlight background, otherwise - foreground.
 ---
 --- # Examples ~
+--- *MiniHues-examples*
 ---
 --- Here are some possible setup configurations (copy first line and then use
 --- only one `setup` call): >lua
