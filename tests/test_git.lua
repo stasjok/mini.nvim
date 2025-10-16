@@ -781,13 +781,13 @@ T['show_diff_source()']['works when there is no "before" file'] = function()
     'Author: Neo McVim <neo.mcvim@gmail.com>',
     'Date:   Sat May 4 16:24:15 2024 +0300',
     '',
-    'Add file.',
+    'Add file with relative path "dev/null".',
     '',
-    'diff --git a/file b/file',
+    'diff --git a/dev/null b/dev/null',
     'new file mode 100644',
     'index 0000000..f9264f7',
     '--- /dev/null',
-    '+++ b/file',
+    '+++ b/dev/null',
     '@@ -0,0 +1,2 @@',
     '+Hello',
     '+World',
@@ -803,7 +803,7 @@ T['show_diff_source()']['works when there is no "before" file'] = function()
 
   validate_git_spawn_log({})
   clear_spawn_log()
-  validate_notifications({ { '(mini.git) Could not find "before" file', 'WARN' } })
+  validate_notifications({ { '(mini.git) No "before" as file was created', 'WARN' } })
   clear_notify_log()
 
   -- Target "both" should show only "after" in a specified split
@@ -812,9 +812,54 @@ T['show_diff_source()']['works when there is no "before" file'] = function()
 
   eq(child.api.nvim_tabpage_get_number(0), 2)
   eq(#child.api.nvim_tabpage_list_wins(0), 1)
-  validate_minigit_name(0, 'show 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2:file')
+  validate_minigit_name(0, 'show 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2:dev/null')
 
-  validate_notifications({ { '(mini.git) Could not find "before" file', 'WARN' } })
+  validate_notifications({ { '(mini.git) No "before" as file was created', 'WARN' } })
+end
+
+T['show_diff_source()']['works when there is no "after" file'] = function()
+  child.lua([[_G.stdio_queue = {
+    { { 'out', 'Line 1\nCurrent line 2\nLine 3' } }, -- Diff source
+  }]])
+  set_lines({
+    'commit 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2',
+    'Author: Neo McVim <neo.mcvim@gmail.com>',
+    'Date:   Sat May 4 16:24:15 2024 +0300',
+    '',
+    'Remove file with relative path "dev/null".',
+    '',
+    'diff --git a/dev/null b/dev/null',
+    'new file mode 100644',
+    'index 0000000..f9264f7',
+    '--- a/dev/null',
+    '+++ /dev/null',
+    '@@ -2 +0,0 @@',
+    '-Hello',
+    '-World',
+  })
+
+  -- Target "after" should do nothing while showing notification
+  local init_buf_id = get_buf()
+  set_cursor(13, 0)
+
+  show_diff_source({ target = 'after' })
+  eq(get_buf(), init_buf_id)
+  eq(child.api.nvim_buf_get_name(0), '')
+
+  validate_git_spawn_log({})
+  clear_spawn_log()
+  validate_notifications({ { '(mini.git) No "after" as file was deleted', 'WARN' } })
+  clear_notify_log()
+
+  -- Target "both" should show only "before" in a specified split
+  set_cursor(13, 0)
+  show_diff_source({ target = 'both' })
+
+  eq(child.api.nvim_tabpage_get_number(0), 2)
+  eq(#child.api.nvim_tabpage_list_wins(0), 1)
+  validate_minigit_name(0, 'show 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2~:dev/null')
+
+  validate_notifications({ { '(mini.git) No "after" as file was deleted', 'WARN' } })
 end
 
 T['show_diff_source()']['does not depend on cursor column'] = function()
