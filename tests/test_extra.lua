@@ -2025,9 +2025,13 @@ T['pickers']['git_hunks()']['works in edge cases'] = function()
   pick_git_hunks()
 
   local items = get_picker_items()
-  eq(#items, 1)
+  eq(#items, 2)
   -- Should recognize diffs that come with `diff.mnemonicPrefix=true`
-  eq(items[1].text, 'git-files/git-file-1 │ -1,4 +1,3 │ ')
+  eq(items[1].text, 'git-files/git-file-1 │ -1,4 +1,3  │ ')
+  -- Should recognize diffs that come from deleted file
+  eq(items[2].text, 'git-files/git-file-2 │ -1,21 +0,0 │ ')
+  -- - NOTE: Although it still points to a deleted file, so no navigation to it
+  eq(items[2].path, 'git-files/git-file-2')
 end
 
 T['pickers']['git_hunks()']['respects `local_opts.n_context`'] = new_set({ parametrize = { { 0 }, { 20 } } }, {
