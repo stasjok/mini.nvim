@@ -1,0 +1,9 @@
+diff --git i/git-files/git-file-1 w/git-files/git-file-1
+index c139d4e..234d24d 100644
+--- i/git-files/git-file-1
++++ w/git-files/git-file-1
+@@ -1,4 +1,3 @@
+-Line 1-1
+ Line 1-2
+ Line 1-3
+ Line 1-4

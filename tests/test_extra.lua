@@ -2015,6 +2015,21 @@ T['pickers']['git_hunks()']['works'] = function()
   validate_active_picker()
 end
 
+T['pickers']['git_hunks()']['works in edge cases'] = function()
+  local repo_dir = test_dir_absolute
+  child.fn.chdir(repo_dir)
+  mock_git_repo(repo_dir)
+  local diff_lines = child.fn.readfile(join_path('mocks', 'git-diff-edge-cases'))
+  mock_cli_return(diff_lines)
+
+  pick_git_hunks()
+
+  local items = get_picker_items()
+  eq(#items, 1)
+  -- Should recognize diffs that come with `diff.mnemonicPrefix=true`
+  eq(items[1].text, 'git-files/git-file-1 │ -1,4 +1,3 │ ')
+end
+
 T['pickers']['git_hunks()']['respects `local_opts.n_context`'] = new_set({ parametrize = { { 0 }, { 20 } } }, {
   test = function(n_context)
     child.set_size(15, 100)
