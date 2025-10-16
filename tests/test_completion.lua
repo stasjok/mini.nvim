@@ -2557,10 +2557,10 @@ T['Snippets']['are not inserted if have no tabstops or variables'] = function()
   -- Treating text as snippet if there is a variable is important for a snippet
   -- insert method to expand them.
 
-  child.set_size(19, 52)
+  child.set_size(21, 52)
   local snippets = {
     -- - No insert:
-    'Just\ntext',
+    'Just text',
     [[Text with \$1 escaped dollar]],
     [[Text with \$TM_FILENAME escaped dollar]],
     [[Text with \${1} escaped dollar]],
@@ -2576,6 +2576,8 @@ T['Snippets']['are not inserted if have no tabstops or variables'] = function()
     'Has $0 tabstop',
     'Has ${0} tabstop',
     'Has tabstop$0',
+    'Has\ttab',
+    'Has\nnewline',
   }
   mock_lsp_snippets(snippets)
 
