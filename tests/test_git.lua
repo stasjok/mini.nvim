@@ -684,6 +684,8 @@ T['show_diff_source()']['correctly identifies source'] = function()
   validate_no_ok(35)
 
   -- Should get proper (nearest from above) commit
+  -- Should also work with `diff.mnemonicPrefix=true` Git config setting, which
+  -- can have source and destination prefixes be not only `a/` and `b/`
   local commit_after_2 = '7264474d3bda16d0098a7f89a4143fe4db3d82cf'
   local commit_before_2 = commit_after_2 .. '~'
   validate_ok(42, commit_before_2, 'dir/file1', 1)
