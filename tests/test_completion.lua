@@ -1622,6 +1622,39 @@ T['Information window']["respects 'winborder' option"] = function()
   validate({ '╔', '═', '╗', '║', '╝', '═', '╚', '║' })
 end
 
+T['Information window']["respects 'pumborder' option"] = function()
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("'pumborder' option is present on Neovim>=0.12") end
+  child.set_size(15, 32)
+
+  local validate = function(offset, pumborder)
+    child.o.pumborder = pumborder
+    set_lines({ string.rep(' ', offset) })
+    type_keys('A', 'J', '<C-Space>')
+    type_keys('<C-n>')
+    sleep(default_info_delay + small_time)
+    child.expect_screenshot()
+
+    type_keys('<C-e>')
+    child.ensure_normal_mode()
+    set_lines({})
+  end
+
+  -- Should properly adjust coordinates and pick side
+  validate(7, 'single')
+  validate(8, 'single')
+
+  -- Should respect no border in both windows
+  -- NOTE: Does not fully work for `pumborder=none` due to Neovim issue:
+  -- https://github.com/neovim/neovim/issues/36246
+  -- TODO: Uncomment both `'none'` validations after the issue is resolved
+  --
+  -- validate(0, 'none')
+
+  child.lua('MiniCompletion.config.window.info.border = "none"')
+  validate(0, 'single')
+  -- validate(0, 'none')
+end
+
 T['Information window']['triggers relevant events'] = function()
   mock_event_log()
   local validate_log = function(ref)
