@@ -57,6 +57,12 @@ There are following change types:
 
 - Update `options.win_border` to allow value `'auto'` which infers target 'fillchars' values from 'winborder' option.
 
+## mini.colors
+
+- Update `add_transparency()` color scheme method to adjust more groups:
+    - `XxxMsg` groups in case of `opts.general = true`.
+    - `DiagnosticSignXxx` groups in case of `opts.statuscolumn = true`.
+
 ## mini.completion
 
 ### Evolve
