@@ -159,6 +159,8 @@ There are following change types:
 
 - "Paste" action now supports special registers: `<C-w>` (word at cursor), `<C-a>` (WORD at cursor), `<C-l>` (line at cursor), `<C-f>` (filename at cursor).
 
+- Key query process now respects most language mappings. By @yehorb, PR #2026.
+
 ## mini.sessions
 
 ### Refine

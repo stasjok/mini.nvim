@@ -893,6 +893,42 @@ T['start()']['allows overriding built-in mappings'] = function()
   eq(get_picker_state().caret, 2)
 end
 
+T['start()']['works with language mappings'] = function()
+  if child.fn.has('nvim-0.10') == 0 then
+    MiniTest.skip('Helper function that gets language mappings is available only on Neovim>=0.10')
+  end
+  child.o.keymap = 'ukrainian-jcuken'
+  eq(child.o.iminsert, 1)
+
+  start_with_items({})
+  type_keys('g', 'h')
+  eq(get_picker_query(), { 'п', 'р' })
+  type_keys('<C-u>')
+
+  -- Should allow changing 'iminsert' while picker is active
+  child.o.iminsert = 0
+  type_keys('g', 'h')
+  eq(get_picker_query(), { 'g', 'h' })
+  type_keys('<C-c>')
+
+  -- Should work with custom "good" language mappings
+  child.o.keymap = ''
+  child.o.iminsert = 1
+  child.cmd('lmap a 1')
+  child.cmd('lmap b <char-0x1f171>')
+  child.cmd('lmap cc C')
+
+  start_with_items({})
+  type_keys('a', 'b', 'c', 'c')
+  eq(get_picker_query(), { '1', 'b', 'c', 'c' })
+  type_keys('<C-u>')
+
+  -- Should cache language mappings per picker session
+  child.cmd('lmap d 4')
+  type_keys('d')
+  eq(get_picker_query(), { 'd' })
+end
+
 T['start()']['respects `window.config`'] = function()
   -- As table
   start({ source = { items = { 'a', 'b', 'c' } }, window = { config = { border = 'double' } } })
@@ -6146,6 +6182,15 @@ T['Paste']['respects `delay.async` when waiting for register label'] = function(
   -- Test that redraw is done repeatedly
   sleep(8 * small_time)
   validate(3, { '', 'Line 1', 'Line 2', 'Line 3' })
+end
+
+T['Paste']['is not affected by language mappings'] = function()
+  child.o.iminsert = 1
+  child.cmd('lmap a 1')
+  child.fn.setreg('a', 'xxx')
+  start_with_items({ 'a' })
+  type_keys('<C-r>', 'a')
+  eq(get_picker_query(), { 'x', 'x', 'x' })
 end
 
 T['Refine'] = new_set()
