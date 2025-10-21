@@ -4208,6 +4208,28 @@ T['File manipulation']['can copy directory inside itself'] = function()
   validate_confirm_args('  COPY   │ dir => dir/dir')
 end
 
+T['File manipulation']['can convert file into directory'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file', 'dir/', 'dir/subfile' })
+  child.fn.writefile({ 'Subfile' }, join_path(temp_dir, 'dir', 'subfile'))
+  open(temp_dir)
+
+  type_keys('A', '/', '<Esc>')
+  type_keys('j', 'A', '/', '<Esc>')
+  child.expect_screenshot()
+
+  mock_confirm(1)
+  synchronize()
+  child.expect_screenshot()
+
+  -- Should convert file->directory but not touch directory->directory
+  validate_tree(temp_dir, { 'file/', 'dir/', 'dir/subfile' })
+  validate_file_content(join_path(temp_dir, 'dir', 'subfile'), { 'Subfile' })
+
+  validate_confirm_args('  DELETE │ file')
+  validate_confirm_args('  RENAME │ dir => dir')
+  validate_confirm_args('  CREATE │ file %(directory%)')
+end
+
 T['File manipulation']['respects modified hidden buffers'] = function()
   local temp_dir = make_temp_dir('temp', { 'file', 'dir/' })
   open(temp_dir)

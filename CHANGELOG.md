@@ -97,6 +97,10 @@ There are following change types:
 
 ## mini.files
 
+### Evolve
+
+- Allow appending `/` to a file name to mean "delete file" + "create directory". This is useful when initial intention was to create a directory but there was no `/` at the end.
+
 ### Refine
 
 - Ensure preview window is never hidden, even if cursor is on the line for a not (yet) existing file system entry. This reduces flickering of preview window when creating new files in Insert mode.
