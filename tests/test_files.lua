@@ -238,6 +238,7 @@ T['setup()']['creates `config` field'] = function()
   local expect_config = function(field, value) eq(child.lua_get('MiniFiles.config.' .. field), value) end
 
   expect_config('content.filter', vim.NIL)
+  expect_config('content.highlight', vim.NIL)
   expect_config('content.prefix', vim.NIL)
   expect_config('content.sort', vim.NIL)
 
@@ -279,6 +280,7 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error('a', 'config', 'table')
   expect_config_error({ content = 'a' }, 'content', 'table')
   expect_config_error({ content = { filter = 1 } }, 'content.filter', 'function')
+  expect_config_error({ content = { highlight = 1 } }, 'content.highlight', 'function')
   expect_config_error({ content = { prefix = 1 } }, 'content.prefix', 'function')
   expect_config_error({ content = { sort = 1 } }, 'content.sort', 'function')
 
@@ -640,6 +642,33 @@ T['open()']['respects `content.filter`'] = function()
 
   local lua_cmd = string.format(
     [[MiniFiles.open(%s, false, { content = { filter = _G.filter_starts_from_a } })]],
+    vim.inspect(test_dir_path)
+  )
+  child.lua(lua_cmd)
+  child.expect_screenshot()
+end
+
+T['open()']['respects `content.highlight`'] = function()
+  child.lua([[
+    _G.highlight_arg = {}
+    MiniFiles.config.content.highlight = function(fs_entry)
+      _G.highlight_arg = fs_entry
+      -- Should use 'MiniFilesNormal' as a fallback
+      return nil
+    end
+  ]])
+
+  open(test_dir_path)
+  child.expect_screenshot()
+  validate_fs_entry(child.lua_get('_G.highlight_arg'))
+
+  -- Local value from argument should take precedence
+  child.lua([[_G.highlight_starts_from_a = function(fs_entry)
+    return vim.startswith(fs_entry.name, 'a') and 'String' or 'Comment'
+  end]])
+
+  local lua_cmd = string.format(
+    'MiniFiles.open(%s, false, { content = { highlight = _G.highlight_starts_from_a } })',
     vim.inspect(test_dir_path)
   )
   child.lua(lua_cmd)
