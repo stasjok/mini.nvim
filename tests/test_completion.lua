@@ -2784,6 +2784,16 @@ T['Snippets']['respect covering `textEdit` in candidate'] = function()
         },
       },
     },
+    {
+      label = 'Snip D',
+      kind = kind_snippet,
+      textEdit = {
+        newText = 'Snippet D $1',
+        -- Bad range that does not cover starting position. Should not result
+        -- in side effects like "extra `x` characters".
+        range = { start = { line = 2, character = 1 }, ['end'] = { line = 2, character = 2 } },
+      },
+    },
   }
 
   mock_lsp_items(items)
@@ -2803,6 +2813,7 @@ T['Snippets']['respect covering `textEdit` in candidate'] = function()
   validate(items[1], { 'aSnippet A h' }, { 1, 11 })
   validate(items[2], { 'abSnippet B def', 'gh' }, { 1, 12 })
   validate(items[3], { 'X Snippet C dYf', 'gh' }, { 1, 12 })
+  validate(items[4], { 'ab def', 'gSnippet D ' }, { 2, 11 })
 end
 
 T['Snippets']["LSP server from 'mini.snippets'"] = new_set({
