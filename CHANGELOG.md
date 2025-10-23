@@ -113,7 +113,9 @@ There are following change types:
 
 ### Evolve
 
-- Add auto adjusting of highlight groups based on certain events (like `MsgSeparator` group based on changing of `msgsep` flag of 'fillchars' option). It can be disabled via new `autoadjust` config setting or `opts.autoadjust` in `apply_palette()`.
+- Add auto adjusting of highlight groups based on certain events. It can be disabled via new `autoadjust` config setting or `opts.autoadjust` in `apply_palette()`. Affected groups:
+    - `MsgSeparator` depends on `msgsep` flag of 'fillchars' option.
+    - `Pmenu` depends on 'pumborder' option value (on Neovim>=0.12).
 
 ### Refine
 

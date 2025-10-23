@@ -240,6 +240,17 @@ T['setup()']['respects `config.autoadjust`'] = function()
   validate_hl_group('MsgSeparator', 'guifg=#dddddd guibg=#3e3e3e')
   child.o.fillchars = 'msgsep: '
   validate_hl_group('MsgSeparator', 'guifg=#dddddd guibg=#3e3e3e')
+
+  -- Should autoadjust `Pmenu` based on 'pumborder'
+  if child.fn.has('nvim-0.12') == 1 then
+    child.cmd('highlight clear')
+    child.o.pumborder = 'single'
+    load_module({ background = '#222222', foreground = '#dddddd' })
+    validate_hl_group('Pmenu', 'links to NormalFloat')
+
+    child.o.pumborder = 'none'
+    validate_hl_group('Pmenu', 'guifg=#dddddd guibg=#3e3e3e')
+  end
 end
 
 T['make_palette()'] = new_set()
@@ -513,7 +524,6 @@ T['apply_palette()']['respects `opts.autoadjust`'] = function()
   -- By default it should follow `config.autoadjust`
   child.lua('MiniHues.config.autoadjust = false')
   child.cmd('highlight clear')
-  child.api.nvim_del_augroup_by_name('MiniHuesAdjust')
   child.o.fillchars = 'msgsep:-'
 
   apply_palette(palette)
