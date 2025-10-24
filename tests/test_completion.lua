@@ -1624,12 +1624,13 @@ end
 
 T['Information window']["respects 'pumborder' option"] = function()
   if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("'pumborder' option is present on Neovim>=0.12") end
-  child.set_size(15, 32)
+  child.set_size(15, 33)
 
-  local validate = function(offset, pumborder)
+  local validate = function(offset, pumborder, keys)
+    keys = keys or { 'A', 'J', '<C-Space>' }
     child.o.pumborder = pumborder
     set_lines({ string.rep(' ', offset) })
-    type_keys('A', 'J', '<C-Space>')
+    type_keys(keys)
     type_keys('<C-n>')
     sleep(default_info_delay + small_time)
     child.expect_screenshot()
@@ -1649,6 +1650,14 @@ T['Information window']["respects 'pumborder' option"] = function()
   child.lua('MiniCompletion.config.window.info.border = "none"')
   validate(0, 'single')
   validate(0, 'none')
+  child.lua('MiniCompletion.config.window.info.border = nil')
+
+  -- Should work with present scrollbar
+  validate(0, 'single', { 'A', '<C-Space>' })
+  validate(0, 'none', { 'A', '<C-Space>' })
+  child.lua('MiniCompletion.config.window.info.border = "none"')
+  validate(0, 'single', { 'A', '<C-Space>' })
+  validate(0, 'none', { 'A', '<C-Space>' })
 end
 
 T['Information window']['triggers relevant events'] = function()
