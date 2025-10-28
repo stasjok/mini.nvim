@@ -168,6 +168,16 @@ end
 T['setup()']['properly handles `config.mappings`'] = function()
   local has_surround_map = function(lhs, mode) return child.fn.maparg(lhs, mode):find('[Ss]urround') ~= nil end
 
+  local make_clean_state = function()
+    unload_module()
+    for _, map in ipairs(child.api.nvim_get_keymap('n')) do
+      child.api.nvim_del_keymap('n', map.lhs)
+    end
+    for _, map in ipairs(child.api.nvim_get_keymap('x')) do
+      child.api.nvim_del_keymap('x', map.lhs)
+    end
+  end
+
   -- Regular mappings
   eq(has_surround_map('sa', 'n'), true)
 
@@ -175,10 +185,8 @@ T['setup()']['properly handles `config.mappings`'] = function()
   eq(child.fn.maparg('s', 'n'), '<Nop>')
   eq(child.fn.maparg('s', 'x'), '<Nop>')
 
-  unload_module()
-  child.api.nvim_del_keymap('n', 'sa')
-
   -- Supplying empty string should mean "don't create keymap"
+  make_clean_state()
   load_module({ mappings = { add = '' } })
   eq(has_surround_map('sa', 'n'), false)
 
@@ -186,13 +194,7 @@ T['setup()']['properly handles `config.mappings`'] = function()
   eq(has_surround_map('sdl', 'n'), true)
   eq(has_surround_map('sdn', 'n'), true)
 
-  unload_module()
-  child.api.nvim_del_keymap('n', 'sd')
-  child.api.nvim_del_keymap('n', 'sdl')
-  child.api.nvim_del_keymap('n', 'sdn')
-  child.api.nvim_del_keymap('n', 'srl')
-  child.api.nvim_del_keymap('n', 'srn')
-
+  make_clean_state()
   load_module({ mappings = { delete = '', suffix_last = '' } })
   eq(has_surround_map('sdl', 'n'), false)
   eq(has_surround_map('sdn', 'n'), false)
@@ -200,15 +202,12 @@ T['setup()']['properly handles `config.mappings`'] = function()
   eq(has_surround_map('srn', 'n'), true)
 
   -- Should precisely set 's' keymap
-  unload_module()
-  child.api.nvim_del_keymap('n', 'sa')
-  child.api.nvim_del_keymap('n', 's')
-  child.api.nvim_del_keymap('x', 's')
-
-  load_module({ mappings = { add = 'cs' } })
+  make_clean_state()
+  load_module({ mappings = { add = 'cs', delete = 'sd' } })
   eq(child.fn.maparg('s', 'n'), '<Nop>')
   eq(child.fn.maparg('s', 'x'), '')
 
+  -- - Should ignore presence of buffer-local mappings
   local vim_surround_mappings = {
     add = 'ys',
     delete = 'ds',
@@ -220,6 +219,7 @@ T['setup()']['properly handles `config.mappings`'] = function()
     suffix_next = '',
   }
   -- - Should also not override already present user mapping for `s`
+  make_clean_state()
   child.cmd('nmap s <Cmd>echo 1<CR>')
   load_module({ mappings = vim_surround_mappings })
   eq(child.fn.maparg('s', 'n'), '<Cmd>echo 1<CR>')
@@ -227,9 +227,29 @@ T['setup()']['properly handles `config.mappings`'] = function()
 
   -- - Should allow creating a plain `s` as a mapping
   vim_surround_mappings.add = 's'
+  make_clean_state()
   load_module({ mappings = vim_surround_mappings })
   eq(has_surround_map('s', 'n'), true)
   eq(has_surround_map('s', 'x'), true)
+
+  -- - Should ignore buffer-local `s` mappings and still create global `<Nop>`
+  make_clean_state()
+  child.cmd('nmap <buffer> s <Cmd>echo 1<CR>')
+  child.cmd('xmap <buffer> s <Cmd>echo 2<CR>')
+  load_module()
+  eq(child.fn.maparg('s', 'n'), '<Cmd>echo 1<CR>')
+  eq(child.fn.maparg('s', 'x'), '<Cmd>echo 2<CR>')
+
+  local get_global_mapping = function(mode, lhs)
+    for _, map in ipairs(child.api.nvim_get_keymap(mode)) do
+      if map.lhs == lhs then return map end
+    end
+    return {}
+  end
+  -- - NOTE: `nvim_get_keymap()` return `rhs=''` if it is mapped to `<Nop>`
+  --   For absent mapping it would have been `nil`
+  eq(get_global_mapping('x', 's').rhs, '')
+  eq(get_global_mapping('x', 's').rhs, '')
 end
 
 T['update_n_lines()'] = new_set({
