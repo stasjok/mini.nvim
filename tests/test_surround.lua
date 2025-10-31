@@ -248,8 +248,22 @@ T['setup()']['properly handles `config.mappings`'] = function()
   end
   -- - NOTE: `nvim_get_keymap()` return `rhs=''` if it is mapped to `<Nop>`
   --   For absent mapping it would have been `nil`
+  eq(get_global_mapping('n', 's').rhs, '')
   eq(get_global_mapping('x', 's').rhs, '')
-  eq(get_global_mapping('x', 's').rhs, '')
+
+  -- - Should work when there are both buffer-local and global mappings
+  make_clean_state()
+  child.cmd('nmap          s <Cmd>echo 1<CR>')
+  child.cmd('nmap <buffer> s <Cmd>echo 10<CR>')
+  child.cmd('xmap          s <Cmd>echo 2<CR>')
+  child.cmd('xmap <buffer> s <Cmd>echo 20<CR>')
+
+  load_module()
+
+  eq(child.fn.maparg('s', 'n'), '<Cmd>echo 10<CR>')
+  eq(child.fn.maparg('s', 'x'), '<Cmd>echo 20<CR>')
+  eq(get_global_mapping('n', 's').rhs, '<Cmd>echo 1<CR>')
+  eq(get_global_mapping('x', 's').rhs, '<Cmd>echo 2<CR>')
 end
 
 T['update_n_lines()'] = new_set({
