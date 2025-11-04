@@ -2820,7 +2820,7 @@ T['builtin.grep()']['respects `local_opts.pattern`'] = function()
   local spawn_log = get_spawn_log()
   eq(#spawn_log, 1)
   local args = spawn_log[1].options.args
-  eq(vim.list_slice(args, #args - 2), { '--color=never', '--', 'abc' })
+  eq(vim.list_slice(args, #args - 3), { '--color=never', '--case-sensitive', '--', 'abc' })
 end
 
 T['builtin.grep()']['respects `local_opts.globs`'] = function()
@@ -2842,7 +2842,7 @@ T['builtin.grep()']['respects `local_opts.globs`'] = function()
     clear_spawn_log()
   end
 
-  validate('rg', { '--glob', '*.lua', '--glob', 'lua/**', '--', 'abc' })
+  validate('rg', { '--glob', '*.lua', '--glob', 'lua/**', '--case-sensitive', '--', 'abc' })
   validate('git', { '-e', 'abc', '--', '*.lua', 'lua/**' })
 
   -- Should preserve if called as `builtin.resume()`
@@ -2888,6 +2888,41 @@ T['builtin.grep()']['respects `source.show` from config'] = function()
   mock_cli_return({ real_file('b.txt') .. '\0001\0001' })
   builtin_grep({ pattern = 'b' })
   child.expect_screenshot()
+end
+
+T['builtin.grep()']["respects 'ignorecase'/'smartcase'"] = function()
+  local validate = function(tool, ref_case_arg, ref_cases_noarg)
+    mock_fn_executable({ tool })
+    mock_cli_return({})
+    builtin_grep({ pattern = 'b', tool = tool })
+
+    local args = child.lua_get('_G.spawn_log[1].options.args')
+
+    validate_contains_all(args, { ref_case_arg })
+
+    for _, ref_arg in ipairs(ref_cases_noarg) do
+      for _, arg in ipairs(args) do
+        if arg == ref_arg then error('There is ' .. ref_arg .. ' in arguments') end
+      end
+    end
+
+    type_keys('<C-c>')
+    clear_spawn_log()
+  end
+
+  validate('rg', '--case-sensitive', { '--ignore-case', '--smart-case' })
+
+  child.o.ignorecase = true
+  validate('rg', '--ignore-case', { '--case-sensitive', '--smart-case' })
+  validate('git', '--ignore-case', {})
+
+  child.o.smartcase = true
+  validate('rg', '--smart-case', { '--case-sensitive', '--ignore-case' })
+  validate('git', '--ignore-case', {})
+
+  child.o.ignorecase = false
+  validate('rg', '--case-sensitive', { '--ignore-case', '--smart-case' })
+  validate('git', nil, { '--ignore-case' })
 end
 
 T['builtin.grep()']['respects `opts`'] = function()
@@ -3053,7 +3088,13 @@ T['builtin.grep_live()']['respects `local_opts.tool`'] = function()
     clear_spawn_log()
   end
 
-  validate('rg', { '--column', '--line-number', '--no-heading', '--field-match-separator', '\\x00', '--', 'b' })
+  --stylua: ignore
+  local rg_args = {
+    '--column', '--line-number', '--no-heading',
+    '--field-match-separator', '\\x00', '--case-sensitive',
+    '--', 'b',
+  }
+  validate('rg', rg_args)
   validate('git', { 'grep', '--column', '--line-number', '--null', '--', 'b' })
 
   -- Should not accept "fallback" tool
@@ -3084,7 +3125,7 @@ T['builtin.grep_live()']['respects `local_opts.globs`'] = function()
     clear_spawn_log()
   end
 
-  validate('rg', { '--glob', '*.lua', '--glob', 'lua/**', '--', 'a' })
+  validate('rg', { '--glob', '*.lua', '--glob', 'lua/**', '--case-sensitive', '--', 'a' })
   validate('git', { '-e', 'a', '--', '*.lua', 'lua/**' })
 
   -- Should preserve if called as `builtin.resume()`
@@ -3112,7 +3153,7 @@ T['builtin.grep_live()']['has custom "add glob" mapping'] = function()
   mock_cli_return({})
   type_keys('a')
   local args = get_spawn_log()[1].options.args
-  eq(vim.list_slice(args, #args - 3), { '--glob', '*.lua', '--', 'a' })
+  eq(vim.list_slice(args, #args - 4), { '--glob', '*.lua', '--case-sensitive', '--', 'a' })
 end
 
 T['builtin.grep_live()']['respects `source.show` from config'] = function()
@@ -3125,6 +3166,42 @@ T['builtin.grep_live()']['respects `source.show` from config'] = function()
   mock_cli_return({ real_file('b.txt') .. '\0001\0001' })
   type_keys('b')
   child.expect_screenshot()
+end
+
+T['builtin.grep_live()']["respects 'ignorecase'/'smartcase'"] = function()
+  local validate = function(tool, ref_case_arg, ref_cases_noarg)
+    mock_fn_executable({ tool })
+    mock_cli_return({})
+    builtin_grep_live({ tool = tool })
+    type_keys('b')
+
+    local args = child.lua_get('_G.spawn_log[1].options.args')
+
+    validate_contains_all(args, { ref_case_arg })
+
+    for _, ref_arg in ipairs(ref_cases_noarg) do
+      for _, arg in ipairs(args) do
+        if arg == ref_arg then error('There is ' .. ref_arg .. ' in arguments') end
+      end
+    end
+
+    type_keys('<C-c>')
+    clear_spawn_log()
+  end
+
+  validate('rg', '--case-sensitive', { '--ignore-case', '--smart-case' })
+
+  child.o.ignorecase = true
+  validate('rg', '--ignore-case', { '--case-sensitive', '--smart-case' })
+  validate('git', '--ignore-case', {})
+
+  child.o.smartcase = true
+  validate('rg', '--smart-case', { '--case-sensitive', '--ignore-case' })
+  validate('git', '--ignore-case', {})
+
+  child.o.ignorecase = false
+  validate('rg', '--case-sensitive', { '--ignore-case', '--smart-case' })
+  validate('git', nil, { '--ignore-case' })
 end
 
 T['builtin.grep_live()']['respects `opts`'] = function()
