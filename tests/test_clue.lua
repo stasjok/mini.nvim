@@ -360,6 +360,19 @@ T['setup()']['ensures valid triggers on selected special buffers'] = function()
   validate_trigger('git', buf_id_git)
 end
 
+T['setup()']["works with 'mini.starter'"] = function()
+  child.lua('require("mini.starter").open()')
+  local triggers = {
+    { mode = 'n', keys = '<Space>' },
+    { mode = 'n', keys = 'g' },
+  }
+  load_module({ triggers = triggers, window = { delay = 0 } })
+
+  -- Should not override query updaters (common for "g", "s", "z" triggers)
+  validate_trigger_keymap('n', '<Space>', 0)
+  validate_no_trigger_keymap('n', 'g', 0)
+end
+
 T['setup()']['respects `vim.b.miniclue_disable`'] = function()
   local init_buf_id = child.api.nvim_get_current_buf()
   local other_buf_id = child.api.nvim_create_buf(true, false)

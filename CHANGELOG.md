@@ -81,6 +81,8 @@ There are following change types:
 
 - Add `gen_clues.square_brackets` to generate clues for `[` and `]` keys. By @TheLeoP, PR #1937.
 
+- Ensure triggers for 'mini.starter' buffers, but not override its query updaters (like for "g" and "z" triggers).
+
 ## mini.diff
 
 ### Expand
