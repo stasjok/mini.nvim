@@ -1413,6 +1413,48 @@ T['Showing keys']['indicates that description is truncated'] = function()
   child.expect_screenshot()
 end
 
+T['Showing keys']['uses query clue as title'] = function()
+  load_module({
+    clues = {
+      { mode = 'n', keys = '<Space>a', desc = 'Group a' },
+      { mode = 'n', keys = '<Space>aa', desc = 'Subgroup aa' },
+      { mode = 'n', keys = '<Space>ba', desc = 'Subgroup ba' },
+    },
+    triggers = { { mode = 'n', keys = '<Space>' } },
+    window = { delay = 0, config = { width = 20 } },
+  })
+
+  child.api.nvim_set_keymap('n', '<Space>aaa', '<Nop>', { desc = 'Do aaa' })
+  child.api.nvim_set_keymap('n', '<Space>aab', '<Nop>', { desc = 'Do aab' })
+  child.api.nvim_set_keymap('n', '<Space>baa', '<Nop>', { desc = 'Do baa' })
+  child.api.nvim_set_keymap('n', '<Space>bab', '<Nop>', { desc = 'Do bab' })
+  child.api.nvim_set_keymap('n', '<Space>caa', '<Nop>', { desc = 'Do caa' })
+
+  child.set_size(10, 30)
+  local validate = function(keys)
+    type_keys(keys)
+    child.expect_screenshot()
+  end
+
+  -- Should show trigger keys (not description/clue)
+  validate(' ')
+  -- Should show `<Space>a` clue
+  validate('a')
+  -- Should show `<Space>aa` clue, even if is a subgroup
+  validate('a')
+  -- Should work after `<BS>`
+  validate('<BS>')
+  -- Should fall back to showing keys if they have no clue
+  type_keys('<BS>')
+  validate('b')
+  -- Should try using only current subgroup (even if there is no parent clue)
+  validate('a')
+  -- Should work for a group with 1 key
+  type_keys('<BS>', '<BS>')
+  validate('c')
+  validate('a')
+end
+
 T['Showing keys']['respects `scroll_down` and `scroll_up` in `config.window`'] = function()
   child.set_size(8, 40)
 
