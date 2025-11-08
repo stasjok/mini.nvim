@@ -336,18 +336,28 @@ T['setup()']['ensures valid triggers on `LspAttach` event'] = function()
 end
 
 T['setup()']['ensures valid triggers on selected special buffers'] = function()
-  load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+  local make_ft_buf = function(ft)
+    local buf_id = child.api.nvim_create_buf(false, true)
+    child.api.nvim_set_option_value('filetype', ft, { buf = buf_id })
+    return buf_id
+  end
 
-  local validate = function(ft)
-    child.cmd('au FileType ' .. ft .. ' lua vim.keymap.set("n", "<Space>a", ":echo 1<CR>", { buffer = true })')
-    load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+  local validate_trigger = function(ft, buf_id_existing)
     child.api.nvim_set_current_buf(child.api.nvim_create_buf(false, true))
     child.bo.filetype = ft
     validate_trigger_keymap('n', '<Space>', 0)
+    validate_trigger_keymap('n', '<Space>', buf_id_existing)
   end
 
-  validate('help')
-  validate('git')
+  child.cmd('au FileType help,git nmap <buffer> <Space>a :echo 1<CR>')
+
+  local buf_id_help = make_ft_buf('help')
+  local buf_id_git = make_ft_buf('git')
+
+  load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+
+  validate_trigger('help', buf_id_help)
+  validate_trigger('git', buf_id_git)
 end
 
 T['setup()']['respects `vim.b.miniclue_disable`'] = function()
