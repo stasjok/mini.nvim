@@ -1620,6 +1620,12 @@ T['Information window']["respects 'winborder' option"] = function()
   -- Should prefer explicitly configured value over 'winborder'
   child.lua('MiniCompletion.config.window.info.border = "double"')
   validate({ '╔', '═', '╗', '║', '╝', '═', '╚', '║' })
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniCompletion.config.window.info.border = nil')
+  child.o.winborder = '+,-,+,|,+,-,+,|'
+  validate({ '+', '-', '+', '|', '+', '-', '+', '|' })
 end
 
 T['Information window']["respects 'pumborder' option"] = function()
@@ -2031,6 +2037,12 @@ T['Signature help']["respects 'winborder' option"] = function()
   -- Should prefer explicitly configured value over 'winborder'
   child.lua('MiniCompletion.config.window.signature.border = "double"')
   validate({ '╔', '═', '╗', '║', '╝', '═', '╚', '║' })
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniCompletion.config.window.signature.border = nil')
+  child.o.winborder = '+,-,+,|,+,-,+,|'
+  validate({ '+', '-', '+', '|', '+', '-', '+', '|' })
 end
 
 T['Signature help']['triggers relevant events'] = function()
