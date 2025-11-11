@@ -1317,16 +1317,23 @@ T['Showing keys']["respects 'winborder' option"] = function()
   make_test_map('n', '<Space>a')
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
 
-  child.o.winborder = 'rounded'
-  type_keys(' ')
-  child.expect_screenshot()
-  type_keys('<Esc>')
+  local validate = function(winborder)
+    child.o.winborder = winborder
+    type_keys(' ')
+    child.expect_screenshot()
+    type_keys('<Esc>')
+  end
+
+  validate('rounded')
 
   -- Should prefer explicitly configured value over 'winborder'
   child.lua('MiniClue.config.window.config.border = "double"')
-  type_keys(' ')
-  child.expect_screenshot()
-  type_keys('<Esc>')
+  validate('rounded')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniClue.config.window.config.border = nil')
+  validate('+,-,+,|,+,-,+,|')
 end
 
 T['Showing keys']['can have `config.window.config.width="auto"`'] = function()

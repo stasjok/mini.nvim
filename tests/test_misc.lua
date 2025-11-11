@@ -1164,14 +1164,22 @@ T['zoom()']["respects 'winborder' option"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
   child.set_size(5, 30)
 
-  child.o.winborder = 'rounded'
-  child.lua('MiniMisc.zoom()')
-  child.expect_screenshot()
-  child.cmd('quit')
+  local validate = function(winborder, border_arg)
+    child.o.winborder = winborder
+    local lua_cmd = string.format('MiniMisc.zoom(0, { border = %s })', vim.inspect(border_arg))
+    child.lua(lua_cmd)
+    child.expect_screenshot()
+    child.lua('MiniMisc.zoom()')
+  end
+
+  validate('rounded', nil)
 
   -- Should prefer explicitly configured value over 'winborder'
-  child.lua('MiniMisc.zoom(0, { border = "double" })')
-  child.expect_screenshot()
+  validate('rounded', 'double')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  validate('+,-,+,|,+,-,+,|', nil)
 end
 
 T['zoom()']['reacts to relevant UI changes'] = function()

@@ -4990,22 +4990,26 @@ end
 T['Overall view']["respects 'winborder' option"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
 
-  child.o.winborder = 'rounded'
-  start_with_items({ 'a', 'b', 'c' })
-  child.expect_screenshot()
-  stop()
+  local validate = function(winborder)
+    child.o.winborder = winborder
+    start_with_items({ 'a', 'b', 'c' })
+    child.expect_screenshot()
+    stop()
+  end
+
+  validate('rounded')
 
   -- Should prefer explicitly configured value over 'winborder'
-  child.lua([[MiniPick.config.window.config = { border = 'double' }]])
-  start_with_items({ 'a', 'b', 'c' })
-  child.expect_screenshot()
-  stop()
+  child.lua('MiniPick.config.window.config = { border = "double" }')
+  validate('rounded')
 
   -- Should infer custom border (for visible title/footer) for `winborder=none`
-  child.lua([[MiniPick.config.window.config = nil]])
-  child.o.winborder = 'none'
-  start_with_items({ 'a', 'b', 'c' })
-  child.expect_screenshot()
+  child.lua('MiniPick.config.window.config = nil')
+  validate('none')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  validate('+,-,+,|,+,-,+,|')
 end
 
 T['Overall view']["respects tabline, statusline, 'cmdheight'"] = function()
