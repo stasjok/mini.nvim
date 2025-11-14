@@ -2910,6 +2910,7 @@ local scope_to_request = {
   references = 'textDocument/references',
   type_definition = 'textDocument/typeDefinition',
   workspace_symbol = 'workspace/symbol',
+  workspace_symbol_live = 'workspace/symbol',
 }
 
 local validate_location_scope = function(scope)
@@ -3103,6 +3104,41 @@ T['pickers']['lsp()']['works for `workspace_symbol` after `MiniIcons.tweak_lsp_k
   validate_symbol_scope_with_tweaked_kind('workspace_symbol', 'prepend')
   validate_symbol_scope_with_tweaked_kind('workspace_symbol', 'append')
   validate_symbol_scope_with_tweaked_kind('workspace_symbol', 'replace')
+end
+
+T['pickers']['lsp()']['works for `workspace_symbol_live`'] = function()
+  setup_lsp()
+  mock_slash_path_sep()
+
+  -- Test only "live" part in the hope that "workspace_symbol" part is the same
+  local validate = function(n_requests, query)
+    local ref_requests, lsp_method = {}, scope_to_request.workspace_symbol_live
+    for i = 1, n_requests do
+      ref_requests[i] = lsp_method
+    end
+    eq(child.lua_get('_G.lsp_requests'), ref_requests)
+    eq(child.lua_get('_G.params'), query ~= nil and { query = query } or vim.NIL)
+
+    child.lua('_G.lsp_requests, _G.params = {}, nil')
+  end
+
+  -- Should not do any request on start
+  pick_lsp({ scope = 'workspace_symbol_live' })
+  validate_picker_name('LSP (workspace_symbol_live)')
+  validate(0, nil)
+  eq(get_picker_items(), {})
+
+  -- Should make new request on every picker query change
+  type_keys('a')
+  validate(1, 'a')
+
+  type_keys('x')
+  validate(1, 'ax')
+
+  -- Should not make request for empty query and show no items instead
+  type_keys('<C-u>')
+  validate(0, nil)
+  eq(get_picker_items(), {})
 end
 
 T['pickers']['lsp()']['respects `local_opts.symbol_query`'] = function()
