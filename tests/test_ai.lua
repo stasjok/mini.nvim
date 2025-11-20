@@ -1044,6 +1044,9 @@ T['select_textobject()']["respects 'selection=exclusive'"] = function()
 
   validate('i', ' () ')
   validate('a', '  ')
+
+  -- Works with empty regions
+  validate_select1d(' () ', 0, { 'i', ')' }, { 3, 3 })
 end
 
 T['select_textobject()']['respects `vis_mode` from textobject region'] = function()
@@ -1781,6 +1784,10 @@ T['Textobject']['works with empty output region'] = function()
     validate_edit1d('a()b', start_column, 'a()b', 2, 'di)')
   end
 
+  validate(0)
+  validate(1)
+
+  child.o.selection = 'exclusive'
   validate(0)
   validate(1)
 end
