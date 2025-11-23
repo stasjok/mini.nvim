@@ -3180,6 +3180,22 @@ T['Reproducing keys']['works with macros'] = function()
   eq(child.fn.getreg('w'), ':enew\ri\18a\27')
 end
 
+T['Reproducing keys']["works with macros and 'mini.jump'"] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('The solution works only on Neovim>=0.10') end
+  child.lua("require('mini.jump').setup()")
+  load_module()
+  set_lines({ '  [aaa][bbb][ccc]' })
+
+  type_keys(small_time, 'qq', '0f', '[', 'r(f', ']', 'r)', 'q')
+  eq(get_lines(), { '  (aaa)[bbb][ccc]' })
+
+  type_keys('Q')
+  eq(get_lines(), { '  (aaa)(bbb)[ccc]' })
+
+  type_keys('@q')
+  eq(get_lines(), { '  (aaa)(bbb)(ccc)' })
+end
+
 T['Reproducing keys']['works when key query is executed in presence of longer keymaps'] = function()
   mock_comment_operators()
   load_module({ triggers = { { mode = 'n', keys = 'g' }, { mode = 'o', keys = 'i' } } })
