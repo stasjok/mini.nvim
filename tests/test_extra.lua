@@ -1126,6 +1126,13 @@ T['pickers']['commands()']['works'] = function()
 end
 
 T['pickers']['commands()']['respects user commands'] = function()
+  local expect_screenshot = function(...)
+    -- Screenshots are generated for Neovim>=0.12, since the output structure
+    -- of `nvim_get_commands()` has changed
+    if child.fn.has('nvim-0.12') == 0 then return end
+    child.expect_screenshot(...)
+  end
+
   child.set_size(25, 75)
   child.cmd('command -nargs=0 MyCommand lua _G.my_command = true')
   child.cmd('command -nargs=* -buffer MyCommandBuf lua _G.my_command_buf = true')
@@ -1137,9 +1144,9 @@ T['pickers']['commands()']['respects user commands'] = function()
 
   -- Should have proper preview with data
   type_keys('<Tab>')
-  child.expect_screenshot({ ignore_text = { 24 } })
+  expect_screenshot({ ignore_text = { 24 } })
   type_keys('<C-n>')
-  child.expect_screenshot({ ignore_text = { 24 } })
+  expect_screenshot({ ignore_text = { 24 } })
 
   -- Should on choose execute command if it is without arguments
   type_keys('<C-p>', '<CR>')
