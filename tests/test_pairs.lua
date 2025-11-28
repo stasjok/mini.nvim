@@ -232,6 +232,12 @@ local validate_disable = function(var_type, key)
   child[var_type].minipairs_disable = nil
 end
 
+local validate_cmdline = function(line, pos)
+  eq(child.fn.mode(), 'c')
+  eq(child.fn.getcmdline(), line)
+  eq(child.fn.getcmdpos(), pos or line:len() + 1)
+end
+
 local apply_map = function(fun_name, args_string)
   -- If testing `MiniPairs.map_buf()`, apply it in current buffer
   local is_buf_local = fun_name == 'map_buf' or fun_name == 'unmap_buf'
@@ -679,6 +685,12 @@ T['Open action']['does not break undo sequence in Insert mode'] = function()
   eq(get_lines(), { '' })
 end
 
+T['Open action']['works with visible wildmenu'] = function()
+  apply_map('map', '"c", "<", { action = "open", pair = "<>" }')
+  type_keys(':', '<Tab>', '<')
+  validate_cmdline('!<>', 3)
+end
+
 T['Open action']['respects neighbor pattern'] = function()
   validate_slash('(')
   validate_slash('[')
@@ -769,6 +781,17 @@ T['Close action']['does not break undo sequence in Insert mode'] = function()
   type_keys('i', ')) ', '<Esc>')
   type_keys('u')
   eq(get_lines(), { '(())' })
+end
+
+T['Close action']['works with visible wildmenu'] = function()
+  apply_map('map', '"c", "(", { action = "open", pair = "()" }')
+  apply_map('map', '"c", ")", { action = "close", pair = "()" }')
+  child.lua('_G.AAA = 1')
+  type_keys(':', 'lua print(1 + ', '<Tab>')
+  validate_cmdline('lua print(1 + AAA)', 18)
+
+  type_keys(')')
+  validate_cmdline('lua print(1 + AAA)', 19)
 end
 
 local validate_slash_close = function(key, pair)
@@ -873,6 +896,16 @@ T['Closeopen action']['does not break undo sequence in Insert mode'] = function(
   type_keys('i', '"" ', '<Esc>')
   type_keys('u')
   eq(get_lines(), { '""""' })
+end
+
+T['Closeopen action']['works with visible wildmenu'] = function()
+  apply_map('map', '"c", "`", { action = "closeopen", pair = "``" }')
+  child.lua('_G.AAA = 1')
+  type_keys(':', 'lua print`1 + ', '<Tab>')
+  validate_cmdline('lua print`1 + AAA`', 18)
+
+  type_keys('`')
+  validate_cmdline('lua print`1 + AAA`', 19)
 end
 
 T['Closeopen action']['respects neighbor pattern'] = function()
