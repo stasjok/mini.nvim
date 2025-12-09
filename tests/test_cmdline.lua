@@ -1421,6 +1421,14 @@ T['Autopeek']['respects `config.autopeek.window.config`'] = function()
     return { border = 'double', width = 0.25 * vim.o.columns, height = 5, title = 'Custom title to check truncation' }
   end]])
   expect_screenshot_after_keys({ ':', '2' })
+  type_keys('<Esc>')
+
+  -- Should properly truncate title
+  child.lua([[
+    local title = string.sub('abcdefgijklmnopqrstuvwxyz', -vim.o.columns)
+    MiniCmdline.config.autopeek.window.config = { width = vim.o.columns, title = title }
+  ]])
+  expect_screenshot_after_keys({ ':', '2' })
 end
 
 T['Autopeek']["respects 'winborder'"] = function()
