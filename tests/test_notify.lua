@@ -830,14 +830,23 @@ T['Window']['respects `window.config`'] = function()
   add('World')
   child.expect_screenshot()
 
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Neovim<0.10 has issues with displaying title in some cases') end
+
   -- As callable
   child.lua([[MiniNotify.config.window.config = function(buf_id)
     _G.buffer_filetype = vim.bo[buf_id].filetype
     return { border = 'double', width = 25, height = 5, title = 'Custom title to check truncation' }
   end]])
   refresh()
-  -- NOTE: Neovim<0.10 has issues with displaying title in this case
-  if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
+  child.expect_screenshot()
+
+  -- Should properly truncate title
+  child.lua([[
+    local title = string.sub('abcdefgijklmnopqrstuvwxyzabcdefgijklmnopqrstuvwxyz', -vim.o.columns)
+    MiniNotify.config.window.config = { width = vim.o.columns, title = title }
+  ]])
+  refresh()
+  child.expect_screenshot()
 end
 
 T['Window']["respects 'winborder' option"] = function()
