@@ -1310,6 +1310,15 @@ T['Showing keys']['respects `config.window.config`'] = function()
 
   type_keys(' ')
   child.expect_screenshot()
+  type_keys('<Esc>')
+
+  -- Should properly truncate title
+  child.lua([[
+    local title = string.sub('abcdefgijklmnopqrstuvwxyzabcdefgijklmnopqrstuvwxyz', -vim.o.columns)
+    MiniClue.config.window.config = { width = vim.o.columns, title = title }
+  ]])
+  type_keys(' ')
+  child.expect_screenshot()
 end
 
 T['Showing keys']["respects 'winborder' option"] = function()
