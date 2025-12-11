@@ -1521,6 +1521,32 @@ T['Autopeek']['respects `config.autopeek.window.config`'] = function()
   expect_screenshot_after_keys({ ':', '2' })
 end
 
+T['Autopeek']['respects `config.autopeek.window.statuscolumn`'] = function()
+  child.lua([[
+    MiniCmdline.config.autopeek.window.statuscolumn = function(...)
+      _G.args = { ... }
+      return '!' .. vim.v.lnum
+    end
+  ]])
+
+  set_cursor(3, 0)
+  type_keys(':')
+
+  local validate = function(key, ref_args)
+    type_keys(key)
+    eq(child.lua_get('_G.args'), ref_args)
+    child.lua('_G.args = nil')
+  end
+
+  validate('2', { { left = 2, right = 2, cmd = '' } })
+  child.expect_screenshot()
+
+  validate(',', { { left = 2, right = 3, cmd = '' } })
+  validate('4', { { left = 2, right = 4, cmd = '' } })
+  validate('d', { { left = 2, right = 4, cmd = 'delete' } })
+  validate('<BS>', { { left = 2, right = 4, cmd = '' } })
+end
+
 T['Autopeek']["respects 'winborder'"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
 
