@@ -148,8 +148,6 @@ T['Options'] = new_set()
 T['Options']['work'] = function()
   -- Basic options (should be set by default)
   eq(child.g.mapleader, vim.NIL)
-  -- - `termguicolors` is enabled in Neovim=0.10 by default (if possible)
-  if child.fn.has('nvim-0.10') == 0 then eq(child.o.termguicolors, false) end
   eq(child.o.number, false)
   eq(child.o.signcolumn, 'auto')
   eq(child.o.fillchars, '')
@@ -160,7 +158,6 @@ T['Options']['work'] = function()
   load_module()
 
   eq(child.g.mapleader, ' ')
-  if child.fn.has('nvim-0.10') == 0 then eq(child.o.termguicolors, true) end
   eq(child.o.number, true)
   eq(child.o.signcolumn, 'yes')
   eq(child.o.fillchars, 'eob: ')
