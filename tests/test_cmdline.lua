@@ -97,6 +97,7 @@ T['setup()']['creates `config` field'] = function()
   expect_config('autocorrect.func', vim.NIL)
   expect_config('autopeek.enable', true)
   expect_config('autopeek.n_context', 1)
+  expect_config('autopeek.predicate', vim.NIL)
   expect_config('autopeek.window.config', {})
   expect_config('autopeek.window.statuscolumn', vim.NIL)
 end
@@ -118,6 +119,7 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ autopeek = { enable = 1 } }, 'autopeek.enable', 'boolean')
   expect_config_error({ autopeek = { window = 1 } }, 'autopeek.window', 'table')
   expect_config_error({ autopeek = { n_context = 'a' } }, 'autopeek.n_context', 'number')
+  expect_config_error({ autopeek = { predicate = 1 } }, 'autopeek.predicate', 'callable')
   expect_config_error({ autopeek = { window = { config = 1 } } }, 'autopeek.window.config', 'table or callab')
   expect_config_error({ autopeek = { window = { statuscolumn = 1 } } }, 'autopeek.window.statuscolumn', 'callable')
 end
@@ -231,6 +233,37 @@ T['default_autocorrect_func()']['validates arguments'] = function()
   expect.error(function() default_autocorrect_func(1) end, '`data`.*table')
   expect.error(function() default_autocorrect_func({ word = 1, type = 'command' }) end, '`data.word`.*string')
   expect.error(function() default_autocorrect_func({ word = 'ste', type = 1 }) end, '`data.type`.*string')
+end
+
+T['default_autopeek_predicate()'] = new_set()
+
+local default_autopeek_predicate = forward_lua('MiniCmdline.default_autopeek_predicate')
+
+T['default_autopeek_predicate()']['works'] = function()
+  load_module()
+  local validate = function(data, ref) eq(default_autopeek_predicate(data), ref) end
+
+  -- Should mostly return `true`
+  validate({ left = 1, right = 1, cmd = '' }, true)
+  validate({ left = 10, right = 1, cmd = '' }, true)
+  validate({ left = 1, right = 1, cmd = 'delete' }, true)
+  validate({ left = 1, right = 1, cmd = 'sort' }, true)
+
+  -- Should return `false` for (full) name of a command with preview
+  -- - Built-in commands
+  validate({ left = 1, right = 1, cmd = 'substitute' }, false)
+  validate({ left = 1, right = 1, cmd = 'smagic' }, false)
+  validate({ left = 1, right = 1, cmd = 'snomagic' }, false)
+
+  -- - User commands
+  child.lua([[
+    local opts = { preview = function() end, addr = 'lines', range = true }
+    vim.api.nvim_create_user_command('WithPreview', function()  end, opts)
+    vim.api.nvim_buf_create_user_command(0, 'BufWithPreview', function()  end, opts)
+  ]])
+
+  validate({ left = 1, right = 1, cmd = 'WithPreview' }, false)
+  validate({ left = 1, right = 1, cmd = 'BufWithPreview' }, false)
 end
 
 T['default_autopeek_statuscolumn()'] = new_set({
@@ -1196,6 +1229,10 @@ T['Autopeek']['can be hidden and opened within same session'] = function()
 end
 
 T['Autopeek']["works with 'inccommand'"] = function()
+  -- Explicitly enable autopeek, as by default it is not shown for commands
+  -- with preview
+  child.lua('MiniCmdline.config.autopeek.predicate = function() return true end')
+
   type_keys(':')
   local validate = function(keys)
     child.api.nvim_input(keys)
@@ -1347,6 +1384,35 @@ T['Autopeek']['is shown only for line range'] = function()
 
   type_keys('<C-w>')
   validate_peek()
+end
+
+T['Autopeek']['is not shown for commands with preview'] = function()
+  local validate = function(command_keys)
+    type_keys(':', '2')
+    type_keys(command_keys)
+    validate_no_peek()
+    type_keys('<Esc>')
+  end
+
+  -- Built-in commands
+  validate('substitute')
+  validate('s')
+  validate('smagic')
+  validate('sm')
+  validate('snomagic')
+  validate('sno')
+
+  -- User commands
+  child.lua([[
+    local opts = { preview = function() end, addr = 'lines', range = true }
+    vim.api.nvim_create_user_command('WithPreview', function()  end, opts)
+    vim.api.nvim_buf_create_user_command(0, 'BufWithPreview', function()  end, opts)
+  ]])
+
+  validate('WithPreview')
+  validate('WithP')
+  validate('BufWithPreview')
+  validate('BufWithP')
 end
 
 T['Autopeek']['works when regular command line parsing fails'] = function()
@@ -1511,6 +1577,58 @@ T['Autopeek']['respects `config.autopeek.n_context`'] = function()
   expect_screenshot_after_keys('<C-u>2,4')
   expect_screenshot_after_keys('<C-u>2,3')
   expect_screenshot_after_keys('<C-u>2,2')
+end
+
+T['Autopeek']['respects `config.autopeek.predicate`'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('`:cbuffer` has addr=? on Neovim<0.10') end
+
+  child.lua([[
+    _G.log = {}
+    MiniCmdline.config.autopeek.predicate = function(data)
+      table.insert(_G.log, vim.deepcopy(data))
+      return data.left > 9 and data.right > 9 and (data.cmd == '' or data.cmd == 'change')
+    end
+  ]])
+
+  local validate = function(key, is_shown, ref_log)
+    child.lua('_G.log = {}')
+    type_keys(key)
+    if is_shown then return validate_peek() end
+    if not is_shown then validate_no_peek() end
+    eq(child.lua_get('_G.log'), ref_log)
+  end
+
+  set_cursor(9, 0)
+
+  type_keys(':')
+  validate('1', false, { { left = 1, right = 1, cmd = '' } })
+  validate('0', true, { { left = 10, right = 10, cmd = '' } })
+
+  validate(',', false, { { left = 10, right = 9, cmd = '' } })
+  validate('1', false, { { left = 10, right = 1, cmd = '' } })
+  validate('0', true, { { left = 10, right = 10, cmd = '' } })
+
+  validate('c', true, { { left = 10, right = 10, cmd = 'change' } })
+  validate('b', false, { { left = 10, right = 10, cmd = 'cbuffer' } })
+
+  -- Should be called when deleting text
+  type_keys('<Home><Right><Right>')
+  validate('<BS>', false, { { left = 1, right = 10, cmd = 'cbuffer' } })
+
+  type_keys('<Esc>')
+
+  -- Should be called only for valid buffer lines range
+  type_keys(':')
+  validate('1', false, { { left = 1, right = 1, cmd = '' } })
+  validate('d', false, { { left = 1, right = 1, cmd = 'delete' } })
+  validate('x', false, { { left = 1, right = 1, cmd = '' } })
+  type_keys('<Esc>')
+
+  type_keys(':')
+  validate('%', false, { { left = 1, right = 101, cmd = '' } })
+  validate('b', false, {})
+  validate('w', false, {})
+  type_keys('<Esc>')
 end
 
 T['Autopeek']['fits into available height'] = function()
