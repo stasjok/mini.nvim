@@ -840,6 +840,30 @@ T['Autocorrect']['respects mappings'] = function()
   eq(child.fn.histget('cmd', -1), 'echo')
 end
 
+T['Autocorrect']['respects abbreviations'] = function()
+  child.lua([[
+    _G.log = {}
+    local orig = MiniCmdline.default_autocorrect_func
+    MiniCmdline.default_autocorrect_func = function(...)
+      table.insert(_G.log, vim.deepcopy({ ... }))
+      return orig(...)
+    end
+  ]])
+
+  child.cmd('cabbrev Y wincmd')
+  child.cmd('cnoreabbrev <buffer> D bwipeout')
+
+  type_keys(':', 'Y', ' ')
+  validate_cmdline('wincmd ')
+  type_keys('<Esc>')
+
+  type_keys(':', 'D', '<CR>')
+  eq(child.fn.histget('cmd', -1), 'bwipeout')
+
+  -- Should not call `config.autocorrect.func` for abbreviations
+  eq(child.lua_get('_G.log'), {})
+end
+
 T['Autocorrect']['can act after mappings appended text'] = function()
   -- Should act if text increases latest word
   child.cmd('cnoremap <C-x> www')
