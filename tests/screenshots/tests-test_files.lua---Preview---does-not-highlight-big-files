@@ -1,5 +1,5 @@
 --|---------|---------|---------|---------|---------|---------|---------|---------|
-01|┌MOCK_ROOT/tests/dir-files┐┌ big.lua ────────────────┐                          
+01|┌OCK_ROOT/tests/dir-files ┐┌ big.lua ────────────────┐                          
 02|│ common                 ││local a = "aaaaaaaaaaaaaa│                          
 03|│ lua                    │└─────────────────────────┘                          
 04|│ nested                 │                                                     
