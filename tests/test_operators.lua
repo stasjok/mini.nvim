@@ -467,6 +467,15 @@ T['Evaluate']['works in Normal mode for line'] = function()
   validate_edit({ '1 + 1', '1 + 2' }, { 1, 0 }, { 'g==', 'j', '.' }, { '2', '3' }, { 2, 0 })
 end
 
+T['Evaluate']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  child.lua('_G.x = 1')
+  set_lines({ 'xxx' })
+  set_cursor(1, 1)
+  type_keys('g=', 'w')
+  eq(get_lines(), { 'xxx' })
+end
+
 T['Evaluate']['works in Visual mode'] = function()
   -- Charwise
   validate_edit({ '1 + 1 = (1 + 1)' }, { 1, 8 }, { 'va)', 'g=' }, { '1 + 1 = 2' }, { 1, 8 })
@@ -803,6 +812,31 @@ T['Exchange']['works with `[count]` in Normal mode for line'] = function()
     { 'aa', 'bb', 'cc', 'dd' },
     { 3, 0 }
   )
+end
+
+T['Exchange']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+
+  -- On step one
+  set_lines({ 'xxx', 'yyy' })
+  set_cursor(1, 1)
+  type_keys('gx', 'w')
+  eq(child.fn.maparg('<C-c>'), '')
+  -- - Should ignore previous time and treat this as step one
+  type_keys('j', 'gx', '$')
+  eq(get_lines(), { 'xxx', 'yyy' })
+  type_keys('k', 'gx', '$')
+  eq(get_lines(), { 'xyy', 'yxx' })
+
+  -- On step two
+  set_lines({ 'xxx', 'yyy' })
+  set_cursor(1, 1)
+  type_keys('gx', 'iw')
+  -- - Should ignore this one while still allowing proper step two
+  type_keys('jl', 'gx', 'w')
+  eq(get_lines(), { 'xxx', 'yyy' })
+  type_keys('gx', '$')
+  eq(get_lines(), { 'yy', 'yxxx' })
 end
 
 T['Exchange']['works in Visual mode'] = function()
@@ -1366,6 +1400,14 @@ T['Multiply']['works with `cmdheight=0`'] = function()
   child.expect_screenshot({ redraw = false })
 end
 
+T['Multiply']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  set_lines({ 'xxx' })
+  set_cursor(1, 1)
+  type_keys('gm', 'w')
+  eq(get_lines(), { 'xxx' })
+end
+
 T['Multiply']['works in Visual mode'] = function()
   validate_edit1d('aa bb', 0, { 'viw', 'gm' }, 'aaaa bb', 2)
 
@@ -1786,6 +1828,15 @@ T['Replace']['works with `[count]` in Normal mode for line'] = function()
   )
 end
 
+T['Replace']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  set_lines({ 'xxx', 'yyy' })
+  set_cursor(1, 1)
+  type_keys('yiw', 'jl')
+  type_keys('gr', 'w')
+  eq(get_lines(), { 'xxx', 'yyy' })
+end
+
 T['Replace']['works in Visual mode'] = function()
   -- Charwise selection
   validate_edit({ 'aa bb' }, { 1, 0 }, { 'yiw', 'w', 'viw', 'gr' }, { 'aa aa' }, { 1, 3 })
@@ -2182,6 +2233,14 @@ T['Sort']['works in Normal mode for line'] = function()
 
   -- With dot-repeat
   validate_edit({ 't, r, s', 'c, a, b' }, { 1, 0 }, { 'gss', 'j', '.' }, { 'r, s, t', 'a, b, c' }, { 2, 0 })
+end
+
+T['Sort']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  set_lines({ 'fedcba' })
+  set_cursor(1, 1)
+  type_keys('gs', 'w')
+  eq(get_lines(), { 'fedcba' })
 end
 
 T['Sort']['works in Visual mode'] = function()
