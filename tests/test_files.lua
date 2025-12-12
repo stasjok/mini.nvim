@@ -5769,15 +5769,37 @@ T['Default explorer']['works in `:tabfind .`'] = function()
 end
 
 T['Default explorer']['handles close without opening file'] = function()
-  child.cmd('wincmd v')
-  child.cmd('edit ' .. test_dir_path)
-  child.expect_screenshot()
+  local validate = function()
+    local buf_name = child.api.nvim_buf_get_name(0)
+    child.cmd('edit ' .. test_dir_path)
+    eq(is_explorer_active(), true)
+    close()
+    eq(is_explorer_active(), false)
+    eq(child.api.nvim_buf_get_name(0), buf_name)
+    eq(#child.api.nvim_list_bufs(), 1)
+  end
 
-  -- Should close and smartly (preserving layout) delete "directory buffer"
-  close()
-  child.expect_screenshot()
-  eq(child.api.nvim_buf_get_name(0), '')
-  eq(#child.api.nvim_list_bufs(), 1)
+  -- Should hide "directory buffer" if there is no alternative buffer
+  validate()
+
+  -- Should smartly (preserving layout) delete "directory buffer"
+  local win_id_other = child.api.nvim_get_current_win()
+  child.cmd('wincmd v')
+  local win_id = child.api.nvim_get_current_win()
+  local buf_id = child.api.nvim_get_current_buf()
+
+  eq(child.fn.win_findbuf(buf_id), { win_id, win_id_other })
+  validate()
+  eq(child.fn.win_findbuf(buf_id), { win_id, win_id_other })
+end
+
+T['Default explorer']['handles forcing other window as current'] = function()
+  child.cmd('edit ' .. test_file_path)
+  local init_win_id = child.api.nvim_get_current_win()
+
+  child.cmd('edit ' .. test_dir_path)
+  expect.no_error(function() child.api.nvim_set_current_win(init_win_id) end)
+  if child.fn.has('nvim-0.10') == 1 then eq(child.api.nvim_get_current_win(), init_win_id) end
 end
 
 return T

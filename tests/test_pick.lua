@@ -2105,21 +2105,36 @@ T['default_choose()']['mimics empty buffer reuse'] = function()
 end
 
 T['default_choose()']['works for directory path'] = function()
-  local validate = function(item, path)
+  local validate = function(item, path, filetype)
     local buf_id_init = child.api.nvim_get_current_buf()
     default_choose(item)
 
     local buf_id_cur = child.api.nvim_get_current_buf()
-    eq(child.bo.filetype, 'netrw')
+    eq(child.bo.filetype, filetype)
     validate_buf_name(buf_id_init, path)
 
     -- Cleanup
     child.api.nvim_buf_delete(buf_id_init, { force = true })
     child.api.nvim_buf_delete(buf_id_cur, { force = true })
+
+    child.lua('if _G.MiniFiles ~= nil then _G.MiniFiles.close() end')
   end
 
-  validate(test_dir, test_dir)
-  validate({ text = test_dir, path = test_dir }, test_dir)
+  validate(test_dir, test_dir, 'netrw')
+  validate({ text = test_dir, path = test_dir }, test_dir, 'netrw')
+
+  -- Should work with 'mini.files' as default explorer
+  child.lua('require("mini.files").setup()')
+  validate(test_dir, test_dir, 'minifiles')
+  validate({ text = test_dir, path = test_dir }, test_dir, 'minifiles')
+
+  -- - Should work when there is an already opened file (matters in which code
+  --   path 'mini.files' takes when acting as a default explorer).
+  --   Earlier resulted in an outdated 'mini.pick' floating window.
+  child.cmd('edit ' .. real_file('a.lua'))
+  start_with_items({ test_dir })
+  type_keys('<CR>')
+  eq(#child.api.nvim_list_wins(), 2)
 end
 
 T['default_choose()']['works for buffer'] = function()
