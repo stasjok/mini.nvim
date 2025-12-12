@@ -4202,7 +4202,6 @@ T['set_picker_items()']['does not block picker'] = function()
 end
 
 T['set_picker_items()']['validates arguments'] = function()
-  start_with_items()
   expect.error(function() set_picker_items(1) end, '`items`.*array')
 end
 
@@ -4363,7 +4362,6 @@ T['set_picker_items_from_cli()']['forces absolute path of `opts.spawn_opts.cwd`'
 end
 
 T['set_picker_items_from_cli()']['validates arguments'] = function()
-  start_with_items()
   expect.error(function() set_picker_items_from_cli(1) end, '`command`.*array of strings')
   expect.error(function() set_picker_items_from_cli({}) end, '`command`.*array of strings')
   expect.error(function() set_picker_items_from_cli({ 'a', 2, 'c' }) end, '`command`.*array of strings')
@@ -4504,7 +4502,6 @@ T['set_picker_match_inds()']['can set marked match indexes'] = function()
 end
 
 T['set_picker_match_inds()']['validates arguments'] = function()
-  start_with_items()
   expect.error(function() set_picker_match_inds(1) end, '`match_inds`.*array')
   expect.error(function() set_picker_match_inds({ 'a' }) end, '`match_inds`.*numbers')
   expect.error(function() set_picker_match_inds({ 1 }, 1) end, '`match_type`.*one of')
@@ -4576,7 +4573,6 @@ T['set_picker_target_window()']['works'] = function()
 end
 
 T['set_picker_target_window()']['validates arguments'] = function()
-  start_with_items()
   expect.error(function() child.lua('MiniPick.set_picker_target_window(-1)') end, '`win_id`.*not a valid window')
 end
 
@@ -4654,7 +4650,6 @@ T['set_picker_query()']['resets match inds prior to matching'] = function()
 end
 
 T['set_picker_query()']['validates arguments'] = function()
-  start_with_items()
   expect.error(function() set_picker_query(1) end, '`query`.*array')
   expect.error(function() set_picker_query({ 1 }) end, '`query`.*strings')
 end
