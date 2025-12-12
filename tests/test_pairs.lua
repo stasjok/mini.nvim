@@ -794,6 +794,31 @@ T['Close action']['works with visible wildmenu'] = function()
   validate_cmdline('lua print(1 + AAA)', 19)
 end
 
+T['Close action']['works with inline virtual text'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Inline virtual text is present in Neovim>=0.10') end
+
+  set_lines({ '()' })
+  local ns_id = child.api.nvim_create_namespace('Test')
+  child.api.nvim_buf_set_extmark(0, ns_id, 0, 1, { virt_text = { { 'Virt', 'String' } }, virt_text_pos = 'inline' })
+
+  local validate = function(virtualedit)
+    child.o.virtualedit = virtualedit
+    set_cursor(1, 0)
+
+    type_keys('a', ')')
+    eq(child.fn.getcurpos(), { 0, 1, 3, 0, 7 })
+    -- Should have no side effects
+    eq(child.o.virtualedit, virtualedit)
+
+    type_keys('<Esc>')
+  end
+
+  validate('all')
+  validate('none')
+  validate('block')
+  validate('onemore')
+end
+
 local validate_slash_close = function(key, pair)
   set_lines({ pair })
   set_cursor(1, 1)
@@ -906,6 +931,31 @@ T['Closeopen action']['works with visible wildmenu'] = function()
 
   type_keys('`')
   validate_cmdline('lua print`1 + AAA`', 19)
+end
+
+T['Closeopen action']['works with inline virtual text'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Inline virtual text is present in Neovim>=0.10') end
+
+  set_lines({ '""' })
+  local ns_id = child.api.nvim_create_namespace('Test')
+  child.api.nvim_buf_set_extmark(0, ns_id, 0, 1, { virt_text = { { 'Virt', 'String' } }, virt_text_pos = 'inline' })
+
+  local validate = function(virtualedit)
+    child.o.virtualedit = virtualedit
+    set_cursor(1, 0)
+
+    type_keys('a', '"')
+    eq(child.fn.getcurpos(), { 0, 1, 3, 0, 7 })
+    -- Should have no side effects
+    eq(child.o.virtualedit, virtualedit)
+
+    type_keys('<Esc>')
+  end
+
+  validate('all')
+  validate('none')
+  validate('block')
+  validate('onemore')
 end
 
 T['Closeopen action']['respects neighbor pattern'] = function()
