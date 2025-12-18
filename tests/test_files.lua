@@ -658,8 +658,14 @@ T['open()']['respects `content.highlight`'] = function()
     end
   ]])
 
+  local expect_screenshot = function()
+    -- Test only on Neovim>=0.12 because there window-local `Normal` (which is
+    -- `MiniFilesNormal` here) blends background with cursorline
+    if child.fn.has('nvim-0.12') == 1 then child.expect_screenshot() end
+  end
+
   open(test_dir_path)
-  child.expect_screenshot()
+  expect_screenshot()
   validate_fs_entry(child.lua_get('_G.highlight_arg'))
 
   -- Local value from argument should take precedence
@@ -672,7 +678,7 @@ T['open()']['respects `content.highlight`'] = function()
     vim.inspect(test_dir_path)
   )
   child.lua(lua_cmd)
-  child.expect_screenshot()
+  expect_screenshot()
 end
 
 T['open()']['respects `content.prefix`'] = function()
