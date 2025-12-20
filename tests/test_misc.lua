@@ -711,8 +711,8 @@ T['setup_termbg_sync()']['works'] = new_set(
       end
       validate_event('VimResume', '\027]11;#dddddd\007')
       validate_event('ColorScheme', '\027]11;#dddddd\007')
-      validate_event('VimLeavePre', '\027]11;#11262d\007')
-      validate_event('VimSuspend', '\027]11;#11262d\007')
+      validate_event('VimLeavePre', '\027]111\027\\')
+      validate_event('VimSuspend', '\027]111\027\\')
     end,
   }
 )
@@ -734,7 +734,7 @@ T['setup_termbg_sync()']['can be called multiple times'] = function()
 
   -- Should reset to the color from the very first call
   child.api.nvim_exec_autocmds('VimLeavePre', {})
-  eq(child.lua_get('_G.log'), { { '\27]11;#11262d\a' } })
+  eq(child.lua_get('_G.log'), { { '\027]111\027\\' } })
 end
 
 T['setup_termbg_sync()']['does nothing if there is no proper stdout'] = function()
@@ -831,7 +831,7 @@ end
 T['setup_termbg_sync()']['handles different color formats'] = function()
   skip_if_no_010()
 
-  local validate = function(term_response_color, ref_color)
+  local validate = function(term_response_color)
     -- Mock clean start to overcome that color is parsed only once per session
     child.lua('package.loaded["mini.misc"] = nil')
     child.lua('require("mini.misc").setup_termbg_sync()')
@@ -840,7 +840,7 @@ T['setup_termbg_sync()']['handles different color formats'] = function()
     -- Should properly parse initial background and use it to reset on exit
     child.lua('_G.log = {}')
     child.api.nvim_exec_autocmds('VimLeavePre', {})
-    eq(child.lua_get('_G.log'), { { '\027]11;' .. ref_color .. '\007' } })
+    eq(child.lua_get('_G.log'), { { '\027]111\027\\' } })
 
     -- Clean up
     child.lua('_G.log = {}')
@@ -872,7 +872,33 @@ T['setup_termbg_sync()']['handles transparent `Normal` background'] = function()
   -- terminal background
   child.cmd('hi Normal guifg=#222222 guibg=NONE')
   child.api.nvim_exec_autocmds('ColorScheme', {})
-  eq(child.lua_get('_G.log'), { { '\27]11;#11262d\a' } })
+  eq(child.lua_get('_G.log'), { { '\027]111\027\\' } })
+end
+
+T['setup_termbg_sync()']['respects `opts.explicit_reset`'] = function()
+  skip_if_no_010()
+
+  child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
+  child.lua('MiniMisc.setup_termbg_sync({ explicit_reset = true })')
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
+  child.lua('_G.log = {}')
+
+  -- Should still sync on appropriate events
+  local validate_event = function(event, log_entry)
+    child.api.nvim_exec_autocmds(event, {})
+    eq(child.lua_get('_G.log'), { { log_entry } })
+    child.lua('_G.log = {}')
+  end
+  validate_event('VimResume', '\027]11;#dddddd\007')
+  validate_event('ColorScheme', '\027]11;#dddddd\007')
+  -- - Should reset by setting initial color explicitly
+  validate_event('VimLeavePre', '\027]11;#11262d\007')
+  validate_event('VimSuspend', '\027]11;#11262d\007')
+
+  -- Should reset with explicit bg color on transparent `Normal` background
+  child.cmd('hi Normal guifg=#222222 guibg=NONE')
+  child.api.nvim_exec_autocmds('ColorScheme', {})
+  eq(child.lua_get('_G.log'), { { '\027]11;#11262d\a' } })
 end
 
 local restore_cursor_test_file = make_path(dir_misc_path, 'restore-cursor.lua')
