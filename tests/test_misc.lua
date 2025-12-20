@@ -4,10 +4,6 @@ local child = helpers.new_child_neovim()
 local expect, eq = helpers.expect, helpers.expect.equality
 local new_set = MiniTest.new_set
 
-local skip_if_no_010 = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('`setup_termbg_sync()` works only on Neovim>=0.10') end
-end
-
 local project_root = vim.fs.normalize(vim.fn.fnamemodify(vim.fn.getcwd(), ':p'))
 local dir_misc_path = project_root .. '/tests/dir-misc'
 
@@ -662,6 +658,8 @@ end
 T['setup_termbg_sync()'] = new_set({
   hooks = {
     pre_case = function()
+      if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('`setup_termbg_sync()` works only on Neovim>=0.10') end
+
       child.lua([[
         -- Mock `io.stdout:write` used to send control sequences to terminal emulator
         _G.log = {}
@@ -682,11 +680,9 @@ end
 T['setup_termbg_sync()']['works'] = new_set(
   -- Neovim=0.10 uses string sequence as response, while Neovim>=0.11 sets it
   -- in `sequence` table field
-  { parametrize = { { '\27]11;rgb:1111/2626/2d2d' }, { { sequence = '\27]11;rgb:1111/2626/2d2d' } } } },
+  { parametrize = { { '\027]11;rgb:1111/2626/2d2d' }, { { sequence = '\027]11;rgb:1111/2626/2d2d' } } } },
   {
     test = function(response_data)
-      skip_if_no_010()
-
       local eq_log = function(ref_log)
         eq(child.lua_get('_G.log'), ref_log)
         child.lua('_G.log = {}')
@@ -718,18 +714,16 @@ T['setup_termbg_sync()']['works'] = new_set(
 )
 
 T['setup_termbg_sync()']['can be called multiple times'] = function()
-  skip_if_no_010()
-
   child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
   child.lua('MiniMisc.setup_termbg_sync()')
-  child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;rgb:1111/2626/2d2d' })
-  eq(child.lua_get('_G.log'), { { '\27]11;?\a' }, { '\27]11;#dddddd\a' } })
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
+  eq(child.lua_get('_G.log'), { { '\027]11;?\a' }, { '\027]11;#dddddd\a' } })
   child.lua('_G.log = {}')
 
   -- If called second time, the terminal background color is already synced
   child.lua('MiniMisc.setup_termbg_sync()')
-  child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;rgb:dddd/dddd/dddd' })
-  eq(child.lua_get('_G.log'), { { '\27]11;?\a' }, { '\27]11;#dddddd\a' } })
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:dddd/dddd/dddd' })
+  eq(child.lua_get('_G.log'), { { '\027]11;?\a' }, { '\027]11;#dddddd\a' } })
   child.lua('_G.log = {}')
 
   -- Should reset to the color from the very first call
@@ -738,8 +732,6 @@ T['setup_termbg_sync()']['can be called multiple times'] = function()
 end
 
 T['setup_termbg_sync()']['does nothing if there is no proper stdout'] = function()
-  skip_if_no_010()
-
   local validate = function()
     child.lua('MiniMisc.setup_termbg_sync()')
     child.api.nvim_create_augroup('MiniMiscTermbgSync', { clear = false })
@@ -756,8 +748,6 @@ T['setup_termbg_sync()']['does nothing if there is no proper stdout'] = function
 end
 
 T['setup_termbg_sync()']['handles no response from terminal emulator'] = function()
-  skip_if_no_010()
-
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
   validate_termbg_augroup(true)
@@ -775,8 +765,6 @@ T['setup_termbg_sync()']['handles no response from terminal emulator'] = functio
 end
 
 T['setup_termbg_sync()']['handles bad response from terminal emulator'] = function()
-  skip_if_no_010()
-
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
 
@@ -802,8 +790,6 @@ T['setup_termbg_sync()']['handles bad response from terminal emulator'] = functi
 end
 
 T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = function()
-  skip_if_no_010()
-
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
 
@@ -819,7 +805,7 @@ T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = f
 
   -- After receiving proper response should immediately stop waiting for it and
   -- set up proper `termbg` autocommands
-  local seq = '\27]11;rgb:1111/2626/2d2d'
+  local seq = '\027]11;rgb:1111/2626/2d2d'
   local data = child.fn.has('nvim-0.11') == 1 and { sequence = seq } or seq
   child.api.nvim_exec_autocmds('TermResponse', { data = data })
   validate_termbg_augroup(true)
@@ -829,13 +815,11 @@ T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = f
 end
 
 T['setup_termbg_sync()']['handles different color formats'] = function()
-  skip_if_no_010()
-
   local validate = function(term_response_color)
     -- Mock clean start to overcome that color is parsed only once per session
     child.lua('package.loaded["mini.misc"] = nil')
     child.lua('require("mini.misc").setup_termbg_sync()')
-    child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;' .. term_response_color })
+    child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;' .. term_response_color })
 
     -- Should properly parse initial background and use it to reset on exit
     child.lua('_G.log = {}')
@@ -861,11 +845,9 @@ T['setup_termbg_sync()']['handles different color formats'] = function()
 end
 
 T['setup_termbg_sync()']['handles transparent `Normal` background'] = function()
-  skip_if_no_010()
-
   child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
   child.lua('MiniMisc.setup_termbg_sync()')
-  child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;rgb:1111/2626/2d2d' })
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
   child.lua('_G.log = {}')
 
   -- When syncing with "transparent" `Normal`, should restore the original
@@ -876,8 +858,6 @@ T['setup_termbg_sync()']['handles transparent `Normal` background'] = function()
 end
 
 T['setup_termbg_sync()']['respects `opts.explicit_reset`'] = function()
-  skip_if_no_010()
-
   child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
   child.lua('MiniMisc.setup_termbg_sync({ explicit_reset = true })')
   child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
