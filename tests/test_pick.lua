@@ -3350,6 +3350,13 @@ T['builtin.help()']['works when help window is already opened'] = function()
   eq(#child.api.nvim_list_wins(), 2)
 end
 
+T['builtin.help()']['keeps correct picker state'] = function()
+  builtin_help()
+  type_keys('<Tab>')
+  local state = get_picker_state()
+  eq(child.api.nvim_win_get_buf(state.windows.main), state.buffers.preview)
+end
+
 T['builtin.help()']['can be properly aborted'] = function()
   builtin_help()
   type_keys('<C-c>')
@@ -5512,6 +5519,26 @@ T['Preview']['supports vertical and horizontal scroll'] = function()
   validate('<C-h>')
   validate('<C-f>')
   validate('<C-b>')
+end
+
+T['Preview']['handles `source.preview` setting buffer directly'] = function()
+  local buf_id_other = child.lua([[
+    _G.buf_id_other = vim.api.nvim_create_buf(false, true)
+    return _G.buf_id_other
+  ]])
+  child.api.nvim_buf_set_lines(buf_id_other, 0, -1, false, { 'Other preview buffer' })
+  child.lua_notify([[
+    local preview = function()
+      local state = MiniPick.get_picker_state()
+      vim.api.nvim_win_set_buf(state.windows.main, buf_id_other)
+    end
+    MiniPick.start({ source = { items = { 'a' }, name = 'Preview other', preview = preview } })
+  ]])
+  type_keys('<Tab>')
+
+  local state = get_picker_state()
+  eq(state.buffers.preview, buf_id_other)
+  eq(child.api.nvim_win_get_buf(state.windows.main), buf_id_other)
 end
 
 T['Matching'] = new_set()
