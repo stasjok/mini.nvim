@@ -4549,7 +4549,12 @@ T['set_picker_opts()']['works'] = function()
   eq(child.fn.getcwd(0), full_path(test_dir))
   eq(child.fn.getcwd(target_win_id), init_cwd)
 
-  -- Should rerun match
+  -- Should rerun match, but only if necessary
+  type_keys('<C-n>')
+  eq(get_picker_matches().current_ind, 2)
+  child.lua([[MiniPick.set_picker_opts({ source = { name = 'My other name' } })]])
+  eq(get_picker_matches().current_ind, 2)
+
   child.lua('MiniPick.set_picker_opts({ source = { match = function() return { 2 } end } })')
   eq(get_picker_matches().all_inds, { 2 })
   child.expect_screenshot()
