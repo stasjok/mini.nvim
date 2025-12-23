@@ -1836,9 +1836,8 @@ T['pickers']['git_files()']['works'] = function()
   child.lua_notify('_G.return_item = MiniExtra.pickers.git_files()')
   validate_picker_name('Git files (tracked)')
   child.expect_screenshot()
-  eq(get_spawn_log(), {
-    { executable = 'git', options = { args = { '-C', repo_dir, 'ls-files', '--cached' }, cwd = repo_dir } },
-  })
+  local ref_args = { '-C', repo_dir, '-c', 'core.quotepath=false', 'ls-files', '--cached' }
+  eq(get_spawn_log(), { { executable = 'git', options = { args = ref_args, cwd = repo_dir } } })
 
   -- Should have proper preview
   type_keys('<Tab>')
@@ -1865,7 +1864,8 @@ T['pickers']['git_files()']['respects `local_opts.path`'] = function()
 
   local validate = function(path, ref_cwd)
     pick_git_files({ path = path })
-    eq(get_spawn_log()[1].options, { args = { '-C', ref_cwd, 'ls-files', '--cached' }, cwd = ref_cwd })
+    local ref_args = { '-C', ref_cwd, '-c', 'core.quotepath=false', 'ls-files', '--cached' }
+    eq(get_spawn_log()[1].options, { args = ref_args, cwd = ref_cwd })
     validate_picker_cwd(ref_cwd)
     validate_git_repo_check(dir_path_full)
 
@@ -1892,7 +1892,7 @@ T['pickers']['git_files()']['respects `local_opts.scope`'] = function()
 
   local validate = function(scope, flags, ref_picker_name)
     pick_git_files({ scope = scope })
-    local ref_args = { '-C', test_dir_absolute, 'ls-files' }
+    local ref_args = { '-C', test_dir_absolute, '-c', 'core.quotepath=false', 'ls-files' }
     vim.list_extend(ref_args, flags)
     eq(get_spawn_log()[1].options.args, ref_args)
     validate_picker_name(ref_picker_name)
