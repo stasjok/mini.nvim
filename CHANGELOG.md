@@ -8,6 +8,13 @@ There are following change types:
 
 # Version 0.18.0-dev
 
+## mini.hues
+
+### Expand
+
+- Add new plugin integrations:
+    - 'folke/snacks.nvim'
+
 ## mini.misc
 
 ### Evolve
