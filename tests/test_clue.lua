@@ -18,14 +18,6 @@ local sleep = function(ms) helpers.sleep(ms, child) end
 local get_window = function() return child.api.nvim_get_current_win() end
 local set_window = function(win_id) return child.api.nvim_set_current_win(win_id) end
 
--- Tweak `expect_screenshot()` to test only on Neovim>=0.9 (as it introduced
--- titles). Use `expect_screenshot_orig()` for original testing.
-local expect_screenshot_orig = child.expect_screenshot
-child.expect_screenshot = function(...)
-  if child.fn.has('nvim-0.9') == 0 then return end
-  expect_screenshot_orig(...)
-end
-
 local forward_lua = function(fun_str)
   local lua_cmd = fun_str .. '(...)'
   return function(...) return child.lua_get(lua_cmd, { ... }) end
@@ -322,6 +314,13 @@ T['setup()']['creates triggers for already created buffers'] = function()
   validate_trigger_keymap('n', 'g', other_buf_id)
 end
 
+T['setup()']['creates triggers for an array of modes'] = function()
+  load_module({ triggers = { { mode = { 'n', 'x' }, keys = 'g' } } })
+  validate_trigger_keymap('n', 'g')
+  validate_trigger_keymap('x', 'g')
+  validate_no_trigger_keymap('c', 'g')
+end
+
 T['setup()']['creates triggers only in listed buffers'] = function()
   local buf_id_nolisted = child.api.nvim_create_buf(false, true)
   make_test_map('n', '<Space>a')
@@ -344,18 +343,41 @@ T['setup()']['ensures valid triggers on `LspAttach` event'] = function()
 end
 
 T['setup()']['ensures valid triggers on selected special buffers'] = function()
-  load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+  local make_ft_buf = function(ft)
+    local buf_id = child.api.nvim_create_buf(false, true)
+    child.api.nvim_set_option_value('filetype', ft, { buf = buf_id })
+    return buf_id
+  end
 
-  local validate = function(ft)
-    child.cmd('au FileType ' .. ft .. ' lua vim.keymap.set("n", "<Space>a", ":echo 1<CR>", { buffer = true })')
-    load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+  local validate_trigger = function(ft, buf_id_existing)
     child.api.nvim_set_current_buf(child.api.nvim_create_buf(false, true))
     child.bo.filetype = ft
     validate_trigger_keymap('n', '<Space>', 0)
+    validate_trigger_keymap('n', '<Space>', buf_id_existing)
   end
 
-  validate('help')
-  validate('git')
+  child.cmd('au FileType help,git nmap <buffer> <Space>a :echo 1<CR>')
+
+  local buf_id_help = make_ft_buf('help')
+  local buf_id_git = make_ft_buf('git')
+
+  load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
+
+  validate_trigger('help', buf_id_help)
+  validate_trigger('git', buf_id_git)
+end
+
+T['setup()']["works with 'mini.starter'"] = function()
+  child.lua('require("mini.starter").open()')
+  local triggers = {
+    { mode = 'n', keys = '<Space>' },
+    { mode = 'n', keys = 'g' },
+  }
+  load_module({ triggers = triggers, window = { delay = 0 } })
+
+  -- Should not override query updaters (common for "g", "s", "z" triggers)
+  validate_trigger_keymap('n', '<Space>', 0)
+  validate_no_trigger_keymap('n', 'g', 0)
 end
 
 T['setup()']['respects `vim.b.miniclue_disable`'] = function()
@@ -791,6 +813,30 @@ T['gen_clues']['g()']['works'] = function()
   type_keys('<Esc>')
   child.set_size(19, 55)
   type_keys('v', 'g')
+  child.expect_screenshot()
+end
+
+T['gen_clues']['square_brackets()'] = new_set()
+
+T['gen_clues']['square_brackets()']['works'] = function()
+  -- Check this only on Neovim>=0.11, as there are many new built-in mappings
+  if child.fn.has('nvim-0.11') == 0 then return end
+  child.set_size(43, 66)
+
+  child.lua([[
+    local miniclue = require('mini.clue')
+    miniclue.setup({
+      clues = { miniclue.gen_clues.square_brackets() },
+      triggers = { { mode = 'n', keys = '[' }, { mode = 'n', keys = ']' } },
+      window = { delay = 0, config = { width = 66 } },
+    })
+  ]])
+
+  type_keys('[')
+  local ignore_text = child.fn.has('nvim-0.12') == 0 and { 28 } or {}
+  child.expect_screenshot({ ignore_text = ignore_text })
+  type_keys('<Esc>')
+  type_keys(']')
   child.expect_screenshot()
 end
 
@@ -1271,6 +1317,15 @@ T['Showing keys']['respects `config.window.config`'] = function()
 
   type_keys(' ')
   child.expect_screenshot()
+  type_keys('<Esc>')
+
+  -- Should properly truncate title
+  child.lua([[
+    local title = string.sub('abcdefgijklmnopqrstuvwxyzabcdefgijklmnopqrstuvwxyz', -vim.o.columns)
+    MiniClue.config.window.config = { width = vim.o.columns, title = title }
+  ]])
+  type_keys(' ')
+  child.expect_screenshot()
 end
 
 T['Showing keys']["respects 'winborder' option"] = function()
@@ -1278,16 +1333,23 @@ T['Showing keys']["respects 'winborder' option"] = function()
   make_test_map('n', '<Space>a')
   load_module({ triggers = { { mode = 'n', keys = '<Space>' } }, window = { delay = 0 } })
 
-  child.o.winborder = 'rounded'
-  type_keys(' ')
-  child.expect_screenshot()
-  type_keys('<Esc>')
+  local validate = function(winborder)
+    child.o.winborder = winborder
+    type_keys(' ')
+    child.expect_screenshot()
+    type_keys('<Esc>')
+  end
+
+  validate('rounded')
 
   -- Should prefer explicitly configured value over 'winborder'
   child.lua('MiniClue.config.window.config.border = "double"')
-  type_keys(' ')
-  child.expect_screenshot()
-  type_keys('<Esc>')
+  validate('rounded')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniClue.config.window.config.border = nil')
+  validate('+,-,+,|,+,-,+,|')
 end
 
 T['Showing keys']['can have `config.window.config.width="auto"`'] = function()
@@ -1372,6 +1434,48 @@ T['Showing keys']['indicates that description is truncated'] = function()
   child.set_size(5, 20)
   type_keys(' ')
   child.expect_screenshot()
+end
+
+T['Showing keys']['uses query clue as title'] = function()
+  load_module({
+    clues = {
+      { mode = 'n', keys = '<Space>a', desc = 'Group a' },
+      { mode = 'n', keys = '<Space>aa', desc = 'Subgroup aa' },
+      { mode = 'n', keys = '<Space>ba', desc = 'Subgroup ba' },
+    },
+    triggers = { { mode = 'n', keys = '<Space>' } },
+    window = { delay = 0, config = { width = 20 } },
+  })
+
+  child.api.nvim_set_keymap('n', '<Space>aaa', '<Nop>', { desc = 'Do aaa' })
+  child.api.nvim_set_keymap('n', '<Space>aab', '<Nop>', { desc = 'Do aab' })
+  child.api.nvim_set_keymap('n', '<Space>baa', '<Nop>', { desc = 'Do baa' })
+  child.api.nvim_set_keymap('n', '<Space>bab', '<Nop>', { desc = 'Do bab' })
+  child.api.nvim_set_keymap('n', '<Space>caa', '<Nop>', { desc = 'Do caa' })
+
+  child.set_size(10, 30)
+  local validate = function(keys)
+    type_keys(keys)
+    child.expect_screenshot()
+  end
+
+  -- Should show trigger keys (not description/clue)
+  validate(' ')
+  -- Should show `<Space>a` clue
+  validate('a')
+  -- Should show `<Space>aa` clue, even if is a subgroup
+  validate('a')
+  -- Should work after `<BS>`
+  validate('<BS>')
+  -- Should fall back to showing keys if they have no clue
+  type_keys('<BS>')
+  validate('b')
+  -- Should try using only current subgroup (even if there is no parent clue)
+  validate('a')
+  -- Should work for a group with 1 key
+  type_keys('<BS>', '<BS>')
+  validate('c')
+  validate('a')
 end
 
 T['Showing keys']['respects `scroll_down` and `scroll_up` in `config.window`'] = function()
@@ -1752,6 +1856,21 @@ T['Clues']['handles no description'] = function()
   })
 
   type_keys(' ')
+  child.expect_screenshot()
+end
+
+T['Clues']['handles an array of modes'] = function()
+  load_module({
+    clues = { { mode = { 'n', 'x' }, keys = '<Space>a', desc = 'Clue <Space>a' } },
+    triggers = { { mode = { 'n', 'x' }, keys = '<Space>' } },
+    window = { delay = 0 },
+  })
+
+  type_keys(' ')
+  child.expect_screenshot()
+
+  type_keys('<Esc>')
+  type_keys('v', ' ')
   child.expect_screenshot()
 end
 
@@ -3029,7 +3148,7 @@ end
 
 T['Reproducing keys']['works with macros'] = function()
   mock_comment_operators()
-  load_module({ triggers = { { mode = 'n', keys = 'g' }, { mode = 'o', keys = 'i' } } })
+  load_module({ triggers = { { mode = 'n', keys = 'g' }, { mode = 'o', keys = 'i' }, { mode = 'i', keys = '<C-r>' } } })
   validate_trigger_keymap('n', 'g')
   validate_trigger_keymap('o', 'i')
 
@@ -3084,6 +3203,28 @@ T['Reproducing keys']['works with macros'] = function()
   child.api.nvim_buf_set_lines(new_buf_id, 0, -1, false, { 'cc', 'dd' })
   validate_trigger_keymap('n', 'g')
   validate_trigger_keymap('o', 'i')
+
+  -- Should work when creating new buffer inside macro (i.e. auto-creating
+  -- triggers should not intefere)
+  child.fn.setreg('a', 'word')
+  type_keys('qw', ':enew<CR>', 'i', '<C-r>', 'a', '<Esc>', 'q')
+  eq(child.fn.getreg('w'), ':enew\ri\18a\27')
+end
+
+T['Reproducing keys']["works with macros and 'mini.jump'"] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('The solution works only on Neovim>=0.10') end
+  child.lua("require('mini.jump').setup()")
+  load_module()
+  set_lines({ '  [aaa][bbb][ccc]' })
+
+  type_keys(small_time, 'qq', '0f', '[', 'r(f', ']', 'r)', 'q')
+  eq(get_lines(), { '  (aaa)[bbb][ccc]' })
+
+  type_keys('Q')
+  eq(get_lines(), { '  (aaa)(bbb)[ccc]' })
+
+  type_keys('@q')
+  eq(get_lines(), { '  (aaa)(bbb)(ccc)' })
 end
 
 T['Reproducing keys']['works when key query is executed in presence of longer keymaps'] = function()

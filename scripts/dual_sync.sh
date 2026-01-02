@@ -49,7 +49,7 @@ sync_module () {
   # - Move all known relative links one step higher (and hope that it doesn't
   #   occur anywhere else in patch). NOTE: There can be other relative links
   #   which should be corrected manually
-  sed -i "s/\[help file\](\.\.\//[help file](/" $patch
+  sed -i "s/\[Documentation\](\.\.\/doc/[Documentation](doc/" $patch
 
   # Possibly pull repository
   if [[ ! -d $repo ]]
@@ -58,7 +58,7 @@ sync_module () {
     # Handle 'mini.git' differently because GitHub repo is named 'mini-git'
     # (".git" suffix is not allowed as repo name on GitHub)
     if [ $module = "git" ]; then github_repo="mini-git"; else github_repo="mini.$module"; fi
-    git clone --filter=blob:none https://github.com/echasnovski/$github_repo.git $repo >/dev/null 2>&1
+    git clone --filter=blob:none https://github.com/nvim-mini/$github_repo.git $repo >/dev/null 2>&1
   fi
 
   # Apply patch
@@ -76,6 +76,7 @@ sync_module "basics"
 sync_module "bracketed"
 sync_module "bufremove"
 sync_module "clue"
+sync_module "cmdline"
 sync_module "colors"
 sync_module "comment"
 sync_module "completion"
@@ -88,7 +89,7 @@ sync_module "files"
 sync_module "fuzzy"
 sync_module "git"
 sync_module "hipatterns"
-sync_module "hues" colors/randomhue.lua
+sync_module "hues" colors/miniwinter.lua colors/minispring.lua colors/minisummer.lua colors/miniautumn.lua colors/randomhue.lua
 sync_module "icons"
 sync_module "indentscope"
 sync_module "jump"

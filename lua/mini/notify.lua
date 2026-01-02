@@ -1,17 +1,15 @@
 --- *mini.notify* Show notifications
---- *MiniNotify*
 ---
 --- MIT License Copyright (c) 2024 Evgeni Chasnovski
----
---- ==============================================================================
----
+
 --- Features:
 ---
 --- - Show one or more highlighted notifications in a single floating window.
 ---
 --- - Manage notifications (add, update, remove, clear).
 ---
---- - |vim.notify()| wrapper generator (see |MiniNotify.make_notify()|).
+--- - Custom |vim.notify()| implementation. To adjust, use |MiniNotify.make_notify()|
+---   or save-restore `vim.notify` manually after calling |MiniNotify.setup()|.
 ---
 --- - Automated show of LSP progress report.
 ---
@@ -32,22 +30,25 @@
 ---
 --- # Comparisons ~
 ---
---- - 'j-hui/fidget.nvim':
+--- - [j-hui/fidget.nvim](https://github.com/j-hui/fidget.nvim):
 ---     - Basic goals of providing interface for notifications are similar.
 ---     - Has more configuration options and visual effects, while this module
 ---       does not (by design).
 ---
---- - 'rcarriga/nvim-notify':
+--- - [rcarriga/nvim-notify](https://github.com/rcarriga/nvim-notify):
 ---     - Similar to 'j-hui/fidget.nvim'.
 ---
 --- # Highlight groups ~
 ---
---- * `MiniNotifyBorder` - window border.
---- * `MiniNotifyLspProgress` - notifications from built-in LSP progress report.
---- * `MiniNotifyNormal` - basic foreground/background highlighting.
---- * `MiniNotifyTitle` - window title.
+--- - `MiniNotifyBorder` - window border.
+--- - `MiniNotifyLspProgress` - notifications from built-in LSP progress report.
+--- - `MiniNotifyNormal` - basic foreground/background highlighting.
+--- - `MiniNotifyTitle` - window title.
 ---
---- To change any highlight group, modify it directly with |:highlight|.
+--- To change any highlight group, set it directly with |nvim_set_hl()|.
+---
+--- NOTE: |vim.notify()| override after |MiniNotify.make_notify()| uses own
+--- highlight groups per notification level.
 ---
 --- # Disabling ~
 ---
@@ -56,6 +57,7 @@
 --- of different scenarios and customization intentions, writing exact rules
 --- for disabling module's functionality is left to user. See
 --- |mini.nvim-disabling-recipes| for common recipes.
+---@tag MiniNotify
 
 --- # Notification specification ~
 ---
@@ -89,8 +91,10 @@ local H = {}
 
 --- Module setup
 ---
---- This will also clean the history. Use `MiniNotify.setup(MiniNotify.config)` to
---- force clean history while preserving the config.
+--- This will also:
+--- - Set |vim.notify()| custom implementation (see |MiniNotify.make_notify()|).
+--- - Clean the history. Use `MiniNotify.setup(MiniNotify.config)` to force
+---   clean history while preserving the config.
 ---
 ---@param config table|nil Module config table. See |MiniNotify.config|.
 ---
@@ -100,15 +104,6 @@ local H = {}
 ---   require('mini.notify').setup({}) -- replace {} with your config table
 --- <
 MiniNotify.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.notify) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniNotify = MiniNotify
 
@@ -123,11 +118,12 @@ MiniNotify.setup = function(config)
 
   -- Create default highlighting
   H.create_default_hl()
+
+  -- Set custom implementation
+  vim.notify = MiniNotify.make_notify()
 end
 
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
 ---@text # Content ~
 ---
@@ -275,33 +271,36 @@ MiniNotify.config = {
 ---
 --- All notifications set `source = "vim.notify"` in their `data` field.
 ---
---- Examples: >lua
+--- This is used with default options inside |MiniNotify.setup()|. To adjust,
+--- call manually after `setup()`. For example, to show errors longer: >lua
 ---
----   -- Defaults
----   vim.notify = require('mini.notify').make_notify()
+---   require('mini.notify').setup()
+---   vim.notify = MiniNotify.make_notify({ ERROR = { duration = 10000 } })
+--- <
+--- To preserve original `vim.notify`: >lua
 ---
----   -- Change duration for errors to show them longer
----   local opts = { ERROR = { duration = 10000 } }
----   vim.notify = require('mini.notify').make_notify(opts)
+---   local notify_orig = vim.notify
+---   require('mini.notify').setup()
+---   vim.notify = notify_orig
 --- <
 ---@param opts table|nil Options to configure behavior of notification `level`
----   (as in |MiniNotfiy.add()|). Fields are the same as names of `vim.log.levels`
+---   (as in |MiniNotify.add()|). Fields are the same as names of `vim.log.levels`
 ---   with values being tables with possible fields:
----     - <duration> `(number)` - duration (in ms) of how much a notification
----       should be shown. If 0 or negative, notification is not shown at all.
----     - <hl_group> `(string)` - highlight group of notification.
+---   - <duration> `(number)` - duration (in ms) of how much a notification
+---     should be shown. If 0 or negative, notification is not shown at all.
+---   - <hl_group> `(string)` - highlight group of notification.
 ---   Only data different to default can be supplied.
 ---
 ---   Default: >lua
 ---
----     {
----       ERROR = { duration = 5000, hl_group = 'DiagnosticError'  },
----       WARN  = { duration = 5000, hl_group = 'DiagnosticWarn'   },
----       INFO  = { duration = 5000, hl_group = 'DiagnosticInfo'   },
----       DEBUG = { duration = 0,    hl_group = 'DiagnosticHint'   },
----       TRACE = { duration = 0,    hl_group = 'DiagnosticOk'     },
----       OFF   = { duration = 0,    hl_group = 'MiniNotifyNormal' },
----     }
+---   {
+---     ERROR = { duration = 5000, hl_group = 'DiagnosticError'  },
+---     WARN  = { duration = 5000, hl_group = 'DiagnosticWarn'   },
+---     INFO  = { duration = 5000, hl_group = 'DiagnosticInfo'   },
+---     DEBUG = { duration = 0,    hl_group = 'DiagnosticHint'   },
+---     TRACE = { duration = 0,    hl_group = 'DiagnosticOk'     },
+---     OFF   = { duration = 0,    hl_group = 'MiniNotifyNormal' },
+---   }
 --- <
 MiniNotify.make_notify = function(opts)
   local level_names = {}
@@ -343,7 +342,7 @@ end
 --- Add notification
 ---
 --- Add notification to history. It is considered "active" and is shown.
---- To hide, call |MiniNotfiy.remove()| with identifier this function returns.
+--- To hide, call |MiniNotify.remove()| with identifier this function returns.
 ---
 --- Example: >lua
 ---
@@ -807,7 +806,7 @@ H.window_compute_config = function(buf_id, is_for_open)
   local default_config = { relative = 'editor', style = 'minimal', noautocmd = is_for_open, zindex = 999 }
   default_config.anchor, default_config.col, default_config.row = 'NE', vim.o.columns, has_tabline and 1 or 0
   default_config.width, default_config.height = H.buffer_default_dimensions(buf_id, config_win.max_width_share)
-  default_config.border = (vim.fn.exists('+winborder') == 1 and vim.o.winborder ~= '') and vim.o.winborder or 'single'
+  default_config.border = (vim.fn.exists('+winborder') == 0 or vim.o.winborder == '') and 'single' or nil
   default_config.title = ' Notifications '
   -- Don't allow focus to not disrupt window navigation
   default_config.focusable = false
@@ -816,13 +815,11 @@ H.window_compute_config = function(buf_id, is_for_open)
   if vim.is_callable(win_config) then win_config = win_config(buf_id) end
   local config = vim.tbl_deep_extend('force', default_config, win_config or {})
 
-  if type(config.title) == 'string' then config.title = H.fit_to_width(config.title, config.width) end
-  if vim.fn.has('nvim-0.9') == 0 then config.title = nil end
-
   -- Tweak config values to ensure they are proper, accounting for border
   local offset = config.border == 'none' and 0 or 2
   config.height = math.min(config.height, max_height - offset)
   config.width = math.min(config.width, max_width - offset)
+  if type(config.title) == 'string' then config.title = H.fit_to_width(config.title, config.width) end
 
   return config
 end

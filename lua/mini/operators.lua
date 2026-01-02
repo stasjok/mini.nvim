@@ -1,10 +1,7 @@
 --- *mini.operators* Text edit operators
---- *MiniOperators*
 ---
 --- MIT License Copyright (c) 2023 Evgeni Chasnovski
----
---- ==============================================================================
----
+
 --- Features:
 --- - Operators:
 ---     - Evaluate text and replace with output.
@@ -34,7 +31,7 @@
 ---
 --- # Comparisons ~
 ---
---- - 'gbprod/substitute.nvim':
+--- - [gbprod/substitute.nvim](https://github.com/gbprod/substitute.nvim):
 ---     - Has "replace" and "exchange" variants, but not others from this module.
 ---     - Has "replace/substitute" over range functionality, while this module
 ---       does not by design (it is similar to |:s| functionality while not
@@ -42,18 +39,18 @@
 ---     - "Replace" highlights pasted text, while in this module it doesn't.
 ---     - "Exchange" doesn't work across buffers, while in this module it does.
 ---
---- - 'svermeulen/vim-subversive':
+--- - [svermeulen/vim-subversive](https://github.com/svermeulen/vim-subversive):
 ---     - Main inspiration for "replace" functionality, so they are mostly similar
 ---       for this operator.
 ---     - Has "replace/substitute" over range functionality, while this module
 ---       does not by design.
 ---
---- - 'tommcdo/vim-exchange':
+--- - [tommcdo/vim-exchange](https://github.com/tommcdo/vim-exchange):
 ---     - Main inspiration for "exchange" functionality, so they are mostly
 ---       similar for this operator.
 ---     - Doesn't work across buffers, while this module does.
 ---
---- - 'christoomey/vim-sort-motion':
+--- - [christoomey/vim-sort-motion](https://github.com/christoomey/vim-sort-motion):
 ---     - Uses |:sort| for linewise sorting, while this module uses consistent
 ---       sorting algorithm (by default, see |MiniOperators.default_sort_func()|).
 ---     - Sorting algorithm can't be customized, while this module allows this
@@ -64,9 +61,9 @@
 ---
 --- # Highlight groups ~
 ---
---- * `MiniOperatorsExchangeFrom` - first region to exchange.
+--- - `MiniOperatorsExchangeFrom` - first region to exchange.
 ---
---- To change any highlight group, modify it directly with |:highlight|.
+--- To change any highlight group, set it directly with |nvim_set_hl()|.
 ---
 --- # Disabling ~
 ---
@@ -75,9 +72,8 @@
 --- of different scenarios and customization intentions, writing exact rules
 --- for disabling module's functionality is left to user. See
 --- |mini.nvim-disabling-recipes| for common recipes.
+---@tag MiniOperators
 
---- # General overview ~
----
 --- Operator defines an action that will be performed on a textobject, motion,
 --- or visual selection (similar to |d|, |c|, etc.). When makes sense, it can also
 --- respect supplied register (like "replace" operator).
@@ -86,7 +82,7 @@
 --- (like |MiniOperators.replace()| for "replace" operator). Each such function
 --- takes `mode` as argument and acts depending on it:
 ---
---- - If `mode` is `nil` (or not explicitly supplied), it sets |operatorfunc|
+--- - If `mode` is `nil` (or not explicitly supplied), it sets |'operatorfunc'|
 ---   to this dedicated function and returns `g@` assuming being called from
 ---   expression mapping. See |:map-operator| and |:map-expression| for more details.
 ---
@@ -103,8 +99,8 @@
 --- - Replace:  |MiniOperators.replace()|
 --- - Sort:     |MiniOperators.sort()|
 ---
----                                                         *MiniOperators-mappings*
---- ## Mappings ~
+--- # Mappings ~
+--- *MiniOperators-mappings*
 ---
 --- All operators are automatically mapped during |MiniOperators.setup()| execution.
 --- Mappings keys are deduced from `prefix` field of corresponding `config` entry.
@@ -174,15 +170,6 @@ local H = {}
 ---   require('mini.operators').setup({}) -- replace {} with your config table
 --- <
 MiniOperators.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.operators) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniOperators = MiniOperators
 
@@ -200,9 +187,7 @@ MiniOperators.setup = function(config)
 end
 
 --stylua: ignore
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
 ---@text # Evaluate ~
 ---
@@ -225,10 +210,9 @@ end
 --- `exchange.prefix` is a string used to automatically infer operator mappings keys
 --- during |MiniOperators.setup()|. See |MiniOperators-mappings|.
 ---
---- Note: default value "gx" overrides |netrw-gx| and |gx| / |v_gx|.
---- Instead |gx| and |v_gx| are remapped to `gX` (if that is not already taken).
---- To keep using `gx` with built-in feature (open URL at cursor) choose
---- different `config.prefix`.
+--- Note: default value "gx" overrides |gx| / |v_gx|. Instead they are remapped
+--- to `gX` (if that is not already taken). To keep using `gx` with built-in
+--- feature (open URL at cursor) choose different `config.prefix`.
 ---
 --- `exchange.reindent_linewise` is a boolean indicating whether newly put linewise
 --- text should preserve indent of replaced text. In other words, if `false`,
@@ -278,6 +262,7 @@ end
 ---   end
 ---
 ---   require('mini.operators').setup({ sort = { func = sort_func } })
+--- <
 MiniOperators.config = {
   -- Each entry configures one operator.
   -- `prefix` defines keys mapped during `setup()`: in Normal mode
@@ -293,6 +278,7 @@ MiniOperators.config = {
 
   -- Exchange text regions
   exchange = {
+    -- NOTE: Default `gx` is remapped to `gX`
     prefix = 'gx',
 
     -- Whether to reindent new text to match previous indent
@@ -309,6 +295,7 @@ MiniOperators.config = {
 
   -- Replace text with register
   replace = {
+    -- NOTE: Default `gr*` LSP mappings are removed
     prefix = 'gr',
 
     -- Whether to reindent new text to match previous indent
@@ -344,6 +331,7 @@ MiniOperators.evaluate = function(mode)
 
   local evaluate_func = H.get_config().evaluate.func or MiniOperators.default_evaluate_func
   local data = H.get_region_data(mode)
+  if data == nil then return end
   data.reindent_linewise = true
   H.apply_content_func(evaluate_func, data)
 end
@@ -378,12 +366,14 @@ MiniOperators.exchange = function(mode)
   if not H.exchange_has_step_one() then
     -- Store data about first region
     H.cache.exchange.step_one = H.exchange_set_region_extmark(mode, true)
+    if H.cache.exchange.step_one == nil then return end
 
     -- Temporarily remap `<C-c>` to stop the exchange
     H.exchange_set_stop_mapping()
   else
     -- Store data about second region
     H.cache.exchange.step_two = H.exchange_set_region_extmark(mode, false)
+    if H.cache.exchange.step_two == nil then return end
 
     -- Do exchange
     H.exchange_do()
@@ -422,11 +412,12 @@ MiniOperators.multiply = function(mode)
     H.cache.multiply = { count = vim.v.count1 }
 
     -- Reset count to allow two counts: first for paste, second for textobject
-    return vim.api.nvim_replace_termcodes('<Cmd>echon ""<CR>g@', true, true, true)
+    return vim.api.nvim_replace_termcodes('<Cmd>redraw<CR>g@', true, true, true)
   end
 
   local count = mode == 'visual' and vim.v.count1 or H.cache.multiply.count
   local data = H.get_region_data(mode)
+  if data == nil then return end
   local mark_from, mark_to, submode = data.mark_from, data.mark_to, data.submode
 
   H.with_temp_context({ registers = { 'x', '"' } }, function()
@@ -479,7 +470,7 @@ MiniOperators.replace = function(mode)
     H.cache.replace = { count = vim.v.count1, register = vim.v.register }
 
     -- Reset count to allow two counts: first for paste, second for textobject
-    return vim.api.nvim_replace_termcodes('<Cmd>echon ""<CR>g@', true, true, true)
+    return vim.api.nvim_replace_termcodes('<Cmd>redraw<CR>g@', true, true, true)
   end
 
   -- Do replace
@@ -488,6 +479,7 @@ MiniOperators.replace = function(mode)
   local count = mode == 'visual' and vim.v.count1 or H.cache.replace.count
   local register = mode == 'visual' and vim.v.register or H.cache.replace.register
   local data = H.get_region_data(mode)
+  if data == nil then return '' end
   data.count = count
   data.register = register
   data.reindent_linewise = H.get_config().replace.reindent_linewise
@@ -560,7 +552,7 @@ MiniOperators.make_mappings = function(operator_name, lhs_tbl)
   -- Make mappings
   local operator_desc = operator_name:sub(1, 1):upper() .. operator_name:sub(2)
 
-  local expr_opts = { expr = true, replace_keycodes = false, desc = operator_desc .. ' operator' }
+  local expr_opts = { expr = true, replace_keycodes = false, desc = operator_desc }
   H.map('n', lhs_tbl.textobject, string.format('v:lua.MiniOperators.%s()', operator_name), expr_opts)
 
   local rhs = lhs_tbl.textobject .. '_'
@@ -734,8 +726,9 @@ H.apply_config = function(config)
       remove_lsp_mapping('n', 'gra')
       remove_lsp_mapping('x', 'gra')
       remove_lsp_mapping('n', 'gri')
-      remove_lsp_mapping('n', 'grr')
       remove_lsp_mapping('n', 'grn')
+      remove_lsp_mapping('n', 'grr')
+      remove_lsp_mapping('n', 'grt')
     end
 
     if prefix == 'gx' and vim.fn.has('nvim-0.10') == 1 then
@@ -866,6 +859,7 @@ H.exchange_set_region_extmark = function(mode, add_highlight)
 
   -- Compute regular marks for target region
   local region_data = H.get_region_data(mode)
+  if region_data == nil then return end
   local submode = region_data.submode
   local markcoords_from, markcoords_to = H.get_mark(region_data.mark_from), H.get_mark(region_data.mark_to)
 
@@ -1123,6 +1117,7 @@ end
 
 -- General --------------------------------------------------------------------
 H.apply_content_func = function(content_func, data)
+  if data == nil then return end
   local mark_from, mark_to, submode = data.mark_from, data.mark_to, data.submode
   local reindent_linewise = data.reindent_linewise
 
@@ -1198,6 +1193,11 @@ H.get_region_data = function(mode)
   local mark_from = selection_is_visual and '<' or '['
   local mark_to = selection_is_visual and '>' or ']'
 
+  -- Detect empty region. NOTE: This doesn't work when cursor is on first line
+  -- and first column, but there doesn't seem to be a better way to do that.
+  local pos_from, pos_to = H.get_mark(mark_from), H.get_mark(mark_to)
+  if pos_to[1] < pos_from[1] or (pos_to[1] == pos_from[1] and pos_to[2] < pos_from[2]) then return end
+
   return { mode = mode, submode = submode, mark_from = mark_from, mark_to = mark_to }
 end
 
@@ -1211,10 +1211,16 @@ H.get_mark = function(mark_name) return vim.api.nvim_buf_get_mark(0, mark_name) 
 
 H.set_mark = function(mark_name, mark_data) vim.api.nvim_buf_set_mark(0, mark_name, mark_data[1], mark_data[2], {}) end
 
+H.str_utfindex = function(s, i) return vim.str_utfindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_utfindex = function(s, i) return (vim.str_utfindex(s, i)) end end
+
+H.str_byteindex = function(s, i) return vim.str_byteindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_byteindex = function(s, i) return vim.str_byteindex(s, i) end end
+
 H.get_next_char_bytecol = function(markcoords)
   local line = vim.fn.getline(markcoords[1])
-  local utf_index = vim.str_utfindex(line, math.min(line:len(), markcoords[2] + 1))
-  return vim.str_byteindex(line, utf_index)
+  local utf_index = H.str_utfindex(line, math.min(line:len(), markcoords[2] + 1))
+  return H.str_byteindex(line, utf_index)
 end
 
 -- Indent ---------------------------------------------------------------------
@@ -1298,7 +1304,7 @@ H.with_temp_context = function(context, f)
 end
 
 -- A hack to restore previous dot-repeat action
-H.cancel_redo = function() end;
+H.cancel_redo = function() end
 (function()
   local has_ffi, ffi = pcall(require, 'ffi')
   if not has_ffi then return end

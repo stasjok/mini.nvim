@@ -1,32 +1,34 @@
-<img src="https://github.com/echasnovski/media/blob/main/mini.nvim/logo/logo_deps.png" style="width: 100%">
-
-<!-- badges: start -->
-[![GitHub license](https://badgen.net/github/license/echasnovski/mini.nvim)](https://github.com/echasnovski/mini.nvim/blob/main/LICENSE)
-<!-- badges: end -->
+<p align="center"> <img src="https://github.com/nvim-mini/assets/blob/main/logo-2/logo-deps_readme.png?raw=true" alt="mini.deps" style="max-width:100%;border:solid 2px"/> </p>
 
 ### Plugin manager
 
 Depends on [`git`](https://git-scm.com/) CLI tool being installed and callable. Make sure to have it set up.
 
-See more details in [Features](#features) and [help file](../doc/mini-deps.txt).
+See more details in [Features](#features) and [Documentation](../doc/mini-deps.txt).
 
 ---
 
-⦿ This is a part of [mini.nvim](https://github.com/echasnovski/mini.nvim) library. Please use [this link](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-deps.md) if you want to mention this module.
+> [!NOTE]
+> This was previously hosted at a personal `echasnovski` GitHub account. It was transferred to a dedicated organization to improve long term project stability. See more details [here](https://github.com/nvim-mini/mini.nvim/discussions/1970).
+
+⦿ This is a part of [mini.nvim](https://nvim-mini.org/mini.nvim) library. Please use [this link](https://nvim-mini.org/mini.nvim/readmes/mini-deps) if you want to mention this module.
 
 ⦿ All contributions (issues, pull requests, discussions, etc.) are done inside of 'mini.nvim'.
 
-⦿ See the repository page to learn about common design principles and configuration recipes.
+⦿ See [whole library documentation](https://nvim-mini.org/mini.nvim/doc/mini-nvim) to learn about general design principles, disable/configuration recipes, and more.
+
+⦿ See [MiniMax](https://nvim-mini.org/MiniMax) for a full config example that uses this module.
 
 ---
 
-If you want to help this project grow but don't know where to start, check out [contributing guides of 'mini.nvim'](https://github.com/echasnovski/mini.nvim/blob/main/CONTRIBUTING.md) or leave a Github star for 'mini.nvim' project and/or any its standalone Git repositories.
+If you want to help this project grow but don't know where to start, check out [contributing guides of 'mini.nvim'](https://nvim-mini.org/mini.nvim/CONTRIBUTING) or leave a Github star for 'mini.nvim' project and/or any its standalone Git repositories.
 
 ## Demo
 
-https://github.com/echasnovski/mini.nvim/assets/24854248/e3b0659b-ce79-4464-8601-e0117f38569f
+<!-- Demo source: https://github.com/nvim-mini/assets/blob/main/demo/demo-deps.mp4 -->
+https://github.com/nvim-mini/mini.nvim/assets/24854248/e3b0659b-ce79-4464-8601-e0117f38569f
 
-**Note**: This demo features custom `vim.notify()` from [mini.notify](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-notify.md).
+**Note**: This demo features custom `vim.notify()` from [mini.notify](https://nvim-mini.org/mini.nvim/readmes/mini-notify).
 
 ## Features
 
@@ -46,10 +48,11 @@ https://github.com/echasnovski/mini.nvim/assets/24854248/e3b0659b-ce79-4464-8601
 
 - Helpers implementing two-stage startup: `now()` and `later()`.
 
-Read more information, see these tags in help file:
-- `*MiniDeps-overview*`
-- `*MiniDeps-plugin-specification*`
-- `*MiniDeps-commands*`
+For more information see these parts of help:
+
+- `:h MiniDeps-overview`
+- `:h MiniDeps-plugin-specification`
+- `:h MiniDeps-commands`
 
 ## Installation
 
@@ -65,7 +68,7 @@ if not vim.loop.fs_stat(mini_path) then
   vim.cmd('echo "Installing `mini.nvim`" | redraw')
   local clone_cmd = {
     'git', 'clone', '--filter=blob:none',
-    'https://github.com/echasnovski/mini.nvim', mini_path
+    'https://github.com/nvim-mini/mini.nvim', mini_path
   }
   vim.fn.system(clone_cmd)
   vim.cmd('packadd mini.nvim | helptags ALL')
@@ -85,8 +88,9 @@ To install from standalone repository, replace any occurrence of 'mini.nvim' in 
 ## Overview
 
 See and use [example 'init.lua' file](../scripts/init-deps-example.lua) as a quick demo of how 'mini.deps' can be used:
+
 - Copy its contents into a '~/.config/nvim-deps/init.lua' file (on UNIX systems).
-- Run `NVIM_APPNAME=nvim-deps nvim -- ~/.config/nvim-deps/init.lua` (requires Neovim>=0.9 which might display tree-sitter issues on first start; prefer Neovim>=0.10). This will run Neovim with that 'init.lua' as the only config **while completely not affecting your current config**.
+- Run `NVIM_APPNAME=nvim-deps nvim -- ~/.config/nvim-deps/init.lua` (on Neovim<0.10 might display tree-sitter issues on first start). This will run Neovim with that 'init.lua' as the only config **while completely not affecting your current config**.
 
 ### Directory structure
 
@@ -127,15 +131,17 @@ require('nvim-treesitter.configs').setup({
 ```
 
 NOTE:
+
 - To increase performance, `add()` only ensures presence on disk and nothing else. In particular, it doesn't ensure `opts.checkout` state. Update or modify plugin state explicitly (see later sections).
 
 ### Plugin specification
 
 Specification can be a single string which is inferred as:
+
 - Plugin `name` if it doesn't contain "/".
 - Plugin `source` otherwise.
 
-Primarily, specification is a table with the following fields (see `*MiniDeps-plugin-specification*` tag in help for more details):
+Primarily, specification is a table with the following fields (see `:h MiniDeps-plugin-specification` for more details):
 
 | Field      | Description                  |
 |------------|------------------------------|
@@ -149,6 +155,7 @@ Primarily, specification is a table with the following fields (see `*MiniDeps-pl
 ### Lazy loading
 
 Any lazy-loading is assumed to be done manually by calling `MiniDeps.add()` at appropriate time. This module provides helpers implementing special safe two-stage loading:
+
 - `MiniDeps.now()` safely executes code immediately. Use it to load plugins with UI necessary to make initial screen draw.
 - `MiniDeps.later()` schedules code to be safely executed later, preserving order. Use it (with caution) for everything else which doesn't need precisely timed effect, as it will be executed some time soon on one of the next event loops.
 
@@ -156,7 +163,7 @@ Any lazy-loading is assumed to be done manually by calling `MiniDeps.add()` at a
 local now, later = MiniDeps.now, MiniDeps.later
 
 -- Safely execute immediately
-now(function() vim.cmd('colorscheme randomhue') end)
+now(function() vim.cmd('colorscheme miniwinter') end)
 now(function() require('mini.statusline').setup() end)
 
 -- Safely execute later
@@ -172,6 +179,7 @@ NOTE: This updates plugins on disk which most likely won't affect current sessio
 ### Modify
 
 To change plugin's specification (like set different `checkout`, etc.):
+
 - Update corresponding `MiniDeps.add()` call.
 - Run `:DepsUpdateOffline <plugin_name>`.
 - Review changes and confirm.
@@ -198,6 +206,7 @@ Example: use `checkout = 'v0.10.0'` to freeze plugin at tag "v0.10.0" while moni
 ### Rollback
 
 To roll back after an unfortunate update:
+
 - Get identifier of latest working state:
     - Use `:DepsShowLog` to see update log, look for plugin's name, and copy
       identifier listed as "State before:".

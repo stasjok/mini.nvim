@@ -4,16 +4,7 @@ local child = helpers.new_child_neovim()
 local expect, eq = helpers.expect, helpers.expect.equality
 local new_set = MiniTest.new_set
 
-local fs_normalize = vim.fs.normalize
-if vim.fn.has('nvim-0.9') == 0 then
-  fs_normalize = function(...) return vim.fs.normalize(...):gsub('(.)/+$', '%1') end
-end
-
-local skip_if_no_010 = function()
-  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('`setup_termbg_sync()` works only on Neovim>=0.10') end
-end
-
-local project_root = fs_normalize(vim.fn.fnamemodify(vim.fn.getcwd(), ':p'))
+local project_root = vim.fs.normalize(vim.fn.fnamemodify(vim.fn.getcwd(), ':p'))
 local dir_misc_path = project_root .. '/tests/dir-misc'
 
 -- Helpers with child processes
@@ -23,9 +14,9 @@ local unload_module = function() child.mini_unload('misc') end
 local reload_module = function(config) unload_module(); load_module(config) end
 local set_lines = function(...) return child.set_lines(...) end
 local get_lines = function(...) return child.get_lines(...) end
-local make_path = function(...) return fs_normalize(table.concat({...}, '/')) end
+local make_path = function(...) return vim.fs.normalize(table.concat({...}, '/')) end
 local make_abspath = function(...) return make_path(project_root, ...) end
-local getcwd = function() return fs_normalize(child.fn.getcwd()) end
+local getcwd = function() return child.fs.normalize(child.fn.getcwd()) end
 local set_cursor = function(...) return child.set_cursor(...) end
 local get_cursor = function(...) return child.get_cursor(...) end
 local edit = function(x) child.cmd('edit ' .. x) end
@@ -149,6 +140,190 @@ T['get_gutter_width()']['respects `win_id` argument'] = function()
 
   child.api.nvim_win_set_option(windows[1], 'signcolumn', 'yes:1')
   eq(child.lua_get('MiniMisc.get_gutter_width(...)', { windows[2] }), 0)
+end
+
+T['log_add()'] = new_set()
+
+local validate_log = function(ref_log)
+  local log = child.lua_get('MiniMisc.log_get()')
+  eq(#log, #ref_log)
+
+  -- Validate timestamp and non-timestamp data separately
+  local log_small, prev_timestamp = {}, 0
+  for i, l in ipairs(log) do
+    log_small[i] = vim.deepcopy(l)
+    log_small[i].timestamp = nil
+
+    eq(type(l.timestamp), 'number')
+    eq(prev_timestamp < l.timestamp, true)
+    prev_timestamp = l.timestamp
+  end
+  eq(log_small, ref_log)
+end
+
+T['log_add()']['works'] = function()
+  child.lua([[
+    local t = { a = 1 }
+    MiniMisc.log_add('before', t)
+    MiniMisc.log_add('before nodeepcopy', t, { deepcopy = false })
+    t.a = t.a + 1
+    MiniMisc.log_add('after', t)
+
+    MiniMisc.log_add('types 1', { 1, 'text', { x = true } })
+    MiniMisc.log_add('types 2', true)
+    MiniMisc.log_add('types 3', nil)
+
+    MiniMisc.log_add(1, 'number desc')
+    MiniMisc.log_add(nil, 'no desc')
+  ]])
+
+  validate_log({
+    { desc = 'before', state = { a = 1 } },
+    { desc = 'before nodeepcopy', state = { a = 2 } },
+    { desc = 'after', state = { a = 2 } },
+    { desc = 'types 1', state = { 1, 'text', { x = true } } },
+    { desc = 'types 2', state = true },
+    { desc = 'types 3' },
+    { desc = 1, state = 'number desc' },
+    { state = 'no desc' },
+  })
+
+  -- Should allow function in log entry
+  local fun_in_log = child.lua([[
+    MiniMisc.log_add('func 1', function() return 1 end)
+    MiniMisc.log_add('func 2', { f = function() return 2 end })
+
+    local log = MiniMisc.log_get()
+    return { log[#log - 1].state(), log[#log].state.f() }
+  ]])
+  eq(fun_in_log, { 1, 2 })
+
+  -- Should properly set timestamps
+  child.lua('_G.small_time = ' .. vim.inspect(small_time))
+  local diff = child.lua([[
+    MiniMisc.log_add('ts 1', 1)
+    vim.loop.sleep(10 * _G.small_time)
+    MiniMisc.log_add('ts 2', 2)
+
+    local log = MiniMisc.log_get()
+    return log[#log].timestamp - log[#log - 1].timestamp
+  ]])
+  eq((9 * small_time) < diff and diff < (11 * small_time), true)
+end
+
+T['log_get()'] = new_set()
+
+T['log_get()']['works'] = function()
+  -- Most of the testing is done in tests for other functions
+  local log = child.lua([[
+    MiniMisc.log_add('desc', { a = 1 })
+    return MiniMisc.log_get()
+  ]])
+  eq(type(log), 'table')
+  eq(vim.tbl_count(log), 1)
+  local entry_names = vim.tbl_keys(log[1])
+
+  table.sort(entry_names)
+  eq(entry_names, { 'desc', 'state', 'timestamp' })
+
+  eq(log[1].desc, 'desc')
+  eq(log[1].state, { a = 1 })
+  eq(type(log[1].timestamp), 'number')
+  eq(log[1].timestamp > 0, true)
+end
+
+T['log_show()'] = new_set()
+
+T['log_show()']['works'] = function()
+  -- Set up windows
+  local buf_id_other = child.api.nvim_get_current_buf()
+  local win_id_other = child.api.nvim_get_current_win()
+  child.cmd('vert split')
+  local win_id = child.api.nvim_get_current_win()
+
+  -- Should start showing log in a new scratch buffer in the current window
+  child.lua('MiniMisc.log_add("desc", { a = 1 })')
+  child.lua('MiniMisc.log_show()')
+  local buf_id_log = child.api.nvim_get_current_buf()
+  eq(child.api.nvim_buf_get_name(buf_id_log), 'minimisc://' .. buf_id_log .. '/log')
+
+  local validate_wins = function()
+    eq(child.api.nvim_win_get_buf(win_id), buf_id_log)
+    eq(child.api.nvim_win_get_buf(win_id_other), buf_id_other)
+    eq(child.api.nvim_get_current_win(), win_id)
+    eq(buf_id_log == buf_id_other, false)
+  end
+
+  local validate_lines = function(ref_lines)
+    local log_lines = child.api.nvim_buf_get_lines(buf_id_log, 0, -1, false)
+    local mock_ts = 12.33
+    for i = 1, #log_lines do
+      log_lines[i] = log_lines[i]:gsub('timestamp = %d+%.%d+', function()
+        mock_ts = mock_ts + 0.01
+        return 'timestamp = ' .. mock_ts
+      end)
+    end
+    eq(log_lines, ref_lines)
+  end
+
+  validate_wins()
+
+  local ref_lines = {
+    '{ {',
+    '    desc = "desc",',
+    '    state = {',
+    '      a = 1',
+    '    },',
+    '    timestamp = 12.34',
+    '  } }',
+  }
+  validate_lines(ref_lines)
+
+  -- Should reuse buffer and window
+  child.api.nvim_set_current_win(win_id_other)
+  child.lua('MiniMisc.log_add("desc", { b = 2 })')
+  child.lua('MiniMisc.log_show()')
+  validate_wins()
+
+  ref_lines = {
+    '{ {',
+    '    desc = "desc",',
+    '    state = {',
+    '      a = 1',
+    '    },',
+    '    timestamp = 12.34',
+    '  }, {',
+    '    desc = "desc",',
+    '    state = {',
+    '      b = 2',
+    '    },',
+    '    timestamp = 12.35',
+    '  } }',
+  }
+  validate_lines(ref_lines)
+end
+
+T['log_clear()'] = new_set()
+
+T['log_clear()']['works'] = function()
+  child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
+  child.lua('_G.small_time = ' .. vim.inspect(small_time))
+  local log = child.lua([[
+    MiniMisc.log_add('desc 1', 1)
+    vim.loop.sleep(10 * _G.small_time)
+    MiniMisc.log_add('desc 2', 2)
+
+    MiniMisc.log_clear()
+    MiniMisc.log_add('after clear', 3)
+
+    return MiniMisc.log_get()
+  ]])
+
+  validate_log({ { desc = 'after clear', state = 3 } })
+  -- Should restart start value for timestamps
+  eq(log[1].timestamp < small_time, true)
+
+  eq(child.lua_get('_G.notify_log'), { { '(mini.misc) Cleared log' } })
 end
 
 local validate_put = {
@@ -333,7 +508,7 @@ T['setup_auto_root()']['respects `fallback` argument'] = function()
   child.lua(lua_cmd)
 
   child.cmd('edit ' .. test_file_git)
-  eq(child.lua_get('_G.path_arg'), fs_normalize(child.api.nvim_buf_get_name(0)))
+  eq(child.lua_get('_G.path_arg'), child.fs.normalize(child.api.nvim_buf_get_name(0)))
   eq(getcwd(), dir_misc_path)
 end
 
@@ -362,7 +537,7 @@ T['setup_auto_root()']['works only for current buffer'] = function()
     vim.cmd('edit ' .. vim.fn.fnameescape(_G.path_2))
     vim.api.nvim_buf_delete(buf_id_1, { force = true })
   ]])
-  local log = vim.tbl_map(fs_normalize, child.lua_get('_G.log'))
+  local log = vim.tbl_map(child.fs.normalize, child.lua_get('_G.log'))
   eq(log, { git_repo_path })
   eq(child.cmd_capture('messages'), '')
 end
@@ -442,7 +617,7 @@ T['find_root()']['respects `fallback` argument'] = function()
     eq(child.lua_get(lua_cmd), ref)
 
     -- Fallback should be called with buffer path
-    eq(child.lua_get('_G.path_arg'), fs_normalize(child.api.nvim_buf_get_name(0)))
+    eq(child.lua_get('_G.path_arg'), child.fs.normalize(child.api.nvim_buf_get_name(0)))
 
     -- Cleanup
     child.lua('_G.path_arg = nil')
@@ -483,6 +658,8 @@ end
 T['setup_termbg_sync()'] = new_set({
   hooks = {
     pre_case = function()
+      if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('`setup_termbg_sync()` works only on Neovim>=0.10') end
+
       child.lua([[
         -- Mock `io.stdout:write` used to send control sequences to terminal emulator
         _G.log = {}
@@ -503,11 +680,9 @@ end
 T['setup_termbg_sync()']['works'] = new_set(
   -- Neovim=0.10 uses string sequence as response, while Neovim>=0.11 sets it
   -- in `sequence` table field
-  { parametrize = { { '\27]11;rgb:1111/2626/2d2d' }, { { sequence = '\27]11;rgb:1111/2626/2d2d' } } } },
+  { parametrize = { { '\027]11;rgb:1111/2626/2d2d' }, { { sequence = '\027]11;rgb:1111/2626/2d2d' } } } },
   {
     test = function(response_data)
-      skip_if_no_010()
-
       local eq_log = function(ref_log)
         eq(child.lua_get('_G.log'), ref_log)
         child.lua('_G.log = {}')
@@ -532,35 +707,31 @@ T['setup_termbg_sync()']['works'] = new_set(
       end
       validate_event('VimResume', '\027]11;#dddddd\007')
       validate_event('ColorScheme', '\027]11;#dddddd\007')
-      validate_event('VimLeavePre', '\027]11;#11262d\007')
-      validate_event('VimSuspend', '\027]11;#11262d\007')
+      validate_event('VimLeavePre', '\027]111\027\\')
+      validate_event('VimSuspend', '\027]111\027\\')
     end,
   }
 )
 
 T['setup_termbg_sync()']['can be called multiple times'] = function()
-  skip_if_no_010()
-
   child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
   child.lua('MiniMisc.setup_termbg_sync()')
-  child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;rgb:1111/2626/2d2d' })
-  eq(child.lua_get('_G.log'), { { '\27]11;?\a' }, { '\27]11;#dddddd\a' } })
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
+  eq(child.lua_get('_G.log'), { { '\027]11;?\a' }, { '\027]11;#dddddd\a' } })
   child.lua('_G.log = {}')
 
   -- If called second time, the terminal background color is already synced
   child.lua('MiniMisc.setup_termbg_sync()')
-  child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;rgb:dddd/dddd/dddd' })
-  eq(child.lua_get('_G.log'), { { '\27]11;?\a' }, { '\27]11;#dddddd\a' } })
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:dddd/dddd/dddd' })
+  eq(child.lua_get('_G.log'), { { '\027]11;?\a' }, { '\027]11;#dddddd\a' } })
   child.lua('_G.log = {}')
 
   -- Should reset to the color from the very first call
   child.api.nvim_exec_autocmds('VimLeavePre', {})
-  eq(child.lua_get('_G.log'), { { '\27]11;#11262d\a' } })
+  eq(child.lua_get('_G.log'), { { '\027]111\027\\' } })
 end
 
 T['setup_termbg_sync()']['does nothing if there is no proper stdout'] = function()
-  skip_if_no_010()
-
   local validate = function()
     child.lua('MiniMisc.setup_termbg_sync()')
     child.api.nvim_create_augroup('MiniMiscTermbgSync', { clear = false })
@@ -577,8 +748,6 @@ T['setup_termbg_sync()']['does nothing if there is no proper stdout'] = function
 end
 
 T['setup_termbg_sync()']['handles no response from terminal emulator'] = function()
-  skip_if_no_010()
-
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
   validate_termbg_augroup(true)
@@ -596,8 +765,6 @@ T['setup_termbg_sync()']['handles no response from terminal emulator'] = functio
 end
 
 T['setup_termbg_sync()']['handles bad response from terminal emulator'] = function()
-  skip_if_no_010()
-
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
 
@@ -623,8 +790,6 @@ T['setup_termbg_sync()']['handles bad response from terminal emulator'] = functi
 end
 
 T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = function()
-  skip_if_no_010()
-
   child.lua('_G.notify_log = {}; vim.notify = function(...) table.insert(_G.notify_log, { ... }) end')
   child.lua('MiniMisc.setup_termbg_sync()')
 
@@ -640,7 +805,7 @@ T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = f
 
   -- After receiving proper response should immediately stop waiting for it and
   -- set up proper `termbg` autocommands
-  local seq = '\27]11;rgb:1111/2626/2d2d'
+  local seq = '\027]11;rgb:1111/2626/2d2d'
   local data = child.fn.has('nvim-0.11') == 1 and { sequence = seq } or seq
   child.api.nvim_exec_autocmds('TermResponse', { data = data })
   validate_termbg_augroup(true)
@@ -650,18 +815,16 @@ T['setup_termbg_sync()']['handles parallel unrelated `TermResponse` events'] = f
 end
 
 T['setup_termbg_sync()']['handles different color formats'] = function()
-  skip_if_no_010()
-
-  local validate = function(term_response_color, ref_color)
+  local validate = function(term_response_color)
     -- Mock clean start to overcome that color is parsed only once per session
     child.lua('package.loaded["mini.misc"] = nil')
     child.lua('require("mini.misc").setup_termbg_sync()')
-    child.api.nvim_exec_autocmds('TermResponse', { data = '\27]11;' .. term_response_color })
+    child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;' .. term_response_color })
 
     -- Should properly parse initial background and use it to reset on exit
     child.lua('_G.log = {}')
     child.api.nvim_exec_autocmds('VimLeavePre', {})
-    eq(child.lua_get('_G.log'), { { '\027]11;' .. ref_color .. '\007' } })
+    eq(child.lua_get('_G.log'), { { '\027]111\027\\' } })
 
     -- Clean up
     child.lua('_G.log = {}')
@@ -679,6 +842,43 @@ T['setup_termbg_sync()']['handles different color formats'] = function()
   validate('rgba:31/75/b9/1234', '#3175b9')
   validate('rgba:4/8/c/1234', '#4488cc')
   validate('rgba:1/23/456/1234', '#112345')
+end
+
+T['setup_termbg_sync()']['handles transparent `Normal` background'] = function()
+  child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
+  child.lua('MiniMisc.setup_termbg_sync()')
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
+  child.lua('_G.log = {}')
+
+  -- When syncing with "transparent" `Normal`, should restore the original
+  -- terminal background
+  child.cmd('hi Normal guifg=#222222 guibg=NONE')
+  child.api.nvim_exec_autocmds('ColorScheme', {})
+  eq(child.lua_get('_G.log'), { { '\027]111\027\\' } })
+end
+
+T['setup_termbg_sync()']['respects `opts.explicit_reset`'] = function()
+  child.cmd('hi Normal guifg=#222222 guibg=#dddddd')
+  child.lua('MiniMisc.setup_termbg_sync({ explicit_reset = true })')
+  child.api.nvim_exec_autocmds('TermResponse', { data = '\027]11;rgb:1111/2626/2d2d' })
+  child.lua('_G.log = {}')
+
+  -- Should still sync on appropriate events
+  local validate_event = function(event, log_entry)
+    child.api.nvim_exec_autocmds(event, {})
+    eq(child.lua_get('_G.log'), { { log_entry } })
+    child.lua('_G.log = {}')
+  end
+  validate_event('VimResume', '\027]11;#dddddd\007')
+  validate_event('ColorScheme', '\027]11;#dddddd\007')
+  -- - Should reset by setting initial color explicitly
+  validate_event('VimLeavePre', '\027]11;#11262d\007')
+  validate_event('VimSuspend', '\027]11;#11262d\007')
+
+  -- Should reset with explicit bg color on transparent `Normal` background
+  child.cmd('hi Normal guifg=#222222 guibg=NONE')
+  child.api.nvim_exec_autocmds('ColorScheme', {})
+  eq(child.lua_get('_G.log'), { { '\027]11;#11262d\a' } })
 end
 
 local restore_cursor_test_file = make_path(dir_misc_path, 'restore-cursor.lua')
@@ -909,7 +1109,7 @@ T['zoom()']['works'] = function()
   child.o.winblend = 50
 
   local buf_id = child.api.nvim_get_current_buf()
-  child.lua('MiniMisc.zoom()')
+  eq(child.lua_get('MiniMisc.zoom()'), true)
   local floating_wins = get_floating_windows()
 
   eq(#floating_wins, 1)
@@ -920,6 +1120,10 @@ T['zoom()']['works'] = function()
 
   -- No statusline should be present
   child.expect_screenshot()
+
+  -- Should toggle between zoom in and out
+  eq(child.lua_get('MiniMisc.zoom()'), false)
+  eq(#get_floating_windows(), 0)
 end
 
 T['zoom()']['respects `buf_id` argument'] = function()
@@ -952,20 +1156,36 @@ T['zoom()']['respects `config` argument'] = function()
 
   -- Should truncate possible title
   validate({ width = 20, border = 'single', title = 'Custom title to check truncation' }, 2, 20)
+
+  -- Should work with different border types
+  validate({ border = { '', 'x', '', '', '', 'x', '', '' } }, 2, 30)
+  validate({ border = { '', '', '', 'x', '', '', '', 'x' } }, 4, 28)
+  validate({ border = { '!', 'x', '', '', '', '', '', 'x' } }, 3, 29)
+  validate({ border = { '', '', '', 'x' } }, 4, 28)
+  validate({ border = { '!', 'x' } }, 2, 28)
+  validate({ border = { 'x' } }, 2, 28)
 end
 
 T['zoom()']["respects 'winborder' option"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
   child.set_size(5, 30)
 
-  child.o.winborder = 'rounded'
-  child.lua('MiniMisc.zoom()')
-  child.expect_screenshot()
-  child.cmd('quit')
+  local validate = function(winborder, border_arg)
+    child.o.winborder = winborder
+    local lua_cmd = string.format('MiniMisc.zoom(0, { border = %s })', vim.inspect(border_arg))
+    child.lua(lua_cmd)
+    child.expect_screenshot()
+    child.lua('MiniMisc.zoom()')
+  end
+
+  validate('rounded', nil)
 
   -- Should prefer explicitly configured value over 'winborder'
-  child.lua('MiniMisc.zoom(0, { border = "double" })')
-  child.expect_screenshot()
+  validate('rounded', 'double')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  validate('+,-,+,|,+,-,+,|', nil)
 end
 
 T['zoom()']['reacts to relevant UI changes'] = function()

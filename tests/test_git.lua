@@ -684,6 +684,8 @@ T['show_diff_source()']['correctly identifies source'] = function()
   validate_no_ok(35)
 
   -- Should get proper (nearest from above) commit
+  -- Should also work with `diff.mnemonicPrefix=true` Git config setting, which
+  -- can have source and destination prefixes be not only `a/` and `b/`
   local commit_after_2 = '7264474d3bda16d0098a7f89a4143fe4db3d82cf'
   local commit_before_2 = commit_after_2 .. '~'
   validate_ok(42, commit_before_2, 'dir/file1', 1)
@@ -779,13 +781,13 @@ T['show_diff_source()']['works when there is no "before" file'] = function()
     'Author: Neo McVim <neo.mcvim@gmail.com>',
     'Date:   Sat May 4 16:24:15 2024 +0300',
     '',
-    'Add file.',
+    'Add file with relative path "dev/null".',
     '',
-    'diff --git a/file b/file',
+    'diff --git a/dev/null b/dev/null',
     'new file mode 100644',
     'index 0000000..f9264f7',
     '--- /dev/null',
-    '+++ b/file',
+    '+++ b/dev/null',
     '@@ -0,0 +1,2 @@',
     '+Hello',
     '+World',
@@ -801,7 +803,7 @@ T['show_diff_source()']['works when there is no "before" file'] = function()
 
   validate_git_spawn_log({})
   clear_spawn_log()
-  validate_notifications({ { '(mini.git) Could not find "before" file', 'WARN' } })
+  validate_notifications({ { '(mini.git) No "before" as file was created', 'WARN' } })
   clear_notify_log()
 
   -- Target "both" should show only "after" in a specified split
@@ -810,9 +812,54 @@ T['show_diff_source()']['works when there is no "before" file'] = function()
 
   eq(child.api.nvim_tabpage_get_number(0), 2)
   eq(#child.api.nvim_tabpage_list_wins(0), 1)
-  validate_minigit_name(0, 'show 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2:file')
+  validate_minigit_name(0, 'show 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2:dev/null')
 
-  validate_notifications({ { '(mini.git) Could not find "before" file', 'WARN' } })
+  validate_notifications({ { '(mini.git) No "before" as file was created', 'WARN' } })
+end
+
+T['show_diff_source()']['works when there is no "after" file'] = function()
+  child.lua([[_G.stdio_queue = {
+    { { 'out', 'Line 1\nCurrent line 2\nLine 3' } }, -- Diff source
+  }]])
+  set_lines({
+    'commit 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2',
+    'Author: Neo McVim <neo.mcvim@gmail.com>',
+    'Date:   Sat May 4 16:24:15 2024 +0300',
+    '',
+    'Remove file with relative path "dev/null".',
+    '',
+    'diff --git a/dev/null b/dev/null',
+    'new file mode 100644',
+    'index 0000000..f9264f7',
+    '--- a/dev/null',
+    '+++ /dev/null',
+    '@@ -2 +0,0 @@',
+    '-Hello',
+    '-World',
+  })
+
+  -- Target "after" should do nothing while showing notification
+  local init_buf_id = get_buf()
+  set_cursor(13, 0)
+
+  show_diff_source({ target = 'after' })
+  eq(get_buf(), init_buf_id)
+  eq(child.api.nvim_buf_get_name(0), '')
+
+  validate_git_spawn_log({})
+  clear_spawn_log()
+  validate_notifications({ { '(mini.git) No "after" as file was deleted', 'WARN' } })
+  clear_notify_log()
+
+  -- Target "both" should show only "before" in a specified split
+  set_cursor(13, 0)
+  show_diff_source({ target = 'both' })
+
+  eq(child.api.nvim_tabpage_get_number(0), 2)
+  eq(#child.api.nvim_tabpage_list_wins(0), 1)
+  validate_minigit_name(0, 'show 5ed8432441b495fa9bd4ad2e4f635bae64e95cc2~:dev/null')
+
+  validate_notifications({ { '(mini.git) No "after" as file was deleted', 'WARN' } })
 end
 
 T['show_diff_source()']['does not depend on cursor column'] = function()
@@ -997,7 +1044,7 @@ T['show_diff_source()']['uses correct working directory'] = function()
     },
     {
       args = {
-        '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
+        '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
         '--', 'log-output'
       },
       cwd = root,
@@ -1235,7 +1282,7 @@ T['show_range_history()']['uses correct working directory'] = function()
     },
     {
       args = {
-        '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
+        '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
         '--', 'dir-in-git/file-in-dir-in-git'
       },
       cwd = git_root_dir,
@@ -1359,7 +1406,7 @@ T['enable()']['works'] = function()
       cwd = git_root_dir,
     },
     {
-      args = { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+      args = { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
       cwd = git_root_dir,
     },
   }
@@ -1423,7 +1470,7 @@ T['enable()']['resolves symlinks'] = function()
 
   -- Should run Git CLI with data *after* resolving symlink
   local status_args = get_spawn_log()[3].options.args
-  eq({ status_args[3], status_args[#status_args] }, { 'status', 'file-in-git_symlink-source' })
+  eq({ status_args[4], status_args[#status_args] }, { 'status', 'file-in-git_symlink-source' })
   eq(get_buf_data().status, '??')
   eq(child.b.minigit_summary_string, 'main (??)')
 end
@@ -1812,7 +1859,7 @@ T['Tracking']['updates all buffers from same repo on repo change'] = function()
     },
     {
       args = {
-        '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
+        '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
         '--', 'file-in-git'
       },
       cwd = git_root_dir,
@@ -1827,7 +1874,7 @@ T['Tracking']['updates all buffers from same repo on repo change'] = function()
     },
     {
       args = {
-        '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
+        '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
         '--', 'dir-in-git/file-in-dir-in-git'
       },
       cwd = git_root_dir,
@@ -1838,7 +1885,7 @@ T['Tracking']['updates all buffers from same repo on repo change'] = function()
     },
     {
       args = {
-        '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
+        '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
         '--', 'file-in-git', 'dir-in-git/file-in-dir-in-git'
       },
       cwd = git_root_dir,
@@ -1886,9 +1933,9 @@ T['Tracking']['reacts to content change outside of current session'] = function(
       cwd = git_root_dir,
     },
     { '-c', 'gc.auto=0', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD' },
-    { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+    { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
     { '-c', 'gc.auto=0', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD' },
-    { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+    { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
   }
   validate_git_spawn_log(ref_git_spawn_log)
 end
@@ -1929,7 +1976,7 @@ T['Tracking']['reacts to buffer rename'] = function()
       cwd = git_root_dir,
     },
     {
-      args = { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+      args = { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
       cwd = git_root_dir,
     },
     {
@@ -1941,7 +1988,7 @@ T['Tracking']['reacts to buffer rename'] = function()
       cwd = new_root,
     },
     {
-      args = { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', file_rel },
+      args = { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', file_rel },
       cwd = new_root,
     },
   }
@@ -2011,9 +2058,9 @@ T['Tracking']['reacts to staging'] = function()
       cwd = git_root_dir,
     },
     { '-c', 'gc.auto=0', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD' },
-    { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+    { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
     { '-c', 'gc.auto=0', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD' },
-    { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+    { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
   }
   validate_git_spawn_log(ref_git_spawn_log)
 end
@@ -2052,9 +2099,9 @@ T['Tracking']['reacts to change in HEAD'] = function()
       cwd = git_root_dir,
     },
     { '-c', 'gc.auto=0', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD' },
-    { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+    { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
     { '-c', 'gc.auto=0', 'rev-parse', 'HEAD', '--abbrev-ref', 'HEAD' },
-    { '-c', 'gc.auto=0', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
+    { '-c', 'gc.auto=0', '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z', '--', 'file-in-git' },
   }
   validate_git_spawn_log(ref_git_spawn_log)
 end
@@ -2251,7 +2298,7 @@ T['Tracking']['event is properly triggered on buffer write'] = function()
   local ref_git_spawn_log = {
     {
       '-c', 'gc.auto=0',
-      'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
+      '--no-optional-locks', 'status', '--verbose', '--untracked-files=all', '--ignored', '--porcelain', '-z',
       '--', 'dir-in-git/file-in-dir-in-git'
     }
   }
@@ -2840,7 +2887,7 @@ T[':Git']['collects data about available subcommands'] = function()
 end
 
 T[':Git']['completion']['works with options'] = function()
-  child.set_size(20, 32)
+  child.set_size(20, 40)
   child.lua('table.insert(_G.stdio_queue, _G.help_output)')
 
   -- Should get output by making CLI call
@@ -2879,7 +2926,7 @@ T[':Git']['completion']['works with options'] = function()
   eq(#spawn_log, 5)
 
   -- Works with "old" forced formatting in output
-  child.set_size(10, 20)
+  child.set_size(10, 30)
   child.lua([[
     local old_format_lines = {
       'N\bNA\bAM\bME\bE', 'add', '',
@@ -2893,7 +2940,7 @@ T[':Git']['completion']['works with options'] = function()
 end
 
 T[':Git']['completion']['works with explicit paths'] = function()
-  child.set_size(15, 40)
+  child.set_size(15, 50)
 
   -- Should incrementally suggest paths relative to root after explicit " -- "
   type_keys(':Git add -- ', '<Tab>')
@@ -2916,6 +2963,7 @@ T[':Git']['completion']['works with explicit paths'] = function()
 end
 
 T[':Git']['completion']['uses correct working directory for paths'] = function()
+  child.set_size(15, 40)
   mock_init_track_stdio_queue()
   child.lua([[_G.stdio_queue = {
     _G.init_track_stdio_queue[1],
@@ -2935,7 +2983,7 @@ end
 
 --stylua: ignore
 T[':Git']['completion']['works with subcommand targets'] = function()
-  child.set_size(15, 20)
+  child.set_size(15, 40)
   child.lua([[
     _G.subcommands_with_special_targets = {
       'add', 'mv', 'restore', 'rm',
@@ -3026,9 +3074,7 @@ T[':Git']['completion']['works with subcommand targets'] = function()
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
   validate_command_completion(':Git push origin v')
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
-  child.set_size(15, 30)
   validate_command_completion(':Git push origin main ')
-  child.set_size(15, 20)
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
 
   validate_command_completion(':Git pull ') -- CLI
@@ -3039,9 +3085,7 @@ T[':Git']['completion']['works with subcommand targets'] = function()
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
   validate_command_completion(':Git pull origin v')
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
-  child.set_size(15, 30)
   validate_command_completion(':Git pull origin main ')
-  child.set_size(15, 20)
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
 
   validate_command_completion(':Git checkout ') -- CLI
@@ -3050,14 +3094,17 @@ T[':Git']['completion']['works with subcommand targets'] = function()
   validate_command_completion(':Git config ') -- CLI
   validate_latest_spawn_args({ '--no-pager', 'help', '--config-for-completion' })
 
+  child.set_size(30, 30)
   validate_command_completion(':Git help ') -- Supported commands plus a bit
 
   -- Should also work with aliases
+  child.set_size(10, 30)
   validate_command_completion(':Git l ') -- CLI, same as log
   validate_latest_spawn_args({ '--no-pager', 'rev-parse', '--symbolic', '--branches', '--tags' })
 end
 
 T[':Git']['completion']['works with not supported command'] = function()
+  child.set_size(17, 40)
   -- Should suggest commands
   type_keys(':Git doesnotexist ', '<Tab>')
   child.expect_screenshot()

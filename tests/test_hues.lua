@@ -54,6 +54,7 @@ T['setup()']['creates `config` field'] = function()
   expect_config('n_hues', 8)
   expect_config('saturation', 'medium')
   expect_config('accent', 'bg')
+  expect_config('autoadjust', true)
 end
 
 T['setup()']['respects `config` argument'] = function()
@@ -82,6 +83,8 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ background = bg, foreground = fg, saturation = 'aaa' }, 'saturation', 'one of')
 
   expect_config_error({ background = bg, foreground = fg, accent = 'aaa' }, 'accent', 'one of')
+
+  expect_config_error({ background = bg, foreground = fg, autoadjust = 1 }, 'autoadjust', 'boolean')
 end
 
 T['setup()']['defines builtin highlight groups'] = function()
@@ -108,8 +111,6 @@ T['setup()']['defines tree-sitter groups'] = function()
 end
 
 T['setup()']['defines LSP semantic token highlights'] = function()
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('LSP semantic token groups are defined for Neovim>=0.9') end
-
   load_module({ background = '#222222', foreground = '#dddddd' })
   validate_hl_group('@lsp.type.variable', 'links to @variable')
 end
@@ -167,12 +168,22 @@ T['setup()']['respects `config.saturation`'] = function()
   validate('medium', '#ffc7da')
   validate('mediumhigh', '#ffb5cf')
   validate('high', '#ffa8c6')
+
+  expect.error(
+    function() load_module({ background = '#222222', foreground = '#dddddd', saturation = 'aaa' }) end,
+    'one of.*"high"'
+  )
 end
 
 T['setup()']['respects `config.accent`'] = function()
   load_module({ background = '#222222', foreground = '#dddddd', accent = 'red' })
 
   validate_hl_group('WinSeparator', 'guifg=#ffc7da')
+
+  expect.error(
+    function() load_module({ background = '#222222', foreground = '#dddddd', accent = 'aaa' }) end,
+    'one of.*"bg"'
+  )
 end
 
 T['setup()']['respects `config.plugins`'] = function()
@@ -190,7 +201,11 @@ T['setup()']['respects `config.plugins`'] = function()
 
   -- If supplied `false`, should not load plugin integration
   clear_highlight()
-  reload_module({ background = '#222222', foreground = '#dddddd', plugins = { ['echasnovski/mini.nvim'] = false } })
+  reload_module({
+    background = '#222222',
+    foreground = '#dddddd',
+    plugins = { ['nvim-mini/mini.nvim'] = false, ['echasnovski/mini.nvim'] = false },
+  })
   expect.match(child.cmd_capture('hi MiniCursorword'), 'cleared')
 
   -- Should allow loading only chosen integrations
@@ -202,6 +217,40 @@ T['setup()']['respects `config.plugins`'] = function()
   })
   validate_hl_group('MiniCursorword', 'cterm=underline gui=underline')
   expect.match(child.cmd_capture('hi GitSignsAdd'), 'cleared')
+end
+
+T['setup()']['respects `config.autoadjust`'] = function()
+  -- By default it should autoadjust
+  child.cmd('highlight clear')
+  child.o.fillchars = 'msgsep:-'
+  load_module({ background = '#222222', foreground = '#dddddd' })
+  -- - Should also initially pick proper attributes
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd')
+
+  child.o.fillchars = 'msgsep: '
+  validate_hl_group('MsgSeparator', 'guibg=#3e3e3e')
+  child.o.fillchars = 'msgsep:-'
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd')
+
+  -- Should not autoadjust if `autoadjust = false`
+  child.cmd('highlight clear')
+  child.api.nvim_del_augroup_by_name('MiniHuesAdjust')
+  child.o.fillchars = 'msgsep:-'
+  load_module({ background = '#222222', foreground = '#dddddd', autoadjust = false })
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd guibg=#3e3e3e')
+  child.o.fillchars = 'msgsep: '
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd guibg=#3e3e3e')
+
+  -- Should autoadjust `Pmenu` based on 'pumborder'
+  if child.fn.has('nvim-0.12') == 1 then
+    child.cmd('highlight clear')
+    child.o.pumborder = 'single'
+    load_module({ background = '#222222', foreground = '#dddddd' })
+    validate_hl_group('Pmenu', 'links to NormalFloat')
+
+    child.o.pumborder = 'none'
+    validate_hl_group('Pmenu', 'guifg=#dddddd guibg=#3e3e3e')
+  end
 end
 
 T['make_palette()'] = new_set()
@@ -425,9 +474,9 @@ T['make_palette()']['validates arguments'] = function()
   expect.error(function() make_palette({ background = bg, foreground = fg, n_hues = -1 }) end, '0')
   expect.error(function() make_palette({ background = bg, foreground = fg, n_hues = 9 }) end, '8')
 
-  expect.error(function() make_palette({ background = bg, foreground = fg, saturation = 'aaa' }) end, 'one of')
+  expect.error(function() make_palette({ background = bg, foreground = fg, saturation = 'aaa' }) end, 'one of.*"high"')
 
-  expect.error(function() make_palette({ background = bg, foreground = fg, accent = 'aaa' }) end, 'one of')
+  expect.error(function() make_palette({ background = bg, foreground = fg, accent = 'aaa' }) end, 'one of.*"bg"')
 end
 
 T['apply_palette()'] = new_set()
@@ -447,7 +496,7 @@ T['apply_palette()']['works'] = function()
   validate_hl_group('@variable', 'guifg=#aaaaaa')
   validate_hl_group('MiniCursorword', 'cterm=underline gui=underline')
   validate_hl_group('WhichKey', 'guifg=#a1efdf')
-  if child.fn.has('nvim-0.9') == 1 then validate_hl_group('@lsp.type.variable', 'links to @variable') end
+  validate_hl_group('@lsp.type.variable', 'links to @variable')
   eq(child.g.terminal_color_0, '#080808')
 end
 
@@ -462,11 +511,34 @@ T['apply_palette()']['respects `plugins`'] = function()
   child.lua([[require('mini.hues').setup({
     background = '#222222',
     foreground = '#dddddd',
-    plugins = { default = true, ["echasnovski/mini.nvim"] = false },
+    plugins = { default = true, ["nvim-mini/mini.nvim"] = false, ["echasnovski/mini.nvim"] = false },
   })]])
   apply_palette(palette)
   validate_hl_group('MiniCursorword', 'cleared')
   validate_hl_group('WhichKey', 'guifg=#a1efdf')
+end
+
+T['apply_palette()']['respects `opts.autoadjust`'] = function()
+  local palette = make_palette({ background = '#222222', foreground = '#dddddd' })
+
+  -- By default it should follow `config.autoadjust`
+  child.lua('MiniHues.config.autoadjust = false')
+  child.cmd('highlight clear')
+  child.o.fillchars = 'msgsep:-'
+
+  apply_palette(palette)
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd guibg=#3e3e3e')
+
+  child.o.fillchars = 'msgsep: '
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd guibg=#3e3e3e')
+
+  -- Should respect `opts.autoadjust` value
+  child.o.fillchars = 'msgsep: '
+  apply_palette(palette, {}, { autoadjust = true })
+  validate_hl_group('MsgSeparator', 'guibg=#3e3e3e')
+
+  child.o.fillchars = 'msgsep:-'
+  validate_hl_group('MsgSeparator', 'guifg=#dddddd')
 end
 
 T['apply_palette()']['clears highlight groups'] = function()
@@ -494,6 +566,31 @@ T['apply_palette()']['validates input'] = function()
 
   local palette = make_palette({ background = '#222222', foreground = '#dddddd' })
   expect.error(function() apply_palette(palette, 'a') end, '`plugins`.*table')
+end
+
+T['get_palette()'] = new_set()
+
+T['get_palette()']['works'] = function()
+  local res = child.lua([[
+    local palette = MiniHues.make_palette({ background = '#222222', foreground = '#dddddd' })
+    palette.fg = '#aaaaaa'
+    MiniHues.apply_palette(palette)
+
+    local res_palette = MiniHues.get_palette()
+    local is_same = vim.deep_equal(palette, res_palette)
+
+    -- Should not be affected by change in applied palette
+    palette.bg = '#000000'
+    local is_same_1 = vim.deep_equal(palette, res_palette)
+
+    -- Should return copy
+    res_palette.bg = '#000000'
+    local is_same_2 = vim.deep_equal(MiniHues.get_palette(), res_palette)
+
+    return { is_same, is_same_1, is_same_2 }
+  ]])
+
+  eq(res, { true, false, false })
 end
 
 T['gen_random_base_colors()'] = new_set()
@@ -538,11 +635,42 @@ T['gen_random_base_colors()']['validates arguments'] = function()
   )
 end
 
-T['randomhue colorscheme'] = new_set()
+T['Bundled color schemes'] = new_set()
 
-T['randomhue colorscheme']['works'] = function()
+T['Bundled color schemes']['works'] = function()
+  -- randomhue
   expect.no_error(function() child.cmd('colorscheme randomhue') end)
   eq(child.fn.hlexists('MiniCursorword'), 1)
+
+  local validate_lightness = function()
+    local hl = child.api.nvim_get_hl(0, { name = 'Normal' })
+    -- NOTE: This is not 100% proper solution, but at least it is something
+    if child.o.background == 'dark' then eq(hl.fg > hl.bg, true) end
+    if child.o.background == 'light' then eq(hl.fg < hl.bg, true) end
+  end
+
+  child.o.background = 'dark'
+  validate_lightness()
+  child.o.background = 'light'
+  validate_lightness()
+
+  -- Four seasons
+  local validate = function(cs_name, ref_bg)
+    expect.no_error(function() child.cmd('colorscheme ' .. cs_name) end)
+    expect.match(child.cmd_capture('hi Normal'), 'guibg=' .. ref_bg)
+  end
+
+  child.o.background = 'dark'
+  validate('miniwinter', '#11262d')
+  validate('minispring', '#1c2617')
+  validate('minisummer', '#27211e')
+  validate('miniautumn', '#262029')
+
+  child.o.background = 'light'
+  validate('miniwinter', '#dce4e8')
+  validate('minispring', '#e0e4de')
+  validate('minisummer', '#e9e1dd')
+  validate('miniautumn', '#e5e1e7')
 end
 
 return T

@@ -1,10 +1,7 @@
 --- *mini.icons* Icon provider
---- *MiniIcons*
 ---
 --- MIT License Copyright (c) 2024 Evgeni Chasnovski
----
---- ==============================================================================
----
+
 --- Features:
 ---
 --- - Provide icons with their highlighting via a single |MiniIcons.get()| for
@@ -76,7 +73,7 @@
 ---
 --- # Comparisons ~
 ---
---- - 'nvim-tree/nvim-web-devicons' (for users):
+--- - [nvim-tree/nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) (for users):
 ---     - Sets individual colors to each icon with separate specific highlight
 ---       groups, while this modules uses fixed set of highlight groups.
 ---       This makes it easier to customize in bulk and actually blend with any
@@ -103,7 +100,7 @@
 ---       when called imitates installed 'nvim-web-devicons' plugin to support
 ---       other plugins which do not provide 'mini.icons' yet.
 ---
---- - 'nvim-tree/nvim-web-devicons' (for plugin developers):
+--- - [nvim-tree/nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) (for plugin developers):
 ---     - Both have main "get icon" type of function:
 ---         - Both return tuple of icon and highlight group strings.
 ---
@@ -140,7 +137,7 @@
 ---           management" categories. This modules does not include them due to
 ---           relatively low demand.
 ---
---- - 'onsails/lspkind.nvim':
+--- - [onsails/lspkind.nvim](https://github.com/onsails/lspkind.nvim):
 ---     - Provides icons only for `CompletionItemKind`, while this module also has
 ---       icons for `SymbolKind` and other non-LSP categories.
 ---     - Provides dedicated formatting function for 'hrsh7th/nvim-cmp' while this
@@ -152,17 +149,18 @@
 --- Only the following set of highlight groups is used as icon highlight.
 --- It is recommended that they all only define colored foreground:
 ---
---- * `MiniIconsAzure`  - azure.
---- * `MiniIconsBlue`   - blue.
---- * `MiniIconsCyan`   - cyan.
---- * `MiniIconsGreen`  - green.
---- * `MiniIconsGrey`   - grey.
---- * `MiniIconsOrange` - orange.
---- * `MiniIconsPurple` - purple.
---- * `MiniIconsRed`    - red.
---- * `MiniIconsYellow` - yellow.
+--- - `MiniIconsAzure`  - azure.
+--- - `MiniIconsBlue`   - blue.
+--- - `MiniIconsCyan`   - cyan.
+--- - `MiniIconsGreen`  - green.
+--- - `MiniIconsGrey`   - grey.
+--- - `MiniIconsOrange` - orange.
+--- - `MiniIconsPurple` - purple.
+--- - `MiniIconsRed`    - red.
+--- - `MiniIconsYellow` - yellow.
 ---
---- To change any highlight group, modify it directly with |:highlight|.
+--- To change any highlight group, set it directly with |nvim_set_hl()|.
+---@tag MiniIcons
 
 ---@diagnostic disable:undefined-field
 ---@diagnostic disable:discard-returns
@@ -185,15 +183,6 @@ local H = {}
 ---   require('mini.icons').setup({}) -- replace {} with your config table
 --- <
 MiniIcons.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.icons) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniIcons = MiniIcons
 
@@ -211,9 +200,7 @@ MiniIcons.setup = function(config)
 end
 
 --stylua: ignore
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
 ---@text # Style ~
 ---
@@ -649,7 +636,7 @@ end
 --- Notes:
 --- - Makes |mini.completion| show icons, as it uses built-in protocol map.
 --- - Results in loading whole `vim.lsp` module, so might add significant amount
----   of time on startup. Call it lazily. For example, with |MiniDeps.later()|: >
+---   of time on startup. Call it lazily. For example, with |MiniDeps.later()|: >lua
 ---
 ---     require('mini.icons').setup()
 ---     MiniDeps.later(MiniIcons.tweak_lsp_kind)
@@ -880,7 +867,6 @@ H.file_icons = {
   ['.gitlab-ci.yml']     = { glyph = '󰮠', hl = 'MiniIconsOrange' },
   ['.gitkeep']           = { glyph = '󰊢', hl = 'MiniIconsRed'    },
   ['.mailmap']           = { glyph = '󰊢', hl = 'MiniIconsCyan'   },
-  ['.npmignore']         = { glyph = '󰒓', hl = 'MiniIconsGrey'   },
   ['.nvmrc']             = { glyph = '󰒓', hl = 'MiniIconsGreen'  },
   ['.xinitrc']           = { glyph = '󰒓', hl = 'MiniIconsBlue'   },
   ['.zshrc']             = { glyph = '󰒓', hl = 'MiniIconsGreen'  },
@@ -938,7 +924,14 @@ H.file_icons = {
   ['tclsh.rc']            = 'tcl',
 
   -- Supported by `vim.filetype.match` but result in confusing glyph
-  ['.prettierignore'] = { glyph = '', hl = 'MiniIconsOrange' },
+  ['.containerignore'] = { glyph = '󰒓', hl = 'MiniIconsGrey' },
+  ['.dockerignore']    = { glyph = '󰡨', hl = 'MiniIconsOrange' },
+  ['.fdignore']        = { glyph = '󰒓', hl = 'MiniIconsYellow' },
+  ['.ignore']          = { glyph = '󰒓', hl = 'MiniIconsGrey' },
+  ['.npmignore']       = { glyph = '󰒓', hl = 'MiniIconsGrey' },
+  ['.prettierignore']  = { glyph = '', hl = 'MiniIconsOrange' },
+  ['.rgignore']        = { glyph = '󰒓', hl = 'MiniIconsYellow' },
+  ['.vscodeignore']    = { glyph = '', hl = 'MiniIconsAzure' },
 }
 
 -- Filetype icons. Keys are filetypes explicitly supported by Neovim core
@@ -2139,10 +2132,13 @@ H.get_impl = {
   os = function(name) return H.os_icons[name] end,
 }
 
+H.str_byteindex = function(s, i) return vim.str_byteindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_byteindex = function(s, i) return vim.str_byteindex(s, i) end end
+
 H.style_icon = function(glyph, name)
   if MiniIcons.config.style ~= 'ascii' then return glyph end
   -- Use `vim.str_byteindex()` and `vim.fn.toupper()` for multibyte characters
-  return vim.fn.toupper(name:sub(1, vim.str_byteindex(name, 1)))
+  return vim.fn.toupper(name:sub(1, H.str_byteindex(name, 1)))
 end
 
 H.filetype_match = function(filename)

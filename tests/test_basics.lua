@@ -44,7 +44,7 @@ T['setup()']['creates `config` field'] = function()
   -- Check default values
   expect_config('options.basic', true)
   expect_config('options.extra_ui', false)
-  expect_config('options.win_borders', 'default')
+  expect_config('options.win_borders', 'auto')
   expect_config('mappings.basic', true)
   expect_config('mappings.option_toggle_prefix', [[\]])
   expect_config('mappings.windows', false)
@@ -86,14 +86,12 @@ local toggle_diagnostic = function() return child.lua_get('MiniBasics.toggle_dia
 
 T['toggle_diagnostic()']['works'] = function()
   if child.fn.has('nvim-0.10') == 1 then
-    child.lua([[vim.diagnostic.enable = function(enable) vim.b.diag_status = enable and 'enabled' or 'disabled' end]])
-    child.lua([[vim.diagnostic.is_enabled = function(enable) return vim.b.diag_status ~= 'disabled' end]])
+    child.lua('vim.diagnostic.enable = function(enable) vim.b.diag_status = enable and "enabled" or "disabled" end')
+    child.lua('vim.diagnostic.is_enabled = function(enable) return vim.b.diag_status ~= "disabled" end')
   else
-    child.lua([[vim.diagnostic.enable = function() vim.b.diag_status = 'enabled' end]])
-    child.lua([[vim.diagnostic.disable = function() vim.b.diag_status = 'disabled' end]])
-    if child.fn.has('nvim-0.9') == 1 then
-      child.lua([[vim.diagnostic.is_disabled = function() return vim.b.diag_status == 'disabled' end]])
-    end
+    child.lua('vim.diagnostic.enable = function() vim.b.diag_status = "enabled" end')
+    child.lua('vim.diagnostic.disable = function() vim.b.diag_status = "disabled" end')
+    child.lua('vim.diagnostic.is_disabled = function() return vim.b.diag_status == "disabled" end')
   end
 
   load_module()
@@ -124,10 +122,6 @@ T['toggle_diagnostic()']['works'] = function()
 end
 
 T['toggle_diagnostic()']['works if initially disabled'] = function()
-  if child.fn.has('nvim-0.9') == 0 then
-    MiniTest.skip('Requires `vim.diagnostic.is_disabled` / `vim.diagnostic.is_enabled` which are Neovim>=0.9.')
-  end
-
   load_module()
   local buf_id = child.api.nvim_get_current_buf()
 
@@ -154,8 +148,6 @@ T['Options'] = new_set()
 T['Options']['work'] = function()
   -- Basic options (should be set by default)
   eq(child.g.mapleader, vim.NIL)
-  -- - `termguicolors` is enabled in Neovim=0.10 by default (if possible)
-  if child.fn.has('nvim-0.10') == 0 then eq(child.o.termguicolors, false) end
   eq(child.o.number, false)
   eq(child.o.signcolumn, 'auto')
   eq(child.o.fillchars, '')
@@ -166,7 +158,6 @@ T['Options']['work'] = function()
   load_module()
 
   eq(child.g.mapleader, ' ')
-  if child.fn.has('nvim-0.10') == 0 then eq(child.o.termguicolors, true) end
   eq(child.o.number, true)
   eq(child.o.signcolumn, 'yes')
   eq(child.o.fillchars, 'eob: ')
@@ -221,12 +212,41 @@ T['Options']['respect `config.options.extra_ui`'] = function()
 end
 
 T['Options']['respect `config.options.win_borders`'] = function()
-  eq(child.o.fillchars, '')
+  local validate = function(opt_value, ref_fillchars)
+    child.o.fillchars = ''
+    load_module({ options = { basic = false, win_borders = opt_value } })
+    eq(child.o.fillchars, ref_fillchars)
+  end
 
-  load_module({ options = { basic = false, win_borders = 'double' } })
+  validate(nil, '')
+  validate('double', 'horiz:═,horizdown:╦,horizup:╩,msgsep:═,vert:║,verthoriz:╬,vertleft:╣,vertright:╠')
+  -- - Should not respect 'winborder' style names directly
+  validate('none', '')
 
-  local ref_value = 'horiz:═,horizdown:╦,horizup:╩,vert:║,verthoriz:╬,vertleft:╣,vertright:╠'
-  eq(child.o.fillchars, ref_value)
+  if child.fn.has('nvim-0.11') == 0 then return end
+
+  -- With default 'auto' should infer from 'winborder' option
+  local validate_winborder = function(winborder_value, ref_fillchars)
+    child.o.winborder = winborder_value
+    validate(nil, ref_fillchars)
+    validate('auto', ref_fillchars)
+  end
+
+  validate_winborder('', '')
+
+  local single_fcs = 'horiz:─,horizdown:┬,horizup:┴,msgsep:─,vert:│,verthoriz:┼,vertleft:┤,vertright:├'
+  validate_winborder('single', single_fcs)
+  validate_winborder('rounded', single_fcs)
+
+  local solid_fcs = 'horiz: ,horizdown: ,horizup: ,msgsep: ,vert: ,verthoriz: ,vertleft: ,vertright: '
+  validate_winborder('solid', solid_fcs)
+  validate_winborder('none', solid_fcs)
+  validate_winborder('shadow', solid_fcs)
+
+  if child.fn.has('nvim-0.12') == 0 then return end
+
+  -- With custom list 'winborder' should do nothing
+  validate_winborder('+,-,+,|,+,-,+,|', '')
 end
 
 T['Mappings'] = new_set()
@@ -603,14 +623,12 @@ end
 
 T['Mappings']['Toggle options']['works with diagnostic'] = function()
   if child.fn.has('nvim-0.10') == 1 then
-    child.lua([[vim.diagnostic.enable = function(enable) vim.b.diag_status = enable and 'enabled' or 'disabled' end]])
-    child.lua([[vim.diagnostic.is_enabled = function(enable) return vim.b.diag_status ~= 'disabled' end]])
+    child.lua('vim.diagnostic.enable = function(enable) vim.b.diag_status = enable and "enabled" or "disabled" end')
+    child.lua('vim.diagnostic.is_enabled = function(enable) return vim.b.diag_status ~= "disabled" end')
   else
-    child.lua([[vim.diagnostic.enable = function() vim.b.diag_status = 'enabled' end]])
-    child.lua([[vim.diagnostic.disable = function() vim.b.diag_status = 'disabled' end]])
-    if child.fn.has('nvim-0.9') == 1 then
-      child.lua([[vim.diagnostic.is_disabled = function() return vim.b.diag_status == 'disabled' end]])
-    end
+    child.lua('vim.diagnostic.enable = function() vim.b.diag_status = "enabled" end')
+    child.lua('vim.diagnostic.disable = function() vim.b.diag_status = "disabled" end')
+    child.lua('vim.diagnostic.is_disabled = function() return vim.b.diag_status == "disabled" end')
   end
 
   load_module()

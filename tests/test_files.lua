@@ -16,14 +16,6 @@ local type_keys = function(...) return child.type_keys(...) end
 local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
--- Tweak `expect_screenshot()` to test only on Neovim>=0.9 (as it introduced
--- titles). Use `expect_screenshot_orig()` for original testing.
-local expect_screenshot_orig = child.expect_screenshot
-child.expect_screenshot = function(...)
-  if child.fn.has('nvim-0.9') == 0 then return end
-  expect_screenshot_orig(...)
-end
-
 -- Test paths helpers
 local test_dir = 'tests/dir-files'
 
@@ -246,6 +238,7 @@ T['setup()']['creates `config` field'] = function()
   local expect_config = function(field, value) eq(child.lua_get('MiniFiles.config.' .. field), value) end
 
   expect_config('content.filter', vim.NIL)
+  expect_config('content.highlight', vim.NIL)
   expect_config('content.prefix', vim.NIL)
   expect_config('content.sort', vim.NIL)
 
@@ -287,6 +280,7 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error('a', 'config', 'table')
   expect_config_error({ content = 'a' }, 'content', 'table')
   expect_config_error({ content = { filter = 1 } }, 'content.filter', 'function')
+  expect_config_error({ content = { highlight = 1 } }, 'content.highlight', 'function')
   expect_config_error({ content = { prefix = 1 } }, 'content.prefix', 'function')
   expect_config_error({ content = { sort = 1 } }, 'content.sort', 'function')
 
@@ -652,6 +646,39 @@ T['open()']['respects `content.filter`'] = function()
   )
   child.lua(lua_cmd)
   child.expect_screenshot()
+end
+
+T['open()']['respects `content.highlight`'] = function()
+  child.lua([[
+    _G.highlight_arg = {}
+    MiniFiles.config.content.highlight = function(fs_entry)
+      _G.highlight_arg = fs_entry
+      -- Should use 'MiniFilesNormal' as a fallback
+      return nil
+    end
+  ]])
+
+  local expect_screenshot = function()
+    -- Test only on Neovim>=0.12 because there window-local `Normal` (which is
+    -- `MiniFilesNormal` here) blends background with cursorline
+    if child.fn.has('nvim-0.12') == 1 then child.expect_screenshot() end
+  end
+
+  open(test_dir_path)
+  expect_screenshot()
+  validate_fs_entry(child.lua_get('_G.highlight_arg'))
+
+  -- Local value from argument should take precedence
+  child.lua([[_G.highlight_starts_from_a = function(fs_entry)
+    return vim.startswith(fs_entry.name, 'a') and 'String' or 'Comment'
+  end]])
+
+  local lua_cmd = string.format(
+    'MiniFiles.open(%s, false, { content = { highlight = _G.highlight_starts_from_a } })',
+    vim.inspect(test_dir_path)
+  )
+  child.lua(lua_cmd)
+  expect_screenshot()
 end
 
 T['open()']['respects `content.prefix`'] = function()
@@ -1782,6 +1809,40 @@ end
 
 T['show_help()']['works when no explorer is opened'] = function() expect.no_error(show_help) end
 
+T['show_help()']["respects 'winborder' option"] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
+  child.set_size(20, 40)
+
+  local validate = function(winborder)
+    child.o.winborder = winborder
+    open(test_dir_path)
+    show_help()
+    child.expect_screenshot()
+    close()
+  end
+
+  validate('rounded')
+
+  -- Should prefer explicitly configured value over 'winborder'
+  local au_id = child.lua([[
+    return vim.api.nvim_create_autocmd('User', {
+      pattern = 'MiniFilesWindowOpen',
+      callback = function(args)
+        local win_id = args.data.win_id
+        local config = vim.api.nvim_win_get_config(win_id)
+        config.border = 'double'
+        vim.api.nvim_win_set_config(win_id, config)
+      end,
+    })
+  ]])
+  validate('rounded')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.api.nvim_del_autocmd(au_id)
+  validate('+,-,+,|,+,-,+,|')
+end
+
 T['get_fs_entry()'] = new_set()
 
 local get_fs_entry = forward_lua('MiniFiles.get_fs_entry')
@@ -2524,6 +2585,24 @@ T['Windows']['correctly highlight content during editing'] = function()
   child.expect_screenshot()
 end
 
+T['Windows']['always show cursor line in directories'] = function()
+  child.o.cursorline = false
+  child.o.cursorlineopt = 'number'
+  open(test_dir_path, false, { windows = { preview = true } })
+  child.expect_screenshot()
+  eq(child.wo.cursorlineopt, 'number,line')
+
+  -- File preview should not show cursor line
+  type_keys('G')
+  child.expect_screenshot()
+  close()
+
+  -- Should preserve flags of 'cursorlineopt' as much as possible
+  child.o.cursorlineopt = 'screenline'
+  open(test_dir_path)
+  eq(child.wo.cursorlineopt, 'screenline')
+end
+
 T['Windows']['can be closed manually'] = function()
   open(test_dir_path)
   type_keys('G', '<CR>')
@@ -2606,14 +2685,18 @@ T['Windows']["respect 'winborder' option"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
   child.set_size(15, 40)
 
-  child.o.winborder = 'rounded'
-  open(test_dir_path)
-  child.expect_screenshot()
-  close()
+  local validate = function(winborder)
+    child.o.winborder = winborder
+    open(test_dir_path)
+    child.expect_screenshot()
+    close()
+  end
+
+  validate('rounded')
 
   -- Should prefer explicitly configured value over 'winborder'
-  child.lua([[
-    vim.api.nvim_create_autocmd('User', {
+  local au_id = child.lua([[
+    return vim.api.nvim_create_autocmd('User', {
       pattern = 'MiniFilesWindowOpen',
       callback = function(args)
         local win_id = args.data.win_id
@@ -2623,8 +2706,12 @@ T['Windows']["respect 'winborder' option"] = function()
       end,
     })
   ]])
-  open(test_dir_path)
-  child.expect_screenshot()
+  validate('rounded')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.api.nvim_del_autocmd(au_id)
+  validate('+,-,+,|,+,-,+,|')
 end
 
 T['Preview'] = new_set({
@@ -2693,6 +2780,45 @@ T['Preview']['works for files'] = function()
   expect_screenshot()
 end
 
+T['Preview']['works with imaginary paths'] = function()
+  child.set_size(15, 60)
+  local temp_dir = make_temp_dir('temp', {})
+  open(temp_dir)
+
+  -- Should show preview for empty line
+  child.expect_screenshot()
+
+  -- Should still show preview window for files not (yet) on disk
+  type_keys('o')
+  child.expect_screenshot()
+  type_keys('n')
+  child.expect_screenshot()
+  -- Should update title as user types
+  type_keys('e')
+  child.expect_screenshot()
+  type_keys('w/')
+
+  -- Should update the title even if popup menu is shown
+  child.o.completeopt = 'menuone,noselect'
+  type_keys('<CR>', 'n', '<C-n>')
+  eq(child.fn.pumvisible() == 1, true)
+  type_keys('e')
+  child.expect_screenshot()
+
+  -- Should treat non-empty blank line as new file name
+  type_keys('<Esc>', 'o', ' ')
+  child.expect_screenshot()
+  type_keys('<C-u>', '<Esc>')
+
+  -- Should properly update to existing file preview after synchronization
+  mock_confirm(1)
+  synchronize()
+  validate_tree(temp_dir, { 'new/', 'ne' })
+  child.expect_screenshot()
+  type_keys('j')
+  child.expect_screenshot()
+end
+
 T['Preview']['does not highlight big files'] = function()
   local big_file = make_test_path('big.lua')
   MiniTest.finally(function() child.fn.delete(big_file, 'rf') end)
@@ -2754,19 +2880,6 @@ T['Preview']['previews only one level deep'] = function()
   child.set_size(10, 80)
 
   open(make_test_path('nested'))
-  child.expect_screenshot()
-end
-
-T['Preview']['handles user created lines'] = function()
-  child.lua('MiniFiles.config.windows.width_focus = 50')
-  open(test_dir_path)
-  type_keys('o', 'new_entry', '<Esc>')
-  type_keys('k')
-
-  child.expect_screenshot()
-  type_keys('j')
-  child.expect_screenshot()
-  type_keys('j')
   child.expect_screenshot()
 end
 
@@ -3527,8 +3640,12 @@ T['File manipulation']['creates nested directories'] = function()
 end
 
 T['File manipulation']['can delete'] = function()
-  local temp_dir =
-    make_temp_dir('temp', { 'file', 'empty-dir/', 'dir/', 'dir/file', 'dir/nested-dir/', 'dir/nested-dir/file' })
+  local entries = { 'file', 'empty-dir/', 'dir/', 'dir/file', 'dir/nested-dir/', 'dir/nested-dir/file' }
+  local temp_dir = make_temp_dir('temp', entries)
+  child.cmd('edit ' .. (temp_dir .. '/file'))
+  local buf_id = child.api.nvim_get_current_buf()
+  local buf_name = child.api.nvim_buf_get_name(buf_id)
+
   open(temp_dir)
 
   set_lines({})
@@ -3539,6 +3656,8 @@ T['File manipulation']['can delete'] = function()
   child.expect_screenshot()
 
   validate_tree(temp_dir, {})
+  -- - Should not affect the buffer for deleted file (allows restoring it)
+  eq(child.api.nvim_buf_get_name(buf_id), buf_name)
 
   -- Validate separately because order is not guaranteed
   local ref_pattern = make_plain_pattern('CONFIRM FILE SYSTEM ACTIONS', short_path(temp_dir) .. '\n')
@@ -3556,9 +3675,12 @@ T['File manipulation']['delete respects `options.permanent_delete`'] = function(
   local data_dir = mock_stdpath_data()
   local trash_dir = join_path(data_dir, 'mini.files', 'trash')
 
-  -- Create temporary data and delete it
+  -- Create temporary data, open file from it, and delete it
   child.lua('MiniFiles.config.options.permanent_delete = false')
   local temp_dir = make_temp_dir('temp', { 'file', 'dir/', 'dir/subfile' })
+  child.cmd('edit ' .. (temp_dir .. '/file'))
+  local buf_id = child.api.nvim_get_current_buf()
+  local buf_name = child.api.nvim_buf_get_name(buf_id)
 
   open(temp_dir)
 
@@ -3568,10 +3690,14 @@ T['File manipulation']['delete respects `options.permanent_delete`'] = function(
 
   -- Should move into special trash directory
   validate_tree(temp_dir, {})
-  validate_tree(trash_dir, { 'dir/', 'dir/subfile', 'file' })
+  validate_tree(trash_dir, { 'file', 'dir/', 'dir/subfile' })
 
   validate_confirm_args('  DELETE │ file %(to trash%)')
   validate_confirm_args('  DELETE │ dir %(to trash%)')
+
+  -- - Should not affect the buffer for moved to trash file (similar to regular
+  --   "delete" action and avoids triggering autocommands).
+  eq(child.api.nvim_buf_get_name(buf_id), buf_name)
 
   -- Deleting entries again with same name should replace previous ones
   -- - Recreate previously deleted entries with different content
@@ -4175,6 +4301,28 @@ T['File manipulation']['can copy directory inside itself'] = function()
   validate_file_content(join_path(temp_dir, 'dir', 'dir', 'file'), { 'File' })
 
   validate_confirm_args('  COPY   │ dir => dir/dir')
+end
+
+T['File manipulation']['can convert file into directory'] = function()
+  local temp_dir = make_temp_dir('temp', { 'file', 'dir/', 'dir/subfile' })
+  child.fn.writefile({ 'Subfile' }, join_path(temp_dir, 'dir', 'subfile'))
+  open(temp_dir)
+
+  type_keys('A', '/', '<Esc>')
+  type_keys('j', 'A', '/', '<Esc>')
+  child.expect_screenshot()
+
+  mock_confirm(1)
+  synchronize()
+  child.expect_screenshot()
+
+  -- Should convert file->directory but not touch directory->directory
+  validate_tree(temp_dir, { 'file/', 'dir/', 'dir/subfile' })
+  validate_file_content(join_path(temp_dir, 'dir', 'subfile'), { 'Subfile' })
+
+  validate_confirm_args('  DELETE │ file')
+  validate_confirm_args('  RENAME │ dir => dir')
+  validate_confirm_args('  CREATE │ file %(directory%)')
 end
 
 T['File manipulation']['respects modified hidden buffers'] = function()
@@ -5113,12 +5261,22 @@ T['Events']['`MiniFilesBufferCreate` triggers inside preview'] = function()
   type_keys('j')
   validate_n_events(3)
 
-  -- No event should be triggered when going inside preview buffer (as it
-  -- should be reused). But should also be triggered for file previews.
+  -- No event should be triggered when going inside previewed directory (as
+  -- buffer should be reused). But should also be triggered for file previews.
   clear_event_track()
   type_keys('k')
   go_in()
   validate_n_events(1)
+
+  -- No event should trigger for imaginary path
+  clear_event_track()
+  type_keys('o')
+  validate_n_wins(3)
+  validate_n_events(0)
+
+  type_keys('imaginary-file')
+  validate_n_wins(3)
+  validate_n_events(0)
 end
 
 T['Events']['`MiniFilesBufferCreate` can be used to create buffer-local mappings'] = function()
@@ -5165,11 +5323,39 @@ T['Events']['`MiniFilesBufferUpdate` triggers'] = function()
   validate_event_track({ { buf_id = buf_id_2 } })
   clear_event_track()
 
-  -- Force all buffer to update
+  -- Force all buffers to update
   synchronize()
 
   -- - Force order, as there is no order guarantee of event trigger
   validate_event_track({ { buf_id = buf_id_1, win_id = win_id_1 }, { buf_id = buf_id_2, win_id = win_id_2 } }, true)
+end
+
+T['Events']['`MiniFilesBufferUpdate` triggers inside preview'] = function()
+  track_event('MiniFilesBufferUpdate')
+
+  child.lua('MiniFiles.config.windows.preview = true')
+  open(test_dir_path)
+  validate_n_events(2)
+
+  type_keys('j')
+  validate_n_events(3)
+
+  -- Should be triggered when going inside previewed directory (as different
+  -- buffer becomes current).
+  clear_event_track()
+  type_keys('k')
+  go_in()
+  validate_n_events(2)
+
+  -- No event should trigger for imaginary path
+  clear_event_track()
+  type_keys('o')
+  validate_n_wins(3)
+  validate_n_events(0)
+
+  type_keys('imaginary-file')
+  validate_n_wins(3)
+  validate_n_events(0)
 end
 
 T['Events']['`MiniFilesWindowOpen` triggers'] = function()
@@ -5195,8 +5381,6 @@ T['Events']['`MiniFilesWindowOpen` triggers'] = function()
 end
 
 T['Events']['`MiniFilesWindowOpen` can be used to tweak window config'] = function()
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Tested window config values appeared in Neovim 0.9') end
-
   child.lua([[
     vim.api.nvim_create_autocmd('User', {
       pattern = 'MiniFilesWindowOpen',
@@ -5591,15 +5775,37 @@ T['Default explorer']['works in `:tabfind .`'] = function()
 end
 
 T['Default explorer']['handles close without opening file'] = function()
-  child.cmd('wincmd v')
-  child.cmd('edit ' .. test_dir_path)
-  child.expect_screenshot()
+  local validate = function()
+    local buf_name = child.api.nvim_buf_get_name(0)
+    child.cmd('edit ' .. test_dir_path)
+    eq(is_explorer_active(), true)
+    close()
+    eq(is_explorer_active(), false)
+    eq(child.api.nvim_buf_get_name(0), buf_name)
+    eq(#child.api.nvim_list_bufs(), 1)
+  end
 
-  -- Should close and smartly (preserving layout) delete "directory buffer"
-  close()
-  child.expect_screenshot()
-  eq(child.api.nvim_buf_get_name(0), '')
-  eq(#child.api.nvim_list_bufs(), 1)
+  -- Should hide "directory buffer" if there is no alternative buffer
+  validate()
+
+  -- Should smartly (preserving layout) delete "directory buffer"
+  local win_id_other = child.api.nvim_get_current_win()
+  child.cmd('wincmd v')
+  local win_id = child.api.nvim_get_current_win()
+  local buf_id = child.api.nvim_get_current_buf()
+
+  eq(child.fn.win_findbuf(buf_id), { win_id, win_id_other })
+  validate()
+  eq(child.fn.win_findbuf(buf_id), { win_id, win_id_other })
+end
+
+T['Default explorer']['handles forcing other window as current'] = function()
+  child.cmd('edit ' .. test_file_path)
+  local init_win_id = child.api.nvim_get_current_win()
+
+  child.cmd('edit ' .. test_dir_path)
+  expect.no_error(function() child.api.nvim_set_current_win(init_win_id) end)
+  if child.fn.has('nvim-0.10') == 1 then eq(child.api.nvim_get_current_win(), init_win_id) end
 end
 
 return T

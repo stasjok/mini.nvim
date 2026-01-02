@@ -95,12 +95,11 @@ T['setup()']['creates side effects'] = function()
   child.cmd('hi DiagnosticHint  guifg=#00ffff ctermfg=12')
   load_module()
   local has_highlight = function(group, value) expect.match(child.cmd_capture('hi ' .. group), value) end
-  local ctermfg = child.fn.has('nvim-0.9') == 1 and function(x) return ' ctermfg=' .. x end or function(_) return '' end
 
-  has_highlight('MiniHipatternsFixme', 'cterm=bold,reverse' .. ctermfg(9) .. ' gui=bold,reverse guifg=#ff0000')
-  has_highlight('MiniHipatternsHack', 'cterm=bold,reverse' .. ctermfg(11) .. ' gui=bold,reverse guifg=#ffff00')
-  has_highlight('MiniHipatternsTodo', 'cterm=bold,reverse' .. ctermfg(14) .. ' gui=bold,reverse guifg=#0000ff')
-  has_highlight('MiniHipatternsNote', 'cterm=bold,reverse' .. ctermfg(12) .. ' gui=bold,reverse guifg=#00ffff')
+  has_highlight('MiniHipatternsFixme', 'cterm=bold,reverse ctermfg=9 gui=bold,reverse guifg=#ff0000')
+  has_highlight('MiniHipatternsHack', 'cterm=bold,reverse ctermfg=11 gui=bold,reverse guifg=#ffff00')
+  has_highlight('MiniHipatternsTodo', 'cterm=bold,reverse ctermfg=14 gui=bold,reverse guifg=#0000ff')
+  has_highlight('MiniHipatternsNote', 'cterm=bold,reverse ctermfg=12 gui=bold,reverse guifg=#00ffff')
 end
 
 T['setup()']['creates `config` field'] = function()
@@ -473,7 +472,7 @@ T['Highlighters']['allows submatch in `pattern`'] = function()
   set_lines({ 'abcd', 'xabcd', 'xxabcd', 'xxabcdxx' })
 
   local validate = function(pattern)
-    child.lua([[require('mini.hipatterns').disable()]])
+    child.lua('require("mini.hipatterns").disable()')
     local config = {
       highlighters = { abcd = { pattern = pattern, group = 'Error' } },
       delay = test_config.delay,
@@ -494,6 +493,29 @@ T['Highlighters']['allows submatch in `pattern`'] = function()
 
   -- Third an more captures should be ignored
   validate('xx()ab()c()d()')
+end
+
+T['Highlighters']['works with overlapping matches'] = function()
+  local validate = function(pattern, ref_ranges)
+    child.lua('require("mini.hipatterns").disable()')
+    local config = {
+      highlighters = { x = { pattern = pattern, group = 'Error' } },
+      delay = test_config.delay,
+    }
+    enable(0, config)
+
+    sleep(test_config.delay.text_change + small_time)
+    local ranges = vim.tbl_map(function(e) return { e.from_col, e.to_col } end, get_hipatterns_extmarks(0, { 'x' }))
+    eq(ranges, ref_ranges)
+  end
+
+  set_lines({ string.rep('x', 7) })
+
+  -- Should behave similarly to how `/` with `\zs` and `\ze` works
+  validate('xxx', { { 1, 3 }, { 4, 6 } })
+  validate('()xx()x', { { 1, 2 }, { 3, 4 }, { 5, 6 } })
+  validate('x()xx()', { { 2, 3 }, { 5, 6 } })
+  validate('x()x()x', { { 2, 2 }, { 4, 4 }, { 6, 6 } })
 end
 
 T['Highlighters']['allows frontier pattern in `pattern`'] = function()

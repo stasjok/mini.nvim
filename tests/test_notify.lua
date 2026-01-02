@@ -11,14 +11,6 @@ local unload_module = function() child.mini_unload('notify') end
 local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
--- Tweak `expect_screenshot()` to test only on Neovim>=0.9 (as 0.8 does
--- not have titles)
-child.expect_screenshot_orig = child.expect_screenshot
-child.expect_screenshot = function(opts)
-  if child.fn.has('nvim-0.9') == 0 then return end
-  child.expect_screenshot_orig(opts)
-end
-
 -- Common test helpers
 local get_notif_win_id = function(tabpage_id)
   tabpage_id = tabpage_id or child.api.nvim_get_current_tabpage()
@@ -102,6 +94,10 @@ T['setup()']['creates side effects'] = function()
   has_highlight('MiniNotifyLspProgress', 'links to MiniNotifyNormal')
   has_highlight('MiniNotifyNormal', 'links to NormalFloat')
   has_highlight('MiniNotifyTitle', 'links to FloatTitle')
+
+  -- `vim.notify` implementation
+  child.lua('vim.notify("Hello", vim.log.levels.WARN)')
+  eq(child.lua_get('#MiniNotify.get_all()'), 1)
 end
 
 T['setup()']['creates `config` field'] = function()
@@ -834,28 +830,45 @@ T['Window']['respects `window.config`'] = function()
   add('World')
   child.expect_screenshot()
 
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Neovim<0.10 has issues with displaying title in some cases') end
+
   -- As callable
   child.lua([[MiniNotify.config.window.config = function(buf_id)
     _G.buffer_filetype = vim.bo[buf_id].filetype
     return { border = 'double', width = 25, height = 5, title = 'Custom title to check truncation' }
   end]])
   refresh()
-  -- NOTE: Neovim<=0.9 has issues with displaying title in this case
-  if child.fn.has('nvim-0.10') == 1 then child.expect_screenshot() end
+  child.expect_screenshot()
+
+  -- Should properly truncate title
+  child.lua([[
+    local title = string.sub('abcdefgijklmnopqrstuvwxyzabcdefgijklmnopqrstuvwxyz', -vim.o.columns)
+    MiniNotify.config.window.config = { width = vim.o.columns, title = title }
+  ]])
+  refresh()
+  child.expect_screenshot()
 end
 
 T['Window']["respects 'winborder' option"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'winborder' option is present on Neovim>=0.11") end
 
-  child.o.winborder = 'rounded'
-  add('Hello', 'ERROR', 'Comment')
-  child.expect_screenshot()
-  clear()
+  local validate = function(winborder)
+    child.o.winborder = winborder
+    add('Hello', 'ERROR', 'Comment')
+    child.expect_screenshot()
+    clear()
+  end
+
+  validate('rounded')
 
   -- Should prefer explicitly configured value over 'winborder'
-  child.lua([[MiniNotify.config.window.config.border = 'double']])
-  add('Hello', 'ERROR', 'Comment')
-  child.expect_screenshot()
+  child.lua('MiniNotify.config.window.config.border = "double"')
+  validate('rounded')
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniNotify.config.window.config.border = nil')
+  validate('+,-,+,|,+,-,+,|')
 end
 
 T['Window']['respects `window.max_width_share`'] = function()
@@ -992,7 +1005,7 @@ T['Window']['uses dedicated UI highlight groups'] = function()
   local winhighlight = child.api.nvim_win_get_option(win_id, 'winhighlight')
   expect.match(winhighlight, 'NormalFloat:MiniNotifyNormal')
   expect.match(winhighlight, 'FloatBorder:MiniNotifyBorder')
-  if child.fn.has('nvim-0.9') == 1 then expect.match(winhighlight, 'FloatTitle:MiniNotifyTitle') end
+  expect.match(winhighlight, 'FloatTitle:MiniNotifyTitle')
 end
 
 T['Window']['handles width computation for empty lines inside notification buffer'] = function()

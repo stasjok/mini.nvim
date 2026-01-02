@@ -28,7 +28,7 @@ release_module () {
     # Handle 'mini.git' differently because GitHub repo is named 'mini-git'
     # (".git" suffix is not allowed as repo name on GitHub)
     if [ $module = "git" ]; then github_repo="mini-git"; else github_repo="mini.$module"; fi
-    git clone --filter=blob:none https://github.com/echasnovski/$github_repo.git $repo
+    git clone --filter=blob:none https://github.com/nvim-mini/$github_repo.git $repo
   fi
 
   cd $repo > /dev/null
@@ -63,6 +63,7 @@ release_module "basics"
 release_module "bracketed"
 release_module "bufremove"
 release_module "clue"
+release_module "cmdline"
 release_module "colors"
 release_module "comment"
 release_module "completion"

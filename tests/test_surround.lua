@@ -70,10 +70,6 @@ local validate_no_find = function(lines, start_pos, f, ...)
   eq(get_cursor(), start_pos)
 end
 
-local mock_treesitter_builtin = function() child.cmd('source tests/dir-surround/mock-lua-treesitter.lua') end
-
-local mock_treesitter_plugin = function() child.cmd('noautocmd set rtp+=tests/dir-surround') end
-
 -- Time constants
 local default_highlight_duraion = 500
 local helper_message_delay = 1000
@@ -126,7 +122,6 @@ T['setup()']['creates `config` field'] = function()
   expect_config('mappings.find_left', 'sF')
   expect_config('mappings.highlight', 'sh')
   expect_config('mappings.replace', 'sr')
-  expect_config('mappings.update_n_lines', 'sn')
   expect_config('mappings.suffix_last', 'l')
   expect_config('mappings.suffix_next', 'n')
   expect_config('respect_selection_type', false)
@@ -157,7 +152,6 @@ T['setup()']['validates `config` argument'] = function()
   expect_config_error({ mappings = { find_left = 1 } }, 'mappings.find_left', 'string')
   expect_config_error({ mappings = { highlight = 1 } }, 'mappings.highlight', 'string')
   expect_config_error({ mappings = { replace = 1 } }, 'mappings.replace', 'string')
-  expect_config_error({ mappings = { update_n_lines = 1 } }, 'mappings.update_n_lines', 'string')
   expect_config_error({ mappings = { suffix_last = 1 } }, 'mappings.suffix_last', 'string')
   expect_config_error({ mappings = { suffix_next = 1 } }, 'mappings.suffix_next', 'string')
   expect_config_error({ n_lines = 'a' }, 'n_lines', 'number')
@@ -172,34 +166,139 @@ T['setup()']['ensures colors'] = function()
 end
 
 T['setup()']['properly handles `config.mappings`'] = function()
-  local has_map = function(lhs, pattern) return child.cmd_capture('nmap ' .. lhs):find(pattern) ~= nil end
+  local has_surround_map = function(lhs, mode) return child.fn.maparg(lhs, mode):find('[Ss]urround') ~= nil end
+
+  local make_clean_state = function()
+    unload_module()
+    for _, map in ipairs(child.api.nvim_get_keymap('n')) do
+      child.api.nvim_del_keymap('n', map.lhs)
+    end
+    for _, map in ipairs(child.api.nvim_get_keymap('x')) do
+      child.api.nvim_del_keymap('x', map.lhs)
+    end
+  end
 
   -- Regular mappings
-  eq(has_map('sa', 'surround'), true)
+  eq(has_surround_map('sa', 'n'), true)
 
-  unload_module()
-  child.api.nvim_del_keymap('n', 'sa')
+  -- Should map "s" to <Nop>, but only if needed
+  eq(child.fn.maparg('s', 'n'), '<Nop>')
+  eq(child.fn.maparg('s', 'x'), '<Nop>')
 
   -- Supplying empty string should mean "don't create keymap"
+  make_clean_state()
   load_module({ mappings = { add = '' } })
-  eq(has_map('sa', 'surround'), false)
+  eq(has_surround_map('sa', 'n'), false)
 
   -- Extended mappings
-  eq(has_map('sdl', 'previous'), true)
-  eq(has_map('sdn', 'next'), true)
+  eq(has_surround_map('sdl', 'n'), true)
+  eq(has_surround_map('sdn', 'n'), true)
 
-  unload_module()
-  child.api.nvim_del_keymap('n', 'sd')
-  child.api.nvim_del_keymap('n', 'sdl')
-  child.api.nvim_del_keymap('n', 'sdn')
-  child.api.nvim_del_keymap('n', 'srl')
-  child.api.nvim_del_keymap('n', 'srn')
-
+  make_clean_state()
   load_module({ mappings = { delete = '', suffix_last = '' } })
-  eq(has_map('sdl', 'previous'), false)
-  eq(has_map('sdn', 'next'), false)
-  eq(has_map('srl', 'previous'), false)
-  eq(has_map('srn', 'next'), true)
+  eq(has_surround_map('sdl', 'n'), false)
+  eq(has_surround_map('sdn', 'n'), false)
+  eq(has_surround_map('srl', 'n'), false)
+  eq(has_surround_map('srn', 'n'), true)
+
+  -- Should precisely set 's' keymap
+  make_clean_state()
+  load_module({ mappings = { add = 'cs', delete = 'sd' } })
+  eq(child.fn.maparg('s', 'n'), '<Nop>')
+  eq(child.fn.maparg('s', 'x'), '')
+
+  -- - Should ignore presence of buffer-local mappings
+  local vim_surround_mappings = {
+    add = 'ys',
+    delete = 'ds',
+    find = '',
+    find_left = '',
+    highlight = '',
+    replace = 'cs',
+    suffix_last = '',
+    suffix_next = '',
+  }
+  -- - Should also not override already present user mapping for `s`
+  make_clean_state()
+  child.cmd('nmap s <Cmd>echo 1<CR>')
+  load_module({ mappings = vim_surround_mappings })
+  eq(child.fn.maparg('s', 'n'), '<Cmd>echo 1<CR>')
+  eq(child.fn.maparg('s', 'x'), '')
+
+  -- - Should allow creating a plain `s` as a mapping
+  vim_surround_mappings.add = 's'
+  make_clean_state()
+  load_module({ mappings = vim_surround_mappings })
+  eq(has_surround_map('s', 'n'), true)
+  eq(has_surround_map('s', 'x'), true)
+
+  -- - Should ignore buffer-local `s` mappings and still create global `<Nop>`
+  make_clean_state()
+  child.cmd('nmap <buffer> s <Cmd>echo 1<CR>')
+  child.cmd('xmap <buffer> s <Cmd>echo 2<CR>')
+  load_module()
+  eq(child.fn.maparg('s', 'n'), '<Cmd>echo 1<CR>')
+  eq(child.fn.maparg('s', 'x'), '<Cmd>echo 2<CR>')
+
+  local get_global_mapping = function(mode, lhs)
+    for _, map in ipairs(child.api.nvim_get_keymap(mode)) do
+      if map.lhs == lhs then return map end
+    end
+    return {}
+  end
+  -- - NOTE: `nvim_get_keymap()` return `rhs=''` if it is mapped to `<Nop>`
+  --   For absent mapping it would have been `nil`
+  eq(get_global_mapping('n', 's').rhs, '')
+  eq(get_global_mapping('x', 's').rhs, '')
+
+  -- - Should work when there are both buffer-local and global mappings
+  make_clean_state()
+  child.cmd('nmap          s <Cmd>echo 1<CR>')
+  child.cmd('nmap <buffer> s <Cmd>echo 10<CR>')
+  child.cmd('xmap          s <Cmd>echo 2<CR>')
+  child.cmd('xmap <buffer> s <Cmd>echo 20<CR>')
+
+  load_module()
+
+  eq(child.fn.maparg('s', 'n'), '<Cmd>echo 10<CR>')
+  eq(child.fn.maparg('s', 'x'), '<Cmd>echo 20<CR>')
+  eq(get_global_mapping('n', 's').rhs, '<Cmd>echo 1<CR>')
+  eq(get_global_mapping('x', 's').rhs, '<Cmd>echo 2<CR>')
+end
+
+T['update_n_lines()'] = new_set({
+  hooks = {
+    pre_case = function() child.lua('vim.keymap.set("n", "sn", "<Cmd>lua MiniSurround.update_n_lines()<CR>")') end,
+  },
+})
+
+T['update_n_lines()']['works'] = function()
+  local cur_n_lines = child.lua_get('MiniSurround.config.n_lines')
+
+  -- Should ask for input, display prompt text and current value of `n_lines`
+  type_keys('sn')
+  eq(child.fn.mode(), 'c')
+  eq(child.fn.getcmdline(), tostring(cur_n_lines))
+
+  type_keys('0', '<CR>')
+  eq(child.lua_get('MiniSurround.config.n_lines'), 10 * cur_n_lines)
+end
+
+T['update_n_lines()']['allows cancelling with `<Esc> and <C-c>`'] = function()
+  local validate_cancel = function(key)
+    child.ensure_normal_mode()
+    local cur_n_lines = child.lua_get('MiniSurround.config.n_lines')
+
+    type_keys('sn')
+    eq(child.fn.mode(), 'c')
+
+    type_keys(key)
+    eq(child.fn.mode(), 'n')
+    eq(child.lua_get('MiniSurround.config.n_lines'), cur_n_lines)
+  end
+
+  validate_cancel('<Esc>')
+  validate_cancel('<C-c>')
 end
 
 T['gen_spec'] = new_set()
@@ -209,8 +308,12 @@ T['gen_spec']['input'] = new_set()
 T['gen_spec']['input']['treesitter()'] = new_set({
   hooks = {
     pre_case = function()
+      -- Mock tree-sitter queries
+      child.cmd('noautocmd set rtp+=tests/mock-treesitter')
+
       -- Start editing reference file
-      child.cmd('edit tests/dir-surround/lua-file.lua')
+      child.cmd('edit tests/mock-treesitter/lua-file.lua')
+      child.lua('vim.treesitter.start()')
 
       -- Define "function definition" surrounding
       child.lua([[MiniSurround.config.custom_surroundings = {
@@ -221,8 +324,6 @@ T['gen_spec']['input']['treesitter()'] = new_set({
 })
 
 T['gen_spec']['input']['treesitter()']['works'] = function()
-  mock_treesitter_builtin()
-
   local lines = get_lines()
 
   -- Should prefer range from metadata instead of node itself. This is useful,
@@ -231,40 +332,38 @@ T['gen_spec']['input']['treesitter()']['works'] = function()
   validate_no_find(lines, { 13, 0 }, type_keys, 'sf', 'F')
 
   -- Should prefer match on current line over multiline covering
-  child.lua([[MiniSurround.config.search_method = 'cover_or_next']])
-  validate_find(lines, { 4, 0 }, { { 4, 9 }, { 4, 19 }, { 4, 33 }, { 4, 36 } }, type_keys, 'sf', 'F')
+  child.lua('MiniSurround.config.search_method = "cover_or_next"')
+  validate_find(lines, { 4, 0 }, { { 4, 9 }, { 4, 19 }, { 4, 34 }, { 4, 37 } }, type_keys, 'sf', 'F')
 end
 
 T['gen_spec']['input']['treesitter()']['works with empty region'] = function()
-  mock_treesitter_builtin()
   child.lua([[MiniSurround.config.custom_surroundings = {
-    o = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@other.outer', inner = '@other.inner' }) },
+    o = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@return.outer', inner = '@return.inner' }) },
   }]])
   local lines = get_lines()
 
   -- Delete
   set_lines(lines)
-  set_cursor(1, 0)
+  set_cursor(10, 2)
   type_keys('sd', 'o')
-  eq(get_lines()[1], 'M = {}')
+  eq(get_lines()[10], '  true')
 
   -- Replace
   set_lines(lines)
-  set_cursor(1, 0)
+  set_cursor(10, 2)
   type_keys('sr', 'o', '>')
-  eq(get_lines()[1], '<M = {}>')
+  eq(get_lines()[10], '  <true>')
 
   -- Find
-  validate_find(lines, { 1, 0 }, { { 1, 5 }, { 1, 0 } }, type_keys, 'sf', 'o')
+  validate_find(lines, { 10, 2 }, { { 10, 8 }, { 10, 2 } }, type_keys, 'sf', 'o')
 
   -- Highlight
   child.set_size(15, 40)
   child.o.cmdheight = 1
   set_lines(lines)
-  set_cursor(1, 0)
+  set_cursor(10, 2)
   type_keys('sh', 'o')
-  child.poke_eventloop()
-  -- It highlights `local` differently from other places
+  -- It highlights `return` differently from other places
   if child.fn.has('nvim-0.11') == 1 then child.expect_screenshot() end
 
   -- Edge case for empty region on end of last line
@@ -275,9 +374,8 @@ T['gen_spec']['input']['treesitter()']['works with empty region'] = function()
 end
 
 T['gen_spec']['input']['treesitter()']['works with no inner captures'] = function()
-  mock_treesitter_builtin()
   child.lua([[MiniSurround.config.custom_surroundings = {
-    o = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@other.outer', inner = '@other.inner' }) },
+    o = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@return.outer', inner = '@string' }) },
   }]])
   local lines = get_lines()
 
@@ -285,18 +383,36 @@ T['gen_spec']['input']['treesitter()']['works with no inner captures'] = functio
   set_lines(lines)
   set_cursor(10, 2)
   type_keys('sd', 'o')
-  eq(get_lines()[10], '   true')
+  -- - Should treat the whole "outer" match as left surrounding with
+  --   right surrounding being a single position right match edge.
+  eq(get_lines()[10], '  ')
 
   -- Replace
   set_lines(lines)
   set_cursor(10, 2)
   type_keys('sr', 'o', '>')
-  eq(get_lines()[10], '  <> true')
+  eq(get_lines()[10], '  <>')
+
+  -- Find
+  validate_find(lines, { 10, 2 }, { { 10, 12 }, { 10, 2 } }, type_keys, 'sf', 'o')
+end
+
+T['gen_spec']['input']['treesitter()']['works with parent of injected language'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('`LanguageTree:parent()` requires Neovim>=0.10') end
+
+  local lines = {
+    'local foo = function()',
+    '  vim.cmd([[',
+    'set cursorline',
+    ']])',
+    'end',
+  }
+
+  validate_find(lines, { 3, 0 }, { { 4, 2 }, { 5, 2 }, { 1, 12 }, { 2, 1 } }, type_keys, 'sf', 'F')
+  validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'F')
 end
 
 T['gen_spec']['input']['treesitter()']['respects `opts.use_nvim_treesitter`'] = function()
-  mock_treesitter_builtin()
-
   child.lua([[MiniSurround.config.custom_surroundings = {
     F = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@function.outer', inner = '@function.inner' }) },
     o = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@plugin_other.outer', inner = '@plugin_other.inner' }) },
@@ -314,7 +430,7 @@ T['gen_spec']['input']['treesitter()']['respects `opts.use_nvim_treesitter`'] = 
   validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'o')
   validate_no_find(lines, { 1, 0 }, type_keys, 'sf', 'O')
 
-  mock_treesitter_plugin()
+  child.cmd('noautocmd set rtp+=tests/dir-surround/mock-nvim-treesitter')
   -- Should prefer range from metadata instead of node itself. This is useful,
   -- for example, with `#offset!` directive to create more precise captures.
   validate_find(lines, { 9, 0 }, { { 10, 12 }, { 11, 2 }, { 7, 6 }, { 8, 1 } }, type_keys, 'sf', 'F')
@@ -322,9 +438,49 @@ T['gen_spec']['input']['treesitter()']['respects `opts.use_nvim_treesitter`'] = 
   validate_find(lines, { 1, 0 }, { { 1, 5 }, { 1, 0 } }, type_keys, 'sf', 'O')
 end
 
-T['gen_spec']['input']['treesitter()']['respects plugin options'] = function()
-  mock_treesitter_builtin()
+T['gen_spec']['input']['treesitter()']['works with directives'] = function()
+  child.lua([[MiniSurround.config.custom_surroundings = {
+    S = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@string', inner = '@string_offset' }) }
+  }]])
+  local lines = get_lines()
+  validate_find(lines, { 9, 9 }, { { 9, 16 }, { 9, 17 }, { 9, 8 }, { 9, 16 } }, type_keys, 'sf', 'S')
+end
 
+T['gen_spec']['input']['treesitter()']['works with quantified captures'] = function()
+  if child.fn.has('nvim-0.10') == 0 then
+    MiniTest.skip('`Query:iter_matches()` returning several nodes requires Neovim>=0.10')
+  end
+
+  child.lua([[MiniSurround.config.custom_surroundings = {
+    P = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@parameter.outer', inner = '@parameter.inner' }) }
+  }]])
+
+  local lines = get_lines()
+  local validate = function(col, ref_line)
+    set_lines(lines)
+    set_cursor(3, col)
+    type_keys('sr', 'P', '>')
+    eq(get_lines()[3], ref_line)
+  end
+  validate(13, 'function M.a(<u> vv, www)')
+  validate(16, 'function M.a(u<vv>, www)')
+  validate(21, 'function M.a(u, vv<www>)')
+end
+
+T['gen_spec']['input']['treesitter()']['works with row-exclusive, col-0 end range'] = function()
+  if child.fn.has('nvim-0.10') == 0 then
+    MiniTest.skip('`Query:iter_matches()` returning several nodes requires Neovim>=0.10')
+  end
+
+  child.lua([[MiniSurround.config.custom_surroundings = {
+    c = { input = MiniSurround.gen_spec.input.treesitter({ outer = '@chunk.outer', inner = '@chunk.inner' }) }
+  }]])
+
+  local lines = get_lines()
+  validate_find(lines, { 4, 0 }, { { 11, 2 }, { 13, 7 }, { 1, 0 }, { 2, 0 } }, type_keys, 'sf', 'c')
+end
+
+T['gen_spec']['input']['treesitter()']['respects plugin options'] = function()
   local lines = get_lines()
 
   -- `opts.n_lines`
@@ -333,13 +489,11 @@ T['gen_spec']['input']['treesitter()']['respects plugin options'] = function()
 
   -- `opts.search_method`
   child.lua('MiniSurround.config.n_lines = 50')
-  child.lua([[MiniSurround.config.search_method = 'next']])
+  child.lua('MiniSurround.config.search_method = "next"')
   validate_no_find(lines, { 9, 0 }, type_keys, 'sf', 'F')
 end
 
 T['gen_spec']['input']['treesitter()']['validates `captures` argument'] = function()
-  mock_treesitter_builtin()
-
   local validate = function(args)
     expect.error(function() child.lua([[MiniSurround.gen_spec.input.treesitter(...)]], { args }) end, 'captures')
   end
@@ -354,35 +508,27 @@ T['gen_spec']['input']['treesitter()']['validates `captures` argument'] = functi
 end
 
 T['gen_spec']['input']['treesitter()']['validates builtin treesitter presence'] = function()
-  mock_treesitter_builtin()
   child.cmdheight = 40
 
   -- Query
-  local lua_cmd = string.format(
-    'vim.treesitter.%s = function() return nil end',
-    child.fn.has('nvim-0.9') == 1 and 'query.get' or 'get_query'
-  )
-  child.lua(lua_cmd)
-
+  child.bo.filetype = 'vim'
   expect.error(
     function() type_keys('sd', 'F', '<CR>') end,
-    vim.pesc([[(mini.surround) Can not get query for buffer 1 and language "lua".]])
+    '%(mini%.surround%) Can not get query for buffer 1 and language "vim"%.'
   )
 
   -- Parser
   child.bo.filetype = 'aaa'
   expect.error(
     function() type_keys('sd', 'F', '<CR>') end,
-    vim.pesc([[(mini.surround) Can not get parser for buffer 1 and language "aaa".]])
+    '%(mini%.surround%) Can not get parser for buffer 1 and language "aaa"%.'
   )
 
   -- - Should respect registered language for a filetype
-  child.lua([[
-    vim.treesitter.language.register('my_aaa', 'aaa')
-  ]])
+  child.lua('vim.treesitter.language.register("my_aaa", "aaa")')
   expect.error(
     function() type_keys('sd', 'F', '<CR>') end,
-    vim.pesc([[(mini.surround) Can not get parser for buffer 1 and language "my_aaa".]])
+    '%(mini%.surround%) Can not get parser for buffer 1 and language "my_aaa"%.'
   )
 end
 
@@ -643,6 +789,19 @@ T['Add surrounding']['handles `[count]` cache'] = function()
   set_cursor(1, 7)
   type_keys('viw', 'sa)')
   eq(get_lines(), { '((aa)) (bb)' })
+end
+
+T['Add surrounding']['works with `cmdheight=0`'] = function()
+  child.set_size(7, 20)
+  child.o.cmdheight = 0
+  child.o.statusline = 'My statusline'
+  set_lines({ 'aa bb' })
+  type_keys('sa')
+  child.expect_screenshot({ redraw = false })
+  type_keys('iw')
+  child.expect_screenshot({ redraw = false })
+  type_keys(')')
+  child.expect_screenshot({ redraw = false })
 end
 
 T['Add surrounding']['respects `selection=exclusive` option'] = function()
@@ -1705,63 +1864,12 @@ T['Highlight surrounding']['respects `vim.b.minisurround_config`'] = function()
   set_cursor(1, 2)
   type_keys('sh', '<')
   child.poke_eventloop()
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_attr = { 5 } })
 
   -- Should stop highlighting after duration from local config
   sleep(5 * small_time + small_time)
-  child.expect_screenshot()
+  child.expect_screenshot({ ignore_attr = { 5 } })
 end
-
-T['Update number of lines'] = new_set()
-
-T['Update number of lines']['works'] = function()
-  local cur_n_lines = child.lua_get('MiniSurround.config.n_lines')
-
-  -- Should ask for input, display prompt text and current value of `n_lines`
-  type_keys('sn')
-  eq(child.fn.mode(), 'c')
-  eq(child.fn.getcmdline(), tostring(cur_n_lines))
-
-  type_keys('0', '<CR>')
-  eq(child.lua_get('MiniSurround.config.n_lines'), 10 * cur_n_lines)
-end
-
-T['Update number of lines']['allows cancelling with `<Esc> and <C-c>`'] = function()
-  local validate_cancel = function(key)
-    child.ensure_normal_mode()
-    local cur_n_lines = child.lua_get('MiniSurround.config.n_lines')
-
-    type_keys('sn')
-    eq(child.fn.mode(), 'c')
-
-    type_keys(key)
-    eq(child.fn.mode(), 'n')
-    eq(child.lua_get('MiniSurround.config.n_lines'), cur_n_lines)
-  end
-
-  validate_cancel('<Esc>')
-  validate_cancel('<C-c>')
-end
-
-T['Update number of lines']['works with different mapping'] = function()
-  reload_module({ mappings = { update_n_lines = 'SN' } })
-
-  local cur_n_lines = child.lua_get('MiniSurround.config.n_lines')
-  type_keys('SN', '0', '<CR>')
-  child.api.nvim_del_keymap('n', 'SN')
-  eq(child.lua_get('MiniSurround.config.n_lines'), 10 * cur_n_lines)
-end
-
-T['Update number of lines']['respects `vim.{g,b}.minisurround_disable`'] = new_set({
-  parametrize = { { 'g' }, { 'b' } },
-}, {
-  test = function(var_type)
-    child[var_type].minisurround_disable = true
-    local cur_n_lines = child.lua_get('MiniSurround.config.n_lines')
-    type_keys('sn', '0', '<CR>')
-    eq(child.lua_get('MiniSurround.config.n_lines'), cur_n_lines)
-  end,
-})
 
 T['Search method'] = new_set()
 

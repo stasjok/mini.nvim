@@ -1,36 +1,36 @@
-<img src="https://github.com/echasnovski/media/blob/main/mini.nvim/logo/logo_test.png" style="width: 100%; max-height: 10em"/>
-
-<!-- badges: start -->
-[![GitHub license](https://badgen.net/github/license/echasnovski/mini.nvim)](https://github.com/echasnovski/mini.nvim/blob/main/LICENSE)
-<!-- badges: end -->
+<p align="center"> <img src="https://github.com/nvim-mini/assets/blob/main/logo-2/logo-test_readme.png?raw=true" alt="mini.test" style="max-width:100%;border:solid 2px"/> </p>
 
 ### Write and use extensive Neovim plugin tests
 
 - Supports hierarchical tests, hooks, parametrization, filtering (like from current file or cursor position), screen tests, "busted-style" emulation, customizable reporters, and more.
 - Designed to be used with provided wrapper for managing child Neovim processes.
 
-See more details in [Features](#features) and [help file](../doc/mini-test.txt). For more hands-on introduction based on examples, see [TESTING.md](https://github.com/echasnovski/mini.nvim/blob/main/TESTING.md). For more in-depth usage see ['mini.nvim' tests](https://github.com/echasnovski/mini.nvim/tree/main/tests).
+See more details in [Features](#features) and [Documentation](../doc/mini-test.txt). For more hands-on introduction based on examples, see [TESTING.md](https://nvim-mini.org/mini.nvim/TESTING). For more in-depth usage see ['mini.nvim' tests](https://github.com/nvim-mini/mini.nvim/tree/main/tests).
 
 ---
 
-⦿ This is a part of [mini.nvim](https://github.com/echasnovski/mini.nvim) library. Please use [this link](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-test.md) if you want to mention this module.
+> [!NOTE]
+> This was previously hosted at a personal `echasnovski` GitHub account. It was transferred to a dedicated organization to improve long term project stability. See more details [here](https://github.com/nvim-mini/mini.nvim/discussions/1970).
+
+⦿ This is a part of [mini.nvim](https://nvim-mini.org/mini.nvim) library. Please use [this link](https://nvim-mini.org/mini.nvim/readmes/mini-test) if you want to mention this module.
 
 ⦿ All contributions (issues, pull requests, discussions, etc.) are done inside of 'mini.nvim'.
 
-⦿ See the repository page to learn about common design principles and configuration recipes.
+⦿ See [whole library documentation](https://nvim-mini.org/mini.nvim/doc/mini-nvim) to learn about general design principles, disable/configuration recipes, and more.
 
 ---
 
-If you want to help this project grow but don't know where to start, check out [contributing guides of 'mini.nvim'](https://github.com/echasnovski/mini.nvim/blob/main/CONTRIBUTING.md) or leave a Github star for 'mini.nvim' project and/or any its standalone Git repositories.
+If you want to help this project grow but don't know where to start, check out [contributing guides of 'mini.nvim'](https://nvim-mini.org/mini.nvim/CONTRIBUTING) or leave a Github star for 'mini.nvim' project and/or any its standalone Git repositories.
 
 ## Demo
 
+<!-- Demo source: https://github.com/nvim-mini/assets/blob/main/demo/demo-test.mp4 -->
 https://user-images.githubusercontent.com/24854248/175773105-f33cd3bb-6f62-4a61-95b1-b175e11905bb.mp4
 
 ## Features
 
 - Test action is defined as a named callable entry of a table.
-- Helper for creating child Neovim process which is designed to be used in tests (including taking and verifying screenshots). See help for `MiniTest.new_child_neovim()` and `Minitest.expect.reference_screenshot()`.
+- Helper for creating child Neovim process which is designed to be used in tests (including taking and verifying screenshots). See help for `MiniTest.new_child_neovim()` and `MiniTest.expect.reference_screenshot()`.
 - Hierarchical organization of tests with custom hooks, parametrization, and user data. See help for `MiniTest.new_set()`.
 - Emulation of [Olivine-Labs/busted](https://github.com/Olivine-Labs/busted) interface (`describe`, `it`, etc.).
 - Predefined small yet usable set of expectations (`assert`-like functions). See help for `MiniTest.expect`.
@@ -54,91 +54,66 @@ There are two branches to install from:
 Here are code snippets for some common installation methods (use only one):
 
 <details>
-<summary>With <a href="https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-deps.md">mini.deps</a></summary>
-<table>
-    <thead>
-        <tr>
-            <th>Github repo</th>
-            <th>Branch</th> <th>Code snippet</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td rowspan=2>'mini.nvim' library</td> <td>Main</td> <td rowspan=2><i>Follow recommended 'mini.deps' installation</i></td>
-        </tr>
-        <tr>
-            <td>Stable</td>
-        </tr>
-        <tr>
-            <td rowspan=2>Standalone plugin</td> <td>Main</td> <td><code>add('echasnovski/mini.test')</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>add({ source = 'echasnovski/mini.test', checkout = 'stable' })</code></td>
-        </tr>
-    </tbody>
-</table>
+<summary>With <a href="https://nvim-mini.org/mini.nvim/readmes/mini-deps">mini.deps</a></summary>
+
+- 'mini.nvim' library:
+
+    | Branch | Code snippet                                  |
+    |--------|-----------------------------------------------|
+    | Main   | *Follow recommended ‘mini.deps’ installation* |
+    | Stable | *Follow recommended ‘mini.deps’ installation* |
+
+- Standalone plugin:
+
+    | Branch | Code snippet                                                   |
+    |--------|----------------------------------------------------------------|
+    | Main   | `add(‘nvim-mini/mini.test’)`                                   |
+    | Stable | `add({ source = ‘nvim-mini/mini.test’, checkout = ‘stable’ })` |
+
 </details>
 
 <details>
 <summary>With <a href="https://github.com/folke/lazy.nvim">folke/lazy.nvim</a></summary>
-<table>
-    <thead>
-        <tr>
-            <th>Github repo</th>
-            <th>Branch</th> <th>Code snippet</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td rowspan=2>'mini.nvim' library</td>
-            <td>Main</td> <td><code>{ 'echasnovski/mini.nvim', version = false },</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>{ 'echasnovski/mini.nvim', version = '*' },</code></td>
-        </tr>
-        <tr>
-            <td rowspan=2>Standalone plugin</td>
-            <td>Main</td> <td><code>{ 'echasnovski/mini.test', version = false },</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>{ 'echasnovski/mini.test', version = '*' },</code></td>
-        </tr>
-    </tbody>
-</table>
+
+- 'mini.nvim' library:
+
+    | Branch | Code snippet                                  |
+    |--------|-----------------------------------------------|
+    | Main   | `{ 'nvim-mini/mini.nvim', version = false },` |
+    | Stable | `{ 'nvim-mini/mini.nvim', version = '*' },`   |
+
+- Standalone plugin:
+
+    | Branch | Code snippet                                  |
+    |--------|-----------------------------------------------|
+    | Main   | `{ 'nvim-mini/mini.test', version = false },` |
+    | Stable | `{ 'nvim-mini/mini.test', version = '*' },`   |
+
 </details>
 
 <details>
 <summary>With <a href="https://github.com/junegunn/vim-plug">junegunn/vim-plug</a></summary>
-<table>
-    <thead>
-        <tr>
-            <th>Github repo</th>
-            <th>Branch</th> <th>Code snippet</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td rowspan=2>'mini.nvim' library</td>
-            <td>Main</td> <td><code>Plug 'echasnovski/mini.nvim'</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>Plug 'echasnovski/mini.nvim', { 'branch': 'stable' }</code></td>
-        </tr>
-        <tr>
-            <td rowspan=2>Standalone plugin</td> <td>Main</td> <td><code>Plug 'echasnovski/mini.test'</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>Plug 'echasnovski/mini.test', { 'branch': 'stable' }</code></td>
-        </tr>
-    </tbody>
-</table>
-</details>
 
-<br>
+- 'mini.nvim' library:
+
+    | Branch | Code snippet                                         |
+    |--------|------------------------------------------------------|
+    | Main   | `Plug 'nvim-mini/mini.nvim'`                         |
+    | Stable | `Plug 'nvim-mini/mini.nvim', { 'branch': 'stable' }` |
+
+- Standalone plugin:
+
+    | Branch | Code snippet                                         |
+    |--------|------------------------------------------------------|
+    | Main   | `Plug 'nvim-mini/mini.test'`                         |
+    | Stable | `Plug 'nvim-mini/mini.test', { 'branch': 'stable' }` |
+
+</details>
 
 **Important**: don't forget to call `require('mini.test').setup()` to enable its functionality.
 
 **Note**: if you are on Windows, there might be problems with too long file paths (like `error: unable to create file <some file name>: Filename too long`). Try doing one of the following:
+
 - Enable corresponding git global config value: `git config --system core.longpaths true`. Then try to reinstall.
 - Install plugin in other place with shorter path.
 

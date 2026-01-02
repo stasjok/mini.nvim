@@ -1,13 +1,10 @@
 --- *mini.base16* Base16 colorscheme creation
---- *MiniBase16*
 ---
 --- MIT License Copyright (c) 2021 Evgeni Chasnovski
----
---- ==============================================================================
----
---- Fast implementation of 'chriskempson/base16' color scheme (with Copyright
---- (C) 2012 Chris Kempson) adapted for modern Neovim Lua plugins.
---- Extra features:
+
+--- Fast implementation of [chriskempson/base16](https://github.com/chriskempson/base16)
+--- color scheme (with Copyright (C) 2012 Chris Kempson) adapted for modern Neovim
+--- Lua plugins. Extra features:
 --- - Configurable automatic support of cterm colors (see |highlight-cterm|).
 --- - Opinionated palette generator based only on background and foreground
 ---   colors.
@@ -17,43 +14,44 @@
 ---
 --- - Plugins (either with explicit definition or by verification that default
 ---   highlighting works appropriately):
----     - 'echasnovski/mini.nvim'
----     - 'akinsho/bufferline.nvim'
----     - 'anuvyklack/hydra.nvim'
----     - 'DanilaMihailov/beacon.nvim'
----     - 'folke/lazy.nvim'
----     - 'folke/noice.nvim'
----     - 'folke/todo-comments.nvim'
----     - 'folke/trouble.nvim'
----     - 'folke/which-key.nvim'
----     - 'ggandor/leap.nvim'
----     - 'ggandor/lightspeed.nvim'
----     - 'glepnir/dashboard-nvim'
----     - 'glepnir/lspsaga.nvim'
----     - 'HiPhish/rainbow-delimiters.nvim'
----     - 'hrsh7th/nvim-cmp'
----     - 'justinmk/vim-sneak'
----     - 'ibhagwan/fzf-lua'
----     - 'kevinhwang91/nvim-bqf'
----     - 'kevinhwang91/nvim-ufo'
----     - 'lewis6991/gitsigns.nvim'
----     - 'lukas-reineke/indent-blankline.nvim'
----     - 'MeanderingProgrammer/render-markdown.nvim'
----     - 'neoclide/coc.nvim'
----     - 'NeogitOrg/neogit'
----     - 'nvim-lualine/lualine.nvim'
----     - 'nvim-neo-tree/neo-tree.nvim'
----     - 'nvim-telescope/telescope.nvim'
----     - 'nvim-tree/nvim-tree.lua'
----     - 'OXY2DEV/helpview.nvim'
----     - 'OXY2DEV/markview.nvim'
----     - 'phaazon/hop.nvim'
----     - 'rcarriga/nvim-dap-ui'
----     - 'rcarriga/nvim-notify'
----     - 'rlane/pounce.nvim'
----     - 'romgrk/barbar.nvim'
----     - 'stevearc/aerial.nvim'
----     - 'williamboman/mason.nvim'
+---     - [nvim-mini/mini.nvim](https://nvim-mini.org/mini.nvim)
+---     - [akinsho/bufferline.nvim](https://github.com/akinsho/bufferline.nvim)
+---     - [anuvyklack/hydra.nvim](https://github.com/anuvyklack/hydra.nvim)
+---     - [DanilaMihailov/beacon.nvim](https://github.com/DanilaMihailov/beacon.nvim)
+---     - [folke/lazy.nvim](https://github.com/folke/lazy.nvim)
+---     - [folke/noice.nvim](https://github.com/folke/noice.nvim)
+---     - [folke/snacks.nvim](https://github.com/folke/snacks.nvim)
+---     - [folke/todo-comments.nvim](https://github.com/folke/todo-comments.nvim)
+---     - [folke/trouble.nvim](https://github.com/folke/trouble.nvim)
+---     - [folke/which-key.nvim](https://github.com/folke/which-key.nvim)
+---     - [ggandor/leap.nvim](https://github.com/ggandor/leap.nvim)
+---     - [ggandor/lightspeed.nvim](https://github.com/ggandor/lightspeed.nvim)
+---     - [glepnir/dashboard-nvim](https://github.com/glepnir/dashboard-nvim)
+---     - [glepnir/lspsaga.nvim](https://github.com/glepnir/lspsaga.nvim)
+---     - [HiPhish/rainbow-delimiters.nvim](https://github.com/HiPhish/rainbow-delimiters.nvim)
+---     - [hrsh7th/nvim-cmp](https://github.com/hrsh7th/nvim-cmp)
+---     - [justinmk/vim-sneak](https://github.com/justinmk/vim-sneak)
+---     - [ibhagwan/fzf-lua](https://github.com/ibhagwan/fzf-lua)
+---     - [kevinhwang91/nvim-bqf](https://github.com/kevinhwang91/nvim-bqf)
+---     - [kevinhwang91/nvim-ufo](https://github.com/kevinhwang91/nvim-ufo)
+---     - [lewis6991/gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim)
+---     - [lukas-reineke/indent-blankline.nvim](https://github.com/lukas-reineke/indent-blankline.nvim)
+---     - [MeanderingProgrammer/render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim)
+---     - [neoclide/coc.nvim](https://github.com/neoclide/coc.nvim)
+---     - [NeogitOrg/neogit](https://github.com/NeogitOrg/neogit)
+---     - [nvim-lualine/lualine.nvim](https://github.com/nvim-lualine/lualine.nvim)
+---     - [nvim-neo-tree/neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim)
+---     - [nvim-telescope/telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+---     - [nvim-tree/nvim-tree.lua](https://github.com/nvim-tree/nvim-tree.lua)
+---     - [OXY2DEV/helpview.nvim](https://github.com/OXY2DEV/helpview.nvim)
+---     - [OXY2DEV/markview.nvim](https://github.com/OXY2DEV/markview.nvim)
+---     - [phaazon/hop.nvim](https://github.com/phaazon/hop.nvim)
+---     - [rcarriga/nvim-dap-ui](https://github.com/rcarriga/nvim-dap-ui)
+---     - [rcarriga/nvim-notify](https://github.com/rcarriga/nvim-notify)
+---     - [rlane/pounce.nvim](https://github.com/rlane/pounce.nvim)
+---     - [romgrk/barbar.nvim](https://github.com/romgrk/barbar.nvim)
+---     - [stevearc/aerial.nvim](https://github.com/stevearc/aerial.nvim)
+---     - [williamboman/mason.nvim](https://github.com/williamboman/mason.nvim)
 ---
 --- # Setup ~
 ---
@@ -91,31 +89,34 @@
 ---     use_cterm = true,
 ---     plugins = {
 ---       default = false,
----       ['echasnovski/mini.nvim'] = true,
+---       ['nvim-mini/mini.nvim'] = true,
 ---     },
 ---   })
 --- <
 --- # Notes ~
 ---
---- 1. This is used to create plugin's colorschemes (see |mini.nvim-color-schemes|).
---- 2. Using `setup()` doesn't actually create a |colorscheme|. It basically
----    creates a coordinated set of |highlight|s. To create your own theme:
+--- 1. This is used to create some of plugin's color schemes
+---    (see |MiniBase16-color-schemes|).
+--- 2. Using `setup()` doesn't actually create a |:colorscheme|. It basically
+---    creates a coordinated set of |highlight-groups|. To create your own theme:
 ---     - Put "myscheme.lua" file (name after your chosen theme name) inside
 ---       any "colors" directory reachable from 'runtimepath' ("colors" inside
 ---       your Neovim config directory is usually enough).
 ---     - Inside "myscheme.lua" call `require('mini.base16').setup()` with your
 ---       palette and only after that set |g:colors_name| to "myscheme".
+---@tag MiniBase16
 
---- Base16 colorschemes ~
+--- # Base16 colorschemes ~
 ---
---- This module comes with several pre-built color schemes. All of them are a
---- |MiniBase16| theme created with faster version of the following Lua code: >lua
+--- This module comes with several pre-built color schemes. Each of them is
+--- a |mini.base16| theme created with faster version of the following Lua code: >lua
 ---
 ---   require('mini.base16').setup({ palette = palette, use_cterm = true })
 --- <
---- Activate them as regular |colorscheme| (for example, `:colorscheme minischeme`).
+--- Activate them as regular |:colorscheme| (for example, `:colorscheme minischeme`).
 ---
 --- ## minischeme ~
+--- *minischeme*
 ---
 --- Blue and yellow main colors with high contrast and saturation palette.
 --- Palettes are: >lua
@@ -127,6 +128,7 @@
 ---   MiniBase16.mini_palette('#e2e5ca', '#002a83', 75)
 --- <
 --- ## minicyan ~
+--- *minicyan*
 ---
 --- Cyan and grey main colors with moderate contrast and saturation palette.
 --- Palettes are: >lua
@@ -137,9 +139,7 @@
 ---   -- For light 'background':
 ---   MiniBase16.mini_palette('#C0D2D2', '#262626', 80)
 --- <
----@tag mini-base16-color-schemes
----@tag minischeme
----@tag minicyan
+---@tag MiniBase16-color-schemes
 
 -- Module definition ==========================================================
 local MiniBase16 = {}
@@ -154,7 +154,7 @@ local H = {}
 --- principles](https://github.com/chriskempson/base16/blob/master/styling.md).
 ---
 --- By default only 'gui highlighting' (see |highlight-gui| and
---- |termguicolors|) is supported. To support 'cterm highlighting' (see
+--- |'termguicolors'|) is supported. To support 'cterm highlighting' (see
 --- |highlight-cterm|) supply `config.use_cterm` argument in one of the formats:
 --- - `true` to auto-generate from `palette` (as closest colors).
 --- - Table with similar structure to `palette` but having terminal colors
@@ -167,15 +167,6 @@ local H = {}
 ---                                    -- needs `palette` field present
 --- <
 MiniBase16.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.base16) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniBase16 = MiniBase16
 
@@ -186,13 +177,9 @@ MiniBase16.setup = function(config)
   H.apply_config(config)
 end
 
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
----@text # Options ~
----
---- ## Plugin integrations ~
+---@text # Plugin integrations ~
 ---
 --- `config.plugins` defines for which supported plugins highlight groups will
 --- be created. Limiting number of integrations slightly decreases startup time.
@@ -206,7 +193,7 @@ end
 ---     palette = require('mini.base16').mini_palette('#112641', '#e2e98f', 75),
 ---     plugins = {
 ---       default = false,
----       ['echasnovski/mini.nvim'] = true,
+---       ['nvim-mini/mini.nvim'] = true,
 ---     }
 ---   })
 --- <
@@ -496,9 +483,11 @@ H.apply_palette = function(palette, use_cterm)
   hi('DiffChange',     {fg=p.base0E, bg=p.base01, attr=nil,            sp=nil})
   hi('DiffDelete',     {fg=p.base08, bg=p.base01, attr=nil,            sp=nil})
   hi('DiffText',       {fg=p.base0D, bg=p.base01, attr=nil,            sp=nil})
+  hi('DiffTextAdd',    {link='DiffAdd'})
   hi('Directory',      {fg=p.base0D, bg=nil,      attr=nil,            sp=nil})
   hi('EndOfBuffer',    {fg=p.base03, bg=nil,      attr=nil,            sp=nil})
-  hi('ErrorMsg',       {fg=p.base08, bg=p.base00, attr=nil,            sp=nil})
+  hi('ErrorMsg',       {fg=p.base08, bg=nil,      attr=nil,            sp=nil})
+  hi('FloatBorder',    {link='NormalFloat'})
   hi('FoldColumn',     {fg=p.base0C, bg=p.base01, attr=nil,            sp=nil})
   hi('Folded',         {fg=p.base03, bg=p.base01, attr=nil,            sp=nil})
   hi('IncSearch',      {fg=p.base01, bg=p.base09, attr=nil,            sp=nil})
@@ -511,19 +500,20 @@ H.apply_palette = function(palette, use_cterm)
   hi('MatchParen',     {fg=nil,      bg=p.base02, attr=nil,            sp=nil})
   hi('ModeMsg',        {fg=p.base0B, bg=nil,      attr=nil,            sp=nil})
   hi('MoreMsg',        {fg=p.base0B, bg=nil,      attr=nil,            sp=nil})
-  hi('MsgArea',        {fg=p.base05, bg=p.base00, attr=nil,            sp=nil})
-  hi('MsgSeparator',   {fg=p.base04, bg=p.base02, attr=nil,            sp=nil})
+  hi('MsgArea',        {link='Normal'})
+  hi('MsgSeparator',   {fg=p.base02, bg=p.base02, attr=nil,            sp=nil})
   hi('NonText',        {fg=p.base03, bg=nil,      attr=nil,            sp=nil})
   hi('Normal',         {fg=p.base05, bg=p.base00, attr=nil,            sp=nil})
   hi('NormalFloat',    {fg=p.base05, bg=p.base01, attr=nil,            sp=nil})
   hi('NormalNC',       {fg=p.base05, bg=p.base00, attr=nil,            sp=nil})
+  hi('OkMsg',          {fg=p.base0B, bg=nil,      attr=nil,            sp=nil})
   hi('Pmenu',          {fg=p.base05, bg=p.base01, attr=nil,            sp=nil})
-  hi('PmenuExtra',     {fg=p.base05, bg=p.base01, attr=nil,            sp=nil})
-  hi('PmenuExtraSel',  {fg=p.base05, bg=p.base01, attr='reverse',      sp=nil})
-  hi('PmenuKind',      {fg=p.base05, bg=p.base01, attr=nil,            sp=nil})
-  hi('PmenuKindSel',   {fg=p.base05, bg=p.base01, attr='reverse',      sp=nil})
-  hi('PmenuMatch',     {fg=p.base05, bg=p.base01, attr='bold',         sp=nil})
-  hi('PmenuMatchSel',  {fg=p.base05, bg=p.base01, attr='bold,reverse', sp=nil})
+  hi('PmenuExtra',     {link='Pmenu'})
+  hi('PmenuExtraSel',  {link='PmenuSel'})
+  hi('PmenuKind',      {link='Pmenu'})
+  hi('PmenuKindSel',   {link='PmenuSel'})
+  hi('PmenuMatch',     {fg=p.base05, bg=nil,      attr='bold',         sp=nil})
+  hi('PmenuMatchSel',  {fg=p.base05, bg=nil,      attr='bold,reverse', sp=nil})
   hi('PmenuSbar',      {fg=nil,      bg=p.base02, attr=nil,            sp=nil})
   hi('PmenuSel',       {fg=p.base05, bg=p.base01, attr='reverse',      sp=nil})
   hi('PmenuThumb',     {fg=nil,      bg=p.base07, attr=nil,            sp=nil})
@@ -538,6 +528,8 @@ H.apply_palette = function(palette, use_cterm)
   hi('SpellRare',      {fg=nil,      bg=nil,      attr='undercurl',    sp=p.base0E})
   hi('StatusLine',     {fg=p.base04, bg=p.base02, attr=nil,            sp=nil})
   hi('StatusLineNC',   {fg=p.base03, bg=p.base01, attr=nil,            sp=nil})
+  hi('StderrMsg',      {link='ErrorMsg'})
+  hi('StdoutMsg',      {link='MsgArea'})
   hi('Substitute',     {fg=p.base01, bg=p.base0A, attr=nil,            sp=nil})
   hi('TabLine',        {fg=p.base03, bg=p.base01, attr=nil,            sp=nil})
   hi('TabLineFill',    {fg=p.base03, bg=p.base01, attr=nil,            sp=nil})
@@ -660,7 +652,8 @@ H.apply_palette = function(palette, use_cterm)
   hi('LspCodeLensSeparator', {link='Comment'})
 
   -- Built-in snippets
-  hi('SnippetTabstop', {link='Visual'})
+  hi('SnippetTabstop',       {link='Visual'})
+  hi('SnippetTabstopActive', {link='SnippetTabstop'})
 
   -- Built-in markdown syntax
   hi('markdownH1', {fg=p.base09, bg=nil, attr=nil, sp=nil})
@@ -684,14 +677,10 @@ H.apply_palette = function(palette, use_cterm)
   hi('@text.strike',    {fg=nil, bg=nil, attr='strikethrough', sp=nil})
   hi('@text.underline', {link='Underlined'})
 
-  -- Semantic tokens
-  if vim.fn.has('nvim-0.9') == 1 then
-    -- Source: `:h lsp-semantic-highlight`
-    -- Included only those differing from default links
-    hi('@lsp.type.variable',      {fg=p.base05, bg=nil, attr=nil, sp=nil})
-
-    hi('@lsp.mod.deprecated',     {fg=p.base08, bg=nil, attr=nil, sp=nil})
-  end
+  -- Semantic tokens. Source: `:h lsp-semantic-highlight`.
+  -- Included only those differing from default links
+  hi('@lsp.type.variable',  {fg=p.base05, bg=nil, attr=nil, sp=nil})
+  hi('@lsp.mod.deprecated', {fg=p.base08, bg=nil, attr=nil, sp=nil})
 
   -- New tree-sitter groups
   if vim.fn.has('nvim-0.10') == 1 then
@@ -711,15 +700,17 @@ H.apply_palette = function(palette, use_cterm)
 
     hi('@string.special.vimdoc',     {link='SpecialChar'})
     hi('@variable.parameter.vimdoc', {fg=p.base09, bg=nil, attr=nil, sp=nil})
+    hi('@markup.heading.4.vimdoc',   {link='Title'})
   end
 
   -- Plugins
-  -- echasnovski/mini.nvim
-  if H.has_integration('echasnovski/mini.nvim') then
+  -- nvim-mini/mini.nvim
+  -- TODO: Remove 'echasnovski/mini.nvim' fallback after September 2026
+  if H.has_integration('nvim-mini/mini.nvim') or H.has_integration('echasnovski/mini.nvim') then
     hi('MiniAnimateCursor',      {fg=nil, bg=nil, attr='reverse,nocombine', sp=nil})
     hi('MiniAnimateNormalFloat', {link='NormalFloat'})
 
-    hi('MiniClueBorder',              {link='NormalFloat'})
+    hi('MiniClueBorder',              {link='FloatBorder'})
     hi('MiniClueDescGroup',           {link='DiagnosticFloatingWarn'})
     hi('MiniClueDescSingle',          {link='NormalFloat'})
     hi('MiniClueNextKey',             {link='DiagnosticFloatingHint'})
@@ -727,7 +718,15 @@ H.apply_palette = function(palette, use_cterm)
     hi('MiniClueSeparator',           {link='DiagnosticFloatingInfo'})
     hi('MiniClueTitle',               {fg=p.base0D, bg=p.base01, attr='bold', sp=nil})
 
+    hi('MiniCmdlinePeekBorder', {link='FloatBorder'})
+    hi('MiniCmdlinePeekLineNr', {link='DiagnosticSignWarn'})
+    hi('MiniCmdlinePeekNormal', {link='NormalFloat'})
+    hi('MiniCmdlinePeekSep',    {link='SignColumn'})
+    hi('MiniCmdlinePeekSign',   {link='DiagnosticSignHint'})
+    hi('MiniCmdlinePeekTitle',  {fg=p.base0D, bg=p.base01, attr='bold', sp=nil})
+
     hi('MiniCompletionActiveParameter',    {link='LspSignatureActiveParameter'})
+    hi('MiniCompletionDeprecated',         {link='DiagnosticDeprecated'})
     hi('MiniCompletionInfoBorderOutdated', {link='DiagnosticFloatingWarn'})
 
     hi('MiniCursorword',        {fg=nil, bg=nil, attr='underline', sp=nil})
@@ -754,7 +753,7 @@ H.apply_palette = function(palette, use_cterm)
     hi('MiniDiffOverContextBuf', {})
     hi('MiniDiffOverDelete',     {link='DiffDelete'})
 
-    hi('MiniFilesBorder',         {link='NormalFloat'})
+    hi('MiniFilesBorder',         {link='FloatBorder'})
     hi('MiniFilesBorderModified', {link='DiagnosticFloatingWarn'})
     hi('MiniFilesCursorLine',     {fg=nil,      bg=p.base02, attr=nil,    sp=nil})
     hi('MiniFilesDirectory',      {link='Directory'})
@@ -793,14 +792,14 @@ H.apply_palette = function(palette, use_cterm)
     hi('MiniMapSymbolLine',  {fg=p.base0D, bg=nil,      attr=nil, sp=nil})
     hi('MiniMapSymbolView',  {fg=p.base0F, bg=nil,      attr=nil, sp=nil})
 
-    hi('MiniNotifyBorder',      {link='NormalFloat'})
+    hi('MiniNotifyBorder',      {link='FloatBorder'})
     hi('MiniNotifyLspProgress', {link='MiniNotifyNormal'})
     hi('MiniNotifyNormal',      {link='NormalFloat'})
     hi('MiniNotifyTitle',       {link='FloatTitle'})
 
     hi('MiniOperatorsExchangeFrom', {link='IncSearch'})
 
-    hi('MiniPickBorder',        {link='NormalFloat'})
+    hi('MiniPickBorder',        {link='FloatBorder'})
     hi('MiniPickBorderBusy',    {fg=p.base0E, bg=p.base01, attr=nil,         sp=nil})
     hi('MiniPickBorderText',    {fg=p.base0D, bg=p.base01, attr='bold',      sp=nil})
     hi('MiniPickCursor',        {fg=nil,      bg=nil,      attr='nocombine', sp=nil, blend=100})
@@ -823,7 +822,7 @@ H.apply_palette = function(palette, use_cterm)
     hi('MiniSnippetsUnvisited',      {fg=nil, bg=nil, attr='underdouble', sp=p.base0D})
     hi('MiniSnippetsVisited',        {fg=nil, bg=nil, attr='underdouble', sp=p.base0C})
 
-    hi('MiniStarterCurrent',    {fg=nil,      bg=nil, attr=nil,    sp=nil})
+    hi('MiniStarterCurrent',    {link='MiniStarterItem'})
     hi('MiniStarterFooter',     {fg=p.base0D, bg=nil, attr=nil,    sp=nil})
     hi('MiniStarterHeader',     {fg=p.base0D, bg=nil, attr=nil,    sp=nil})
     hi('MiniStarterInactive',   {link='Comment'})
@@ -847,7 +846,7 @@ H.apply_palette = function(palette, use_cterm)
     hi('MiniSurround', {link='IncSearch'})
 
     hi('MiniTablineCurrent',         {fg=p.base05, bg=p.base02, attr='bold', sp=nil})
-    hi('MiniTablineFill',            {fg=nil,      bg=nil,      attr=nil,    sp=nil})
+    hi('MiniTablineFill',            {link='Normal'})
     hi('MiniTablineHidden',          {fg=p.base04, bg=p.base01, attr=nil,    sp=nil})
     hi('MiniTablineModifiedCurrent', {fg=p.base02, bg=p.base05, attr='bold', sp=nil})
     hi('MiniTablineModifiedHidden',  {fg=p.base01, bg=p.base04, attr=nil,    sp=nil})
@@ -899,6 +898,9 @@ H.apply_palette = function(palette, use_cterm)
     hi('NoiceCmdlinePopupBorder', {fg=p.base0D, bg=nil, attr=nil, sp=nil})
     hi('NoiceConfirmBorder',      {fg=p.base0E, bg=nil, attr=nil, sp=nil})
   end
+
+  -- folke/snacks.nvim
+  -- Everything works correctly out of the box
 
   -- folke/trouble.nvim
   if H.has_integration('folke/trouble.nvim') then
@@ -1109,7 +1111,7 @@ H.apply_palette = function(palette, use_cterm)
     hi('RenderMarkdownBullet',     {fg=p.base0E, bg=nil,      attr=nil, sp=nil})
     hi('RenderMarkdownChecked',    {link='DiagnosticOk'})
     hi('RenderMarkdownCode',       {fg=nil,      bg=p.base01, attr=nil, sp=nil})
-    hi('RenderMarkdownCodeInline', {fg=nil,      bg=nil,      attr=nil, sp=nil})
+    hi('RenderMarkdownCodeInline', {link='Normal'})
     hi('RenderMarkdownDash',       {fg=p.base0E, bg=nil,      attr=nil, sp=nil})
     hi('RenderMarkdownH1',         {fg=p.base09, bg=nil,      attr=nil, sp=nil})
     hi('RenderMarkdownH1Bg',       {fg=nil,      bg=p.base01, attr=nil, sp=nil})

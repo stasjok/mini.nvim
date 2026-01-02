@@ -10,12 +10,7 @@ local child = helpers.new_child_neovim()
 local expect, eq = helpers.expect, helpers.expect.equality
 local new_set = MiniTest.new_set
 
-local fs_normalize = vim.fs.normalize
-if vim.fn.has('nvim-0.9') == 0 then
-  fs_normalize = function(...) return vim.fs.normalize(...):gsub('(.)/+$', '%1') end
-end
-
-local project_root = fs_normalize(vim.fn.getcwd())
+local project_root = vim.fs.normalize(vim.fn.getcwd())
 local empty_dir_relpath = 'tests/dir-sessions/empty'
 local empty_dir_path = project_root .. '/' .. empty_dir_relpath
 
@@ -26,7 +21,7 @@ local unload_module = function() child.mini_unload('sessions') end
 local reload_module = function(config) unload_module(); load_module(config) end
 local reload_from_strconfig = function(strconfig) unload_module(); child.mini_load_strconfig('sessions', strconfig) end
 local set_lines = function(...) return child.set_lines(...) end
-local make_path = function(...) return fs_normalize(table.concat({...}, '/')) end
+local make_path = function(...) return vim.fs.normalize(table.concat({...}, '/')) end
 local cd = function(...) child.cmd('cd ' .. make_path(...)) end
 local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
@@ -242,7 +237,7 @@ T['setup()']['detects sessions and respects `config.directory`'] = function()
   eq(type(detected), 'table')
   local keys = vim.tbl_keys(detected)
   table.sort(keys)
-  eq(keys, { 'Session.vim', 'session1', 'session2.vim', 'session3.lua' })
+  eq(keys, { '.session', 'Session.vim', 'session1', 'session2.vim', 'session3.lua' })
 
   -- Elements should have correct structure
   local cur_dir = child.fn.getcwd()
@@ -481,12 +476,12 @@ T['read()']['does not stop on source error'] = function()
   eq(#buffers, 2)
 
   child.api.nvim_set_current_buf(buffers[1])
-  local buf_name_1 = fs_normalize(child.api.nvim_buf_get_name(0))
+  local buf_name_1 = child.fs.normalize(child.api.nvim_buf_get_name(0))
   eq(vim.endswith(buf_name_1, '/' .. folded_file), true)
   eq(child.api.nvim_buf_get_lines(0, 0, -1, true), { 'No folds in this file' })
 
   child.api.nvim_set_current_buf(buffers[2])
-  local buf_name_2 = fs_normalize(child.api.nvim_buf_get_name(0))
+  local buf_name_2 = child.fs.normalize(child.api.nvim_buf_get_name(0))
   eq(vim.endswith(buf_name_2, '/' .. extra_file), true)
   eq(child.api.nvim_buf_get_lines(0, 0, -1, true), { 'This should be preserved in session' })
 end
@@ -495,12 +490,20 @@ T['read()']['writes current session prior to reading a new one'] = function()
   local cur_session = project_root .. '/tests/dir-sessions/global/current-session'
   MiniTest.finally(function() child.fn.delete(cur_session) end)
 
-  reload_module({ autowrite = false, directory = 'tests/dir-sessions/global' })
-  child.v.this_session = cur_session
+  local validate = function(ref_autowrite)
+    reload_module({ autowrite = false, directory = 'tests/dir-sessions/global' })
+    child.v.this_session = cur_session
+    child.lua('MiniSessions.config.autowrite = ' .. tostring(ref_autowrite))
 
-  eq(child.fn.filereadable(cur_session), 0)
-  child.lua([[MiniSessions.read('session1')]])
-  eq(child.fn.filereadable(cur_session), 1)
+    eq(child.fn.filereadable(cur_session), 0)
+    child.lua('MiniSessions.read("session1")')
+    -- Should only write current if `autowrite` is enabled
+    eq(child.fn.filereadable(cur_session), ref_autowrite and 1 or 0)
+    child.fn.delete(cur_session)
+  end
+
+  validate(true)
+  validate(false)
 end
 
 T['read()']['respects hooks from `config` and `opts` argument'] = new_set({

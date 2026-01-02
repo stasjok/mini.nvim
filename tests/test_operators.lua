@@ -132,7 +132,9 @@ end
 
 T['setup()']['removes built-in LSP mappings'] = function()
   eq(child.fn.maparg('gra'), '')
+  eq(child.fn.maparg('gri'), '')
   eq(child.fn.maparg('grn'), '')
+  eq(child.fn.maparg('grt'), '')
 end
 
 T['setup()']['remaps built-in `gx` mappings'] = function()
@@ -148,16 +150,18 @@ T['setup()']['remaps built-in `gx` mappings'] = function()
   validate('vgX', 2)
 
   -- Should remap only built-in `gx`
+  child.lua('vim.keymap.del({ "n", "x" }, "gX")')
   child.lua('vim.keymap.set({ "n", "x" }, "gx", function() _G.n = _G.n + 5 end)')
   child.lua('MiniOperators.setup()')
-  validate('gX', 3)
-  validate('vgX', 4)
+  validate('gX', 2)
+  validate('vgX', 2)
 
   -- Should not override already present mapping
+  child.lua('vim.keymap.set({ "n", "x" }, "gx", function() _G.n = _G.n + 5 end, { desc = "URI under cursor" })')
   child.lua('vim.keymap.set({ "n", "x" }, "gX", function() _G.n = _G.n + 10 end)')
   child.lua('MiniOperators.setup()')
-  validate('gX', 14)
-  validate('vgX', 24)
+  validate('gX', 12)
+  validate('vgX', 22)
 end
 
 T['evaluate()'] = new_set()
@@ -461,6 +465,15 @@ T['Evaluate']['works in Normal mode for line'] = function()
 
   -- With dot-repeat
   validate_edit({ '1 + 1', '1 + 2' }, { 1, 0 }, { 'g==', 'j', '.' }, { '2', '3' }, { 2, 0 })
+end
+
+T['Evaluate']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  child.lua('_G.x = 1')
+  set_lines({ 'xxx' })
+  set_cursor(1, 1)
+  type_keys('g=', 'w')
+  eq(get_lines(), { 'xxx' })
 end
 
 T['Evaluate']['works in Visual mode'] = function()
@@ -801,6 +814,31 @@ T['Exchange']['works with `[count]` in Normal mode for line'] = function()
   )
 end
 
+T['Exchange']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+
+  -- On step one
+  set_lines({ 'xxx', 'yyy' })
+  set_cursor(1, 1)
+  type_keys('gx', 'w')
+  eq(child.fn.maparg('<C-c>'), '')
+  -- - Should ignore previous time and treat this as step one
+  type_keys('j', 'gx', '$')
+  eq(get_lines(), { 'xxx', 'yyy' })
+  type_keys('k', 'gx', '$')
+  eq(get_lines(), { 'xyy', 'yxx' })
+
+  -- On step two
+  set_lines({ 'xxx', 'yyy' })
+  set_cursor(1, 1)
+  type_keys('gx', 'iw')
+  -- - Should ignore this one while still allowing proper step two
+  type_keys('jl', 'gx', 'w')
+  eq(get_lines(), { 'xxx', 'yyy' })
+  type_keys('gx', '$')
+  eq(get_lines(), { 'yy', 'yxxx' })
+end
+
 T['Exchange']['works in Visual mode'] = function()
   -- Charwise from - Charwise to
   validate_edit1d('aa bb', 0, { 'viwgx', 'w', 'viwgx' }, 'bb aa', 3)
@@ -860,7 +898,6 @@ T['Exchange']['works with different `virtualedit`'] = function()
     validate_edit({ 'aa', 'bb', 'cc' }, { 3, 0 }, { 'V', 'gx', 'k', 'V', 'gx' }, { 'aa', 'cc', 'bb' }, { 2, 0 })
 
     -- Blockwise
-    if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
     child.lua([[vim.keymap.set('o', 'ie', function() vim.cmd('normal! \22j') end)]])
     validate_edit({ 'abc', 'def' }, { 1, 0 }, { 'gx', 'ie', 'l', 'gx', 'ie' }, { 'bac', 'edf' }, { 1, 1 })
     validate_edit({ 'abc', 'def' }, { 1, 1 }, { 'gx', 'ie', 'l', 'gx', 'ie' }, { 'acb', 'dfe' }, { 1, 2 })
@@ -1267,8 +1304,6 @@ T['Multiply']['works linewise in Normal mode'] = function()
 end
 
 T['Multiply']['works blockwise in Normal mode'] = function()
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
-
   -- Validate for all four ways to create block
   child.lua([[vim.keymap.set('o', 'ia', function() vim.cmd('normal! \22jl') end)]])
   child.lua([[vim.keymap.set('o', 'ib', function() vim.cmd('normal! \22jh') end)]])
@@ -1299,8 +1334,6 @@ T['Multiply']['works blockwise in Normal mode'] = function()
 end
 
 T['Multiply']['works with two types of `[count]` in Normal mode'] = function()
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
-
   child.lua([[vim.keymap.set('o', 'ia', function() vim.cmd('normal! \22j' .. vim.v.count1 .. 'l') end)]])
 
   -- Second `[count]` for textobject with dot-repeat
@@ -1353,13 +1386,33 @@ T['Multiply']['works with `[count]` in Normal mode for line'] = function()
   validate_edit({ 'aa', 'bb' }, { 1, 0 }, { '2gmm', '2j', '.' }, { 'aa', 'aa', 'aa', 'bb', 'bb', 'bb' }, { 5, 0 })
 end
 
+T['Multiply']['works with `cmdheight=0`'] = function()
+  child.set_size(7, 20)
+  child.o.cmdheight = 0
+  child.o.statusline = 'My statusline'
+  -- Force quick test for regular `gm` operator
+  child.api.nvim_del_keymap('n', 'gmm')
+
+  set_lines({ 'aa bb' })
+  type_keys('gm')
+  child.expect_screenshot({ redraw = false })
+  type_keys('iw')
+  child.expect_screenshot({ redraw = false })
+end
+
+T['Multiply']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  set_lines({ 'xxx' })
+  set_cursor(1, 1)
+  type_keys('gm', 'w')
+  eq(get_lines(), { 'xxx' })
+end
+
 T['Multiply']['works in Visual mode'] = function()
   validate_edit1d('aa bb', 0, { 'viw', 'gm' }, 'aaaa bb', 2)
 
   validate_edit({ 'aa', 'bb' }, { 1, 0 }, { 'V', 'gm' }, { 'aa', 'aa', 'bb' }, { 2, 0 })
   validate_edit({ '  aa', 'bb' }, { 1, 0 }, { 'V', 'gm' }, { '  aa', '  aa', 'bb' }, { 2, 2 })
-
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
 
   local lines = { 'ab rs', 'cd uv' }
   local ref_lines, ref_cursor = { 'abab rs', 'cdcd uv' }, { 1, 2 }
@@ -1374,8 +1427,6 @@ T['Multiply']['works with `[count]` in Visual mode'] = function()
 
   validate_edit({ 'aa', 'bb' }, { 1, 0 }, { 'V', '2gm' }, { 'aa', 'aa', 'aa', 'bb' }, { 2, 0 })
   validate_edit({ '  aa', 'bb' }, { 1, 0 }, { 'V', '2gm' }, { '  aa', '  aa', '  aa', 'bb' }, { 2, 2 })
-
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
 
   local lines = { 'ab rs', 'cd uv' }
   local ref_lines, ref_cursor = { 'ababab rs', 'cdcdcd uv' }, { 1, 2 }
@@ -1406,7 +1457,6 @@ T['Multiply']['works with different `virtualedit`'] = function()
     validate_edit({ 'aa', 'bb', 'cc' }, { 3, 0 }, { 'V', 'gm' }, { 'aa', 'bb', 'cc', 'cc' }, { 4, 0 })
 
     -- Blockwise
-    if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
     child.lua([[vim.keymap.set('o', 'ie', function() vim.cmd('normal! \22j') end)]])
     validate_edit({ 'abc', 'def' }, { 1, 0 }, { 'gm', 'ie' }, { 'aabc', 'ddef' }, { 1, 1 })
     validate_edit({ 'abc', 'def' }, { 1, 1 }, { 'gm', 'ie' }, { 'abbc', 'deef' }, { 1, 2 })
@@ -1462,8 +1512,6 @@ T['Multiply']['respects `config.multiply.func`'] = function()
 
   validate_edit1d('aa bb', 0, { 'gmiw' }, 'aaaa bb', 2)
   validate_edit({ 'aa', 'bb', '', 'cc' }, { 1, 0 }, { 'gmip' }, { 'aa', 'bb', '  aa', '  bb', '', 'cc' }, { 3, 2 })
-
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
   validate_edit({ 'ab', 'cd' }, { 1, 0 }, { '<C-v>j', 'gm' }, { 'aab', 'ccd' }, { 1, 1 })
 end
 
@@ -1550,8 +1598,6 @@ T['Multiply']['respects `selection=exclusive`'] = function()
   validate_edit({ 'aa', 'bb' }, { 1, 0 }, { 'V', 'gm' }, { 'aa', 'aa', 'bb' }, { 2, 0 })
 
   -- Blockwise for all four ways to create block
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
-
   -- - Normal mode
   child.lua([[_G.block_object = function(keys)
     return function()
@@ -1747,6 +1793,21 @@ T['Replace']['works with two types of `[count]` in Normal mode'] = function()
   validate_edit1d('aa bb cc dd ee', 0, { 'yiw', 'w', '2gr2aW', '.' }, 'aaaaaa', 2)
 end
 
+T['Replace']['works with `cmdheight=0`'] = function()
+  child.set_size(7, 20)
+  child.o.cmdheight = 0
+  child.o.statusline = 'My statusline'
+  -- Force quick test for regular `gr` operator
+  child.api.nvim_del_keymap('n', 'grr')
+
+  set_lines({ 'aa bb' })
+  type_keys('yiw', 'w')
+  type_keys('gr')
+  child.expect_screenshot({ redraw = false })
+  type_keys('iw')
+  child.expect_screenshot({ redraw = false })
+end
+
 T['Replace']['works in Normal mode for line'] = function()
   validate_edit({ 'aa', 'bb' }, { 1, 1 }, { 'yy', 'j', 'grr' }, { 'aa', 'aa' }, { 2, 0 })
 
@@ -1765,6 +1826,15 @@ T['Replace']['works with `[count]` in Normal mode for line'] = function()
     { 'aa', 'aa', 'aa', 'aa', 'aa' },
     { 4, 0 }
   )
+end
+
+T['Replace']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  set_lines({ 'xxx', 'yyy' })
+  set_cursor(1, 1)
+  type_keys('yiw', 'jl')
+  type_keys('gr', 'w')
+  eq(get_lines(), { 'xxx', 'yyy' })
 end
 
 T['Replace']['works in Visual mode'] = function()
@@ -2165,6 +2235,14 @@ T['Sort']['works in Normal mode for line'] = function()
   validate_edit({ 't, r, s', 'c, a, b' }, { 1, 0 }, { 'gss', 'j', '.' }, { 'r, s, t', 'a, b, c' }, { 2, 0 })
 end
 
+T['Sort']['works with empty textobject/motion'] = function()
+  child.api.nvim_set_keymap('o', 'w', '<Cmd><CR>', {})
+  set_lines({ 'fedcba' })
+  set_cursor(1, 1)
+  type_keys('gs', 'w')
+  eq(get_lines(), { 'fedcba' })
+end
+
 T['Sort']['works in Visual mode'] = function()
   -- Charwise region
   validate_edit1d('c, a, b', 0, { 'v$', 'gs' }, 'a, b, c', 0)
@@ -2200,7 +2278,6 @@ T['Sort']['works with different `virtualedit`'] = function()
     validate_edit({ 'cc', 'bb', 'aa' }, { 1, 0 }, { 'V2j', 'gs' }, { 'aa', 'bb', 'cc' }, { 1, 0 })
 
     -- Blockwise
-    if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Blockwise selection has core issues on Neovim<0.9.') end
     child.lua([[vim.keymap.set('o', 'iE', function() vim.cmd('normal! \22jj') end)]])
     validate_edit({ 'cba', 'bac', 'acb' }, { 1, 0 }, { 'gs', 'iE' }, { 'aba', 'bac', 'ccb' }, { 1, 0 })
     validate_edit({ 'cba', 'bac', 'acb' }, { 1, 1 }, { 'gs', 'iE' }, { 'caa', 'bbc', 'acb' }, { 1, 1 })

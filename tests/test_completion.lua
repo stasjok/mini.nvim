@@ -22,13 +22,6 @@ local mock_lsp = function() child.cmd('luafile tests/mock-lsp/months.lua') end
 local new_buffer = function() child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false)) end
 --stylua: ignore end
 
--- Tweak `expect_screenshot()` to test only on Neovim>=0.9 (0.8 has no titles)
-child.expect_screenshot_orig = child.expect_screenshot
-child.expect_screenshot = function(opts)
-  if child.fn.has('nvim-0.9') == 0 then return end
-  child.expect_screenshot_orig(opts)
-end
-
 local forward_lua = function(fun_str)
   local lua_cmd = fun_str .. '(...)'
   return function(...) return child.lua_get(lua_cmd, { ... }) end
@@ -69,19 +62,26 @@ local mock_lsp_items = function(items, client_id)
   ]])
 end
 
+local mock_event_log = function()
+  child.lua([[
+    _G.log = {}
+    local events = { 'MiniCompletionWindowOpen', 'MiniCompletionWindowUpdate' }
+    local log_event = function(ev)
+      table.insert(_G.log, { event = ev.match, data = ev.data })
+    end
+    vim.api.nvim_create_autocmd('User', { pattern = events, callback = log_event })
+  ]])
+end
+
 local mock_custom_window_config = function()
   child.lua([[
-    vim.api.nvim_create_autocmd('BufWinEnter', {
-    callback = function(args)
-      local buf_id = args.buf
-      local completion_type = vim.api.nvim_buf_get_name(buf_id):match('^minicompletion://%d+/(.*)$')
-      if completion_type == nil then return end
-
-      local win_id = vim.fn.win_findbuf(buf_id)[1]
-      local config = vim.api.nvim_win_get_config(win_id)
-      config.title, config.title_pos = 'Custom', 'right'
-      vim.api.nvim_win_set_config(win_id, config)
-    end,
+    vim.api.nvim_create_autocmd('User', {
+      pattern = { 'MiniCompletionWindowOpen', 'MiniCompletionWindowUpdate' },
+      callback = function(ev)
+        local config = vim.api.nvim_win_get_config(ev.data.win_id)
+        config.title, config.title_pos = 'Custom', 'right'
+        vim.api.nvim_win_set_config(ev.data.win_id, config)
+      end,
     })
   ]])
 end
@@ -158,6 +158,7 @@ T['setup()']['creates side effects'] = function()
   child.cmd('hi clear')
   load_module()
   expect.match(child.cmd_capture('hi MiniCompletionActiveParameter'), 'links to LspSignatureActiveParameter')
+  expect.match(child.cmd_capture('hi MiniCompletionDeprecated'), 'links to DiagnosticDeprecated')
   expect.match(child.cmd_capture('hi MiniCompletionInfoBorderOutdated'), 'links to DiagnosticFloatingWarn')
 end
 
@@ -274,15 +275,18 @@ end
 
 T['setup()']['sets recommended option values'] = function()
   expect.match(child.o.shortmess, 'c')
-  if child.fn.has('nvim-0.9') == 1 then expect.match(child.o.shortmess, 'C') end
+  expect.match(child.o.shortmess, 'C')
   eq(child.o.completeopt, 'menuone,noselect')
+  eq(child.o.complete:find('t'), nil)
 
   -- Should not set if was previously set
   child.o.shortmess = 'ltToO'
   child.o.completeopt = 'menu,noinsert'
+  child.o.complete = '.,w,b,u,t'
   reload_module()
   eq(child.o.shortmess, 'ltToO')
   eq(child.o.completeopt, 'menu,noinsert')
+  eq(child.o.complete, '.,w,b,u,t')
 end
 
 T['default_process_items()'] = new_set({
@@ -327,21 +331,50 @@ T['default_process_items()']['works'] = function()
   eq(child.lua_get('MiniCompletion.default_process_items(_G.items, "l")'), ref_fuzzy_items)
 end
 
+T['default_process_items()']['highlights deprecated items'] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'abbr_hlgroup' field is present on Neovim>=0.11") end
+
+  child.lua([[
+    _G.items[1].deprecated = true
+    _G.items[6].tags = { vim.lsp.protocol.CompletionTag.Deprecated }
+    -- Should not override already set `abbr_hlgroup`
+    _G.items[7].abbr_hlgroup = 'String'
+  ]])
+  local tags = child.lua_get('{ vim.lsp.protocol.CompletionTag.Deprecated }')
+
+  local ref_processed_items = {
+    { abbr_hlgroup = 'MiniCompletionDeprecated', deprecated = true, kind = 1, label = 'January', sortText = '001' },
+    { abbr_hlgroup = 'String', kind = 3, label = 'June', sortText = '006' },
+    { abbr_hlgroup = 'MiniCompletionDeprecated', tags = tags, kind = 100, label = 'July', sortText = '007' },
+  }
+  eq(child.lua_get('MiniCompletion.default_process_items(_G.items, "J")'), ref_processed_items)
+
+  -- Should not modify original items
+  eq(child.lua_get('_G.items[1].abbr_hlgroup'), vim.NIL)
+end
+
 T['default_process_items()']["highlights LSP kind if 'mini.icons' is enabled"] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip("'kind_hlgroup' field is present on Neovim>=0.11") end
 
   mock_miniicons()
   local ref_hlgroup = child.lua_get('_G.ref_hlgroup')
   local ref_processed_items = {
-    { kind = 1, kind_hlgroup = ref_hlgroup.text, label = 'January', sortText = '001' },
-    { kind = 3, kind_hlgroup = ref_hlgroup.func, label = 'June', sortText = '006' },
+    { kind_hlgroup = ref_hlgroup.text, kind = 1, label = 'January', sortText = '001' },
+    { kind_hlgroup = ref_hlgroup.func, kind = 3, label = 'June', sortText = '006' },
     -- Unknown kind should not get highlighted
-    { kind = 100, kind_hlgroup = nil, label = 'July', sortText = '007' },
+    { kind_hlgroup = nil, kind = 100, label = 'July', sortText = '007' },
   }
   eq(child.lua_get('MiniCompletion.default_process_items(_G.items, "J")'), ref_processed_items)
 
   -- Should not modify original items
   eq(child.lua_get('_G.items[1].kind_hlgroup'), vim.NIL)
+
+  -- Should not override already set `kind_hlgroup`
+  local out = child.lua([[
+    _G.items[5].kind_hlgroup = 'Comment'
+    return MiniCompletion.default_process_items(_G.items, 'F')
+  ]])
+  eq(out, { { kind_hlgroup = 'Comment', kind = 1, label = 'February', sortText = '002' } })
 end
 
 T['default_process_items()']['works after `MiniIcons.tweak_lsp_kind()`'] = function()
@@ -400,7 +433,7 @@ T['default_process_items()']['respects `opts.filtersort`'] = function()
 end
 
 T['default_process_items()']['prefers match at start instead of camel case at end'] = function()
-  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip('Only Neovim>=0.12 allows `camelcase=false` in `matchfuzzy`') end
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip('Only Neovim>=0.12 has improved fuzzy matching support') end
 
   local items = {
     { kind = 1, label = 'MyClass' },
@@ -561,7 +594,7 @@ T['Autocompletion']['works without LSP clients'] = function()
 
   -- Completion menu is filtered after entering characters
   type_keys('a')
-  child.set_size(10, 20)
+  child.set_size(10, 30)
   child.expect_screenshot()
 end
 
@@ -603,13 +636,13 @@ T['Autocompletion']['forces new LSP completion at LSP trigger'] = new_set(
   -- how certain completion events (`CompleteDonePre`) are triggered, which
   -- affects whether autocompletion is done in certain cases (for example, when
   -- completion candidate is fully typed).
-  -- See https://github.com/echasnovski/mini.nvim/issues/813
+  -- See https://github.com/nvim-mini/mini.nvim/issues/813
   { parametrize = { { 'completefunc' }, { 'omnifunc' } } },
   {
     test = function(source_func)
       reload_module({ lsp_completion = { source_func = source_func } })
       mock_completefunc_lsp_tracking()
-      child.set_size(16, 20)
+      child.set_size(16, 30)
       child.api.nvim_set_current_buf(child.api.nvim_create_buf(true, false))
 
       --stylua: ignore
@@ -1072,7 +1105,7 @@ T['Manual completion']['respects `filterText` from LSP response'] = function()
   set_lines({})
   type_keys('i', 'months.')
   -- Mock `textEdit` and `filterText` as in `tsserver` when called after `.`
-  -- (see https://github.com/echasnovski/mini.nvim/issues/306#issuecomment-1602245446)
+  -- (see https://github.com/nvim-mini/mini.nvim/issues/306#issuecomment-1602245446)
   child.lua([[
     _G.mock_textEdit = {
       pos = vim.api.nvim_win_get_cursor(0),
@@ -1175,7 +1208,7 @@ T['Manual completion']['respects `itemDefaults` from LSP response'] = function()
   child.lua('_G.mock_itemdefaults.data = nil')
   edit_range = {
     replace = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 1 } },
-    insert = { start = { line = 0, character = 1 }, ['end'] = { line = 0, character = 2 } },
+    insert = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 2 } },
   }
   child.lua('_G.mock_itemdefaults.editRange = ' .. vim.inspect(edit_range))
 
@@ -1193,6 +1226,26 @@ T['Manual completion']['respects `itemDefaults` from LSP response'] = function()
     eq(item.textEdit.insert, item.textEdit.insert or edit_range.insert)
     eq(item.textEdit.replace, item.textEdit.replace or edit_range.replace)
   end
+end
+
+T['Manual completion']['respects `abbr_hlgroup` as item field'] = function()
+  if child.fn.has('nvim-0.11') == 0 then MiniTest.skip('Abbreviation highlighting is available on Neovim>=0.11') end
+  child.set_size(10, 40)
+  set_lines({})
+
+  child.lua([[
+    MiniCompletion.config.lsp_completion.process_items = function(items, base)
+      local res = vim.tbl_filter(function(x) return vim.startswith(x.label, base) end, items)
+      table.sort(res, function(a, b) return a.sortText < b.sortText end)
+      for _, item in ipairs(res) do
+        if item.label == 'January' then item.abbr_hlgroup = 'String' end
+        if item.label == 'June' then item.abbr_hlgroup = 'Comment' end
+      end
+      return res
+    end
+  ]])
+  type_keys('i', 'J', '<C-Space>')
+  child.expect_screenshot()
 end
 
 T['Manual completion']['respects `kind_hlgroup` as item field'] = function()
@@ -1567,9 +1620,71 @@ T['Information window']["respects 'winborder' option"] = function()
   -- Should prefer explicitly configured value over 'winborder'
   child.lua('MiniCompletion.config.window.info.border = "double"')
   validate({ '╔', '═', '╗', '║', '╝', '═', '╚', '║' })
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniCompletion.config.window.info.border = nil')
+  child.o.winborder = '+,-,+,|,+,-,+,|'
+  validate({ '+', '-', '+', '|', '+', '-', '+', '|' })
 end
 
-T['Information window']['preserves non-essential window config parts'] = function()
+T['Information window']["respects 'pumborder' option"] = function()
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("'pumborder' option is present on Neovim>=0.12") end
+  child.set_size(15, 33)
+
+  local validate = function(offset, pumborder, keys)
+    keys = keys or { 'A', 'J', '<C-Space>' }
+    child.o.pumborder = pumborder
+    set_lines({ string.rep(' ', offset) })
+    type_keys(keys)
+    type_keys('<C-n>')
+    sleep(default_info_delay + small_time)
+    child.expect_screenshot()
+
+    type_keys('<C-e>')
+    child.ensure_normal_mode()
+    set_lines({})
+  end
+
+  -- Should properly adjust coordinates and pick side
+  validate(7, 'single')
+  validate(8, 'single')
+
+  -- Should respect no border in both windows
+  validate(0, 'none')
+
+  child.lua('MiniCompletion.config.window.info.border = "none"')
+  validate(0, 'single')
+  validate(0, 'none')
+  child.lua('MiniCompletion.config.window.info.border = nil')
+
+  -- Should work with present scrollbar
+  validate(0, 'single', { 'A', '<C-Space>' })
+  validate(0, 'none', { 'A', '<C-Space>' })
+  child.lua('MiniCompletion.config.window.info.border = "none"')
+  validate(0, 'single', { 'A', '<C-Space>' })
+  validate(0, 'none', { 'A', '<C-Space>' })
+end
+
+T['Information window']['triggers relevant events'] = function()
+  mock_event_log()
+  local validate_log = function(ref)
+    eq(child.lua_get('_G.log'), ref)
+    child.lua('_G.log = {}')
+  end
+
+  type_keys('i', 'J', '<C-Space>')
+  type_keys('<C-n>')
+  sleep(default_info_delay + small_time)
+  local win_id = get_floating_windows()[1]
+  validate_log({ { event = 'MiniCompletionWindowOpen', data = { kind = 'info', win_id = win_id } } })
+
+  type_keys('<C-n>')
+  sleep(default_info_delay + small_time)
+  validate_log({ { event = 'MiniCompletionWindowUpdate', data = { kind = 'info', win_id = win_id } } })
+end
+
+T['Information window']['can be adjusted in event'] = function()
   if child.fn.has('nvim-0.11') == 0 then MiniTest.skip('"title_pos" window config field was added in Neovim=0.11') end
 
   mock_custom_window_config()
@@ -1603,9 +1718,20 @@ end
 
 T['Information window']['adjusts window width'] = function()
   child.set_size(10, 27)
-  child.lua([[MiniCompletion.config.window.info= { height = 15, width = 10, border = 'single' }]])
+  child.lua([[MiniCompletion.config.window.info = { height = 15, width = 10, border = 'single' }]])
 
   type_keys('i', 'J', '<C-Space>', '<C-n>')
+  sleep(default_info_delay + small_time)
+  child.expect_screenshot()
+end
+
+T['Information window']['adjusts title'] = function()
+  child.set_size(20, 35)
+
+  type_keys('i', '<C-Space>', '<C-n>', '<C-n>')
+  sleep(default_info_delay + small_time)
+  child.expect_screenshot()
+  type_keys('<C-p>')
   sleep(default_info_delay + small_time)
   child.expect_screenshot()
 end
@@ -1720,6 +1846,35 @@ T['Information window']['handles all buffer wipeout'] = function()
   validate_info_win(default_info_delay)
 end
 
+T['Information window']['handles outdated scheduled showing'] = function()
+  child.set_size(30, 40)
+  child.o.cmdheight = 20
+  child.o.completeopt = 'menuone,noinsert'
+
+  type_keys('i')
+  local text = 'aa ab ac ad ae af ag ah ai aj ak al am an ao ap aq ar as at au av aw ax ay az'
+  child.lua('_G.text = ' .. vim.inspect(text))
+  child.lua('_G.delay = ' .. small_time)
+  child.lua([[
+    MiniCompletion.config.delay.completion = _G.delay
+    MiniCompletion.config.delay.info = 0
+
+    local n_char = 0
+    local function type_text()
+      n_char = n_char + 1
+      local char = _G.text:sub(n_char, n_char)
+      if char == '' then return end
+      vim.api.nvim_input(char)
+      vim.defer_fn(type_text, _G.delay + 1)
+    end
+
+    type_text()
+  ]])
+
+  sleep(small_time * text:len() + small_time)
+  eq(child.cmd_capture('messages'), '')
+end
+
 T['Information window']['respects `vim.{g,b}.minicompletion_disable`'] = new_set({
   parametrize = { { 'g' }, { 'b' } },
 }, {
@@ -1815,6 +1970,14 @@ T['Signature help']['updates highlighting of active parameter'] = function()
   type_keys('3,')
   sleep(small_time)
   child.expect_screenshot()
+
+  type_keys('<Esc>')
+  set_lines({ '' })
+
+  -- Should not error if parameters contain not correct label data
+  type_keys('i', 'bad_signature(')
+  sleep(default_signature_delay + small_time)
+  eq(child.cmd_capture('messages'):gsub('%s*$', ''), '')
 end
 
 T['Signature help']['updates without delay with different window'] = function()
@@ -1874,9 +2037,31 @@ T['Signature help']["respects 'winborder' option"] = function()
   -- Should prefer explicitly configured value over 'winborder'
   child.lua('MiniCompletion.config.window.signature.border = "double"')
   validate({ '╔', '═', '╗', '║', '╝', '═', '╚', '║' })
+
+  -- Should work with "string array" 'winborder'
+  if child.fn.has('nvim-0.12') == 0 then MiniTest.skip("String array 'winborder' is present on Neovim>=0.12") end
+  child.lua('MiniCompletion.config.window.signature.border = nil')
+  child.o.winborder = '+,-,+,|,+,-,+,|'
+  validate({ '+', '-', '+', '|', '+', '-', '+', '|' })
 end
 
-T['Signature help']['preserves non-essential window config parts'] = function()
+T['Signature help']['triggers relevant events'] = function()
+  mock_event_log()
+  local validate_log = function(ref)
+    eq(child.lua_get('_G.log'), ref)
+    child.lua('_G.log = {}')
+  end
+
+  type_keys('i', 'abc(')
+  sleep(default_signature_delay + small_time)
+  local win_id = get_floating_windows()[1]
+  validate_log({ { event = 'MiniCompletionWindowOpen', data = { kind = 'signature', win_id = win_id } } })
+
+  -- Currently signature window is not updated after opened, so no
+  -- `MiniCompletionWindowUpdate` event is triggered
+end
+
+T['Signature help']['can be adjusted in event'] = function()
   mock_custom_window_config()
   child.set_size(7, 30)
   type_keys('i', 'abc(')
@@ -1918,6 +2103,17 @@ T['Signature help']['handles multiline text'] = function()
 
   type_keys('i', 'multiline(')
   sleep(default_signature_delay + small_time)
+  child.expect_screenshot()
+end
+
+T['Signature help']['adjusts title'] = function()
+  child.set_size(10, 25)
+
+  type_keys('i', 'short(')
+  sleep(default_signature_delay + small_time)
+  child.expect_screenshot()
+  type_keys('aa,')
+  sleep(small_time)
   child.expect_screenshot()
 end
 
@@ -2115,13 +2311,14 @@ T['Snippets'] = new_set({
 })
 
 T['Snippets']['work'] = function()
-  child.set_size(10, 25)
+  child.set_size(10, 40)
 
   local kind_snippet = child.lua_get('vim.lsp.protocol.CompletionItemKind.Snippet')
   local kind_function = child.lua_get('vim.lsp.protocol.CompletionItemKind.Function')
   local format_snippet = child.lua_get('vim.lsp.protocol.InsertTextFormat.Snippet')
 
-  --stylua: ignore
+  local r = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 0 } }
+
   local items = {
     -- "Regular" snippet kind
     { label = 'Snippet A $1', kind = kind_snippet },
@@ -2133,10 +2330,28 @@ T['Snippets']['work'] = function()
     { label = 'Snip C', kind = kind_function, insertText = 'Snippet C $1', insertTextFormat = format_snippet },
 
     -- Should use `label` in popup and `textEdit.newText` after inserting
-    { label = 'Snip D', kind = kind_function, textEdit = { newText = 'Snippet D $1', range = {} }, insertTextFormat = format_snippet },
+    {
+      label = 'Snip D',
+      kind = kind_function,
+      textEdit = { newText = 'Snippet D $1', range = vim.deepcopy(r) },
+      insertTextFormat = format_snippet,
+    },
 
     -- Same, but `textEdit` is `InsertReplaceEdit`
-    { label = 'Snip E', kind = kind_function, textEdit = { newText = 'Snippet E $1', insert = {}, replace = {} }, insertTextFormat = format_snippet },
+    {
+      label = 'Snip E',
+      kind = kind_function,
+      textEdit = { newText = 'Snippet E $1', insert = vim.deepcopy(r), replace = vim.deepcopy(r) },
+      insertTextFormat = format_snippet,
+    },
+
+    -- Multi-line snippets in label
+    { label = 'Snippet F\nMulti\nLine $1', kind = kind_snippet },
+    {
+      label = 'Snip G',
+      kind = kind_snippet,
+      textEdit = { newText = 'Snippet G\nMulti\nLine $1', range = vim.deepcopy(r) },
+    },
   }
 
   mock_lsp_items(items)
@@ -2147,17 +2362,19 @@ T['Snippets']['work'] = function()
   -- Should show `label` when navigating with `<C-n>`
   for i = 1, #items do
     type_keys('<C-n>')
-    eq(get_lines(), { items[i].label })
+    local ref_lines = vim.split(items[i].label, '\n')
+    -- Built-in multi-line completion is present in Neovim>=0.11
+    if not (#ref_lines > 1 and child.fn.has('nvim-0.11') == 0) then eq(get_lines(), ref_lines) end
   end
 
   type_keys('<C-e>')
   set_lines({ '' })
 
   -- Should properly insert snippet and start snippet session
-  local validate = function(item, ref_line, ref_cursor)
+  local validate = function(item, ref_lines, ref_cursor)
     mock_lsp_items({ item })
     type_keys('<C-Space>', '<C-n>', '<C-y>')
-    eq(get_lines(), { ref_line })
+    eq(get_lines(), ref_lines)
     eq(get_cursor(), ref_cursor)
     eq(child.fn.mode(), 'i')
     eq(child.lua_get('#MiniSnippets.session.get(true)'), 1)
@@ -2166,11 +2383,13 @@ T['Snippets']['work'] = function()
     set_lines({ '' })
   end
 
-  validate(items[1], 'Snippet A ', { 1, 10 })
-  validate(items[2], 'Snippet B ', { 1, 10 })
-  validate(items[3], 'Snippet C ', { 1, 10 })
-  validate(items[4], 'Snippet D ', { 1, 10 })
-  validate(items[5], 'Snippet E ', { 1, 10 })
+  validate(items[1], { 'Snippet A ' }, { 1, 10 })
+  validate(items[2], { 'Snippet B ' }, { 1, 10 })
+  validate(items[3], { 'Snippet C ' }, { 1, 10 })
+  validate(items[4], { 'Snippet D ' }, { 1, 10 })
+  validate(items[5], { 'Snippet E ' }, { 1, 10 })
+  validate(items[6], { 'Snippet F', 'Multi', 'Line ' }, { 3, 5 })
+  validate(items[7], { 'Snippet G', 'Multi', 'Line ' }, { 3, 5 })
 end
 
 T['Snippets']['are inserted after attempting to insert non-keyword charater'] = function()
@@ -2388,10 +2607,10 @@ T['Snippets']['are not inserted if have no tabstops or variables'] = function()
   -- Treating text as snippet if there is a variable is important for a snippet
   -- insert method to expand them.
 
-  child.set_size(19, 52)
+  child.set_size(21, 52)
   local snippets = {
     -- - No insert:
-    'Just\ntext',
+    'Just text',
     [[Text with \$1 escaped dollar]],
     [[Text with \$TM_FILENAME escaped dollar]],
     [[Text with \${1} escaped dollar]],
@@ -2407,6 +2626,8 @@ T['Snippets']['are not inserted if have no tabstops or variables'] = function()
     'Has $0 tabstop',
     'Has ${0} tabstop',
     'Has tabstop$0',
+    'Has\ttab',
+    'Has\nnewline',
   }
   mock_lsp_snippets(snippets)
 
@@ -2534,9 +2755,86 @@ T['Snippets']['can be inserted together with additional text edits'] = function(
   child.cmd('inoremap ( (abc)<Left><Left><Left>')
 
   type_keys('i', '<C-Space>', '<C-n>', '(')
-  eq(get_lines(), { 'Snippet A New text on first line' })
-  eq(get_cursor(), { 1, 10 })
+  eq(get_lines(), { 'New text on first lineSnippet A ' })
+  eq(get_cursor(), { 1, 32 })
   eq(child.lua_get('#MiniSnippets.session.get(true)'), 1)
+end
+
+T['Snippets']['respect covering `textEdit` in candidate'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('This has problems on Neovim<0.10') end
+
+  child.set_size(10, 25)
+
+  local kind_snippet = child.lua_get('vim.lsp.protocol.CompletionItemKind.Snippet')
+  local items = {
+    {
+      label = 'Snip A',
+      kind = kind_snippet,
+      textEdit = {
+        newText = 'Snippet A $1',
+        -- Multi-line range to replace when inserting snippet
+        range = { start = { line = 0, character = 1 }, ['end'] = { line = 1, character = 1 } },
+      },
+    },
+    {
+      label = 'Snip B',
+      kind = kind_snippet,
+      textEdit = {
+        newText = 'Snippet B $1',
+        -- Should remove `insert` range when inserting snippet
+        insert = { start = { line = 0, character = 2 }, ['end'] = { line = 0, character = 4 } },
+        replace = { start = { line = 0, character = 2 }, ['end'] = { line = 0, character = 5 } },
+      },
+    },
+    {
+      label = 'Snip C',
+      kind = kind_snippet,
+      textEdit = {
+        newText = 'Snippet C $1',
+        range = { start = { line = 0, character = 3 }, ['end'] = { line = 0, character = 4 } },
+      },
+      -- Additional text edits both before and after candidate text edit
+      additionalTextEdits = {
+        {
+          newText = 'X',
+          range = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 2 } },
+        },
+        {
+          newText = 'Y',
+          range = { start = { line = 0, character = 5 }, ['end'] = { line = 0, character = 6 } },
+        },
+      },
+    },
+    {
+      label = 'Snip D',
+      kind = kind_snippet,
+      textEdit = {
+        newText = 'Snippet D $1',
+        -- Bad range that does not cover starting position. Should not result
+        -- in side effects like "extra `x` characters".
+        range = { start = { line = 2, character = 1 }, ['end'] = { line = 2, character = 2 } },
+      },
+    },
+  }
+
+  mock_lsp_items(items)
+  local validate = function(item, ref_lines, ref_cursor)
+    mock_lsp_items({ item })
+    set_lines({ 'ab Sdef', 'gh' })
+    set_cursor(1, 4)
+    type_keys('i', '<C-Space>', '<C-n>', '<C-y>')
+    eq(get_lines(), ref_lines)
+    eq(get_cursor(), ref_cursor)
+    eq(child.fn.mode(), 'i')
+    eq(child.lua_get('#MiniSnippets.session.get(true)'), 1)
+
+    type_keys('<C-c>', '<Esc>')
+  end
+
+  validate(items[1], { 'aSnippet A h' }, { 1, 11 })
+  validate(items[2], { 'abSnippet B def', 'gh' }, { 1, 12 })
+  validate(items[3], { 'X Snippet C dYf', 'gh' }, { 1, 12 })
+  validate(items[4], { 'ab def', 'gSnippet D ' }, { 2, 11 })
 end
 
 T['Snippets']["LSP server from 'mini.snippets'"] = new_set({
@@ -2574,7 +2872,7 @@ T['Snippets']["LSP server from 'mini.snippets'"]['works with in-server matching'
   child.lua([[
     local match = function(snippets)
       local res = { snippets[2] }
-      res[1].region = { from = { line = 1, col = 1 }, to = { line = 1, col = vim.fn.col('.') } }
+      res[1].region = { from = { line = 1, col = 1 }, to = { line = 1, col = vim.fn.col('.') - 1 } }
       return res
     end
     MiniSnippets.start_lsp_server({ match = match })

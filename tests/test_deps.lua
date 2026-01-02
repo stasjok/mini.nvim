@@ -85,6 +85,11 @@ local mock_timestamp = function(timestamp)
   child.lua(lua_cmd)
 end
 
+local mock_bad_env_vars = function()
+  child.fn.setenv('GIT_DIR', test_dir_absolute .. '/.git')
+  child.fn.setenv('GIT_WORK_TREE', test_dir_absolute)
+end
+
 local mock_hide_path = function(path)
   path = path or test_dir_absolute
   -- NOTE: use "^" as pattern separator because "/" can cause troubles
@@ -103,6 +108,14 @@ local get_spawn_log = function() return child.lua_get('_G.spawn_log') end
 local validate_git_spawn_log = function(ref_log)
   local spawn_log = get_spawn_log()
 
+  local env_map = child.fn.environ()
+  -- Should never include environment variables that can affect Git operations
+  env_map.GIT_DIR, env_map.GIT_WORK_TREE = nil, nil
+  local ref_env_map = {}
+  for k, v in pairs(env_map) do
+    ref_env_map[k .. '=' .. tostring(v)] = true
+  end
+
   local n = math.max(#spawn_log, #ref_log)
   for i = 1, n do
     local real, ref = spawn_log[i], ref_log[i]
@@ -114,22 +127,29 @@ local validate_git_spawn_log = function(ref_log)
       -- Assume default `git` options
       local args = { '-c', 'gc.auto=0' }
       vim.list_extend(args, ref)
-      eq(real, { executable = 'git', options = { args = args, cwd = real.options.cwd } })
+      local opts = { args = args, cwd = real.options.cwd, env = real.options.env }
+      local ref_val = { executable = 'git', options = opts }
+      eq(real, ref_val)
     else
       local opts = vim.deepcopy(ref)
       -- Assume default `git` options
       local args = { '-c', 'gc.auto=0' }
       opts.args = vim.list_extend(args, opts.args)
+      opts.env = real.options.env
       eq(real, { executable = 'git', options = opts })
     end
+
+    -- Validate environment variables separately because it is a string array
+    -- without order guarantee
+    local real_env_map = {}
+    for _, v in ipairs(real.options.env) do
+      real_env_map[v] = true
+    end
+    eq(real_env_map, ref_env_map)
   end
 end
 
-local clear_spawn_log = function() child.lua('_G.spawn_log = {}') end
-
 local get_process_log = function() return child.lua_get('_G.process_log') end
-
-local clear_process_log = function() child.lua('_G.process_log = {}') end
 
 -- Work with notifications
 local mock_notify = function()
@@ -162,9 +182,9 @@ local clear_notify_log = function() return child.lua('_G.notify_log = {}') end
 
 -- Common validators
 local is_in_rtp = function(path)
-  path = vim.fs.normalize(path)
+  path = child.fs.normalize(path)
   for _, p in ipairs(child.api.nvim_list_runtime_paths()) do
-    if path == vim.fs.normalize(p) then return true end
+    if path == child.fs.normalize(p) then return true end
   end
   return false
 end
@@ -348,8 +368,6 @@ T['add()']['uses only valid characters when infers source'] = function()
 end
 
 T['add()']["properly sources 'plugin/' and 'after/plugin/'"] = function()
-  if child.fn.has('nvim-0.9') == 0 then MiniTest.skip('Neovim<0.9 has different sourcing behavior.') end
-
   add({ name = 'plugin_1', depends = { 'plugin_2' } })
   --stylua: ignore
   local ref_plugin_log = {
@@ -543,6 +561,9 @@ T['add()']['Install'] = new_set({
 })
 
 T['add()']['Install']['works'] = function()
+  mock_bad_env_vars()
+  local ref_environ = child.fn.environ()
+
   child.lua([[
     _G.stdio_queue = {
       { out = 'git version 2.43.0'}, -- Check Git executable
@@ -598,6 +619,9 @@ T['add()']['Install']['works'] = function()
     { '(mini.deps) (1/1) Installed `new_plugin`', 'INFO' },
   }
   validate_notifications(ref_notify_log)
+
+  -- Should not affect any environment variables
+  eq(child.fn.environ(), ref_environ)
 end
 
 T['add()']['Install']['checks for executable Git'] = function()
@@ -1224,6 +1248,8 @@ local update = forward_lua('MiniDeps.update')
 
 T['update()']['works'] = function()
   child.set_size(40, 80)
+  mock_bad_env_vars()
+  local ref_environ = child.fn.environ()
 
   -- By default should update all plugins in session
   add('plugin_1')
@@ -1312,6 +1338,9 @@ T['update()']['works'] = function()
   mock_hide_path(test_dir_absolute)
   child.expect_screenshot()
   validate_confirm_buf('confirm-update')
+
+  -- Should not affect any environment variables
+  eq(child.fn.environ(), ref_environ)
 end
 
 T['update()']['checks for executable Git'] = function()
@@ -1373,6 +1402,9 @@ T['update()']['Confirm buffer'] = new_set({
 })
 
 T['update()']['Confirm buffer']['can apply changes'] = function()
+  mock_bad_env_vars()
+  local ref_environ = child.fn.environ()
+
   -- Should run `update()` on buffer write with only valid plugin names
   -- Remove 'plugin_1' from being updated
   child.cmd('g/^+++ plugin_1/normal! dd/')
@@ -1381,6 +1413,9 @@ T['update()']['Confirm buffer']['can apply changes'] = function()
   -- Should update and close confirmation buffer
   eq(child.lua_get('_G.update_args'), { { 'plugin_2' }, { force = true, offline = true } })
   validate_not_confirm_buf()
+
+  -- Should not affect any environment variables
+  eq(child.fn.environ(), ref_environ)
 end
 
 T['update()']['Confirm buffer']['can cancel'] = function()
@@ -2632,7 +2667,17 @@ T['Commands'][':DepsAdd works'] = function()
 
   -- Should have proper completion
   child.type_keys(':DepsAdd ', '<Tab>')
-  child.expect_screenshot()
+  if child.fn.has('nvim-0.12') == 0 then
+    child.expect_screenshot()
+    return
+  end
+  local ref_cmdcomplete_info = {
+    cmdline_orig = 'DepsAdd ',
+    matches = { 'plu-gin_0.nvim', 'plugin_1', 'plugin_2', 'plugin_3' },
+    pum_visible = 1,
+    selected = 0,
+  }
+  eq(child.fn.cmdcomplete_info(), ref_cmdcomplete_info)
 end
 
 T['Commands'][':DepsUpdate works'] = function()
@@ -2655,7 +2700,17 @@ T['Commands'][':DepsUpdate works'] = function()
 
   -- Should have proper completion
   child.type_keys(':DepsUpdate ', '<Tab>')
-  child.expect_screenshot()
+  if child.fn.has('nvim-0.12') == 0 then
+    child.expect_screenshot()
+    return
+  end
+  local ref_cmdcomplete_info = {
+    cmdline_orig = 'DepsUpdate ',
+    matches = { 'plugin_1', 'plugin_2' },
+    pum_visible = 1,
+    selected = 0,
+  }
+  eq(child.fn.cmdcomplete_info(), ref_cmdcomplete_info)
 end
 
 T['Commands'][':DepsUpdateOffline works'] = function()
@@ -2678,7 +2733,17 @@ T['Commands'][':DepsUpdateOffline works'] = function()
 
   -- Should have proper completion
   child.type_keys(':DepsUpdateOffline ', '<Tab>')
-  child.expect_screenshot()
+  if child.fn.has('nvim-0.12') == 0 then
+    child.expect_screenshot()
+    return
+  end
+  local ref_cmdcomplete_info = {
+    cmdline_orig = 'DepsUpdateOffline ',
+    matches = { 'plugin_1', 'plugin_2' },
+    pum_visible = 1,
+    selected = 0,
+  }
+  eq(child.fn.cmdcomplete_info(), ref_cmdcomplete_info)
 end
 
 T['Commands'][':DepsShowLog works'] = function()

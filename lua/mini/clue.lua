@@ -1,10 +1,7 @@
 --- *mini.clue* Show next key clues
---- *MiniClue*
 ---
 --- MIT License Copyright (c) 2023 Evgeni Chasnovski
----
---- ==============================================================================
----
+
 --- Features:
 --- - Implement custom key query process to reach target key combination:
 ---     - Starts after customizable opt-in triggers (mode + keys).
@@ -41,8 +38,6 @@
 --- - |MiniClue.gen_clues|.
 ---
 --- Notes:
---- - Works on all supported versions but using Neovim>=0.9 is recommended.
----
 --- - There is no functionality to create mappings while defining clues.
 ---   This is done to clearly separate these two different actions.
 ---   The best suggested practice is to manually create mappings with
@@ -110,7 +105,7 @@
 ---
 --- # Comparisons ~
 ---
---- - 'folke/which-key.nvim':
+--- - [folke/which-key.nvim](https://github.com/folke/which-key.nvim):
 ---     - Both have the same main goal: show available next keys along with
 ---       their customizable descriptions.
 ---     - Has different UI and content layout.
@@ -118,7 +113,7 @@
 ---       doesn't have this by design (to clearly separate two different tasks).
 ---     - Doesn't allow creating submodes, while this module does (via `postkeys`).
 ---
---- - 'anuvyklack/hydra.nvim':
+--- - [anuvyklack/hydra.nvim](https://github.com/anuvyklack/hydra.nvim):
 ---     - Both allow creating submodes: state which starts at certain key
 ---       combination; treats some keys differently; ends after `<Esc>`.
 ---     - Doesn't show information about available next keys (outside of
@@ -126,15 +121,15 @@
 ---
 --- # Highlight groups ~
 ---
---- * `MiniClueBorder` - window border.
---- * `MiniClueDescGroup` - group description in clue window.
---- * `MiniClueDescSingle` - single target description in clue window.
---- * `MiniClueNextKey` - next key label in clue window.
---- * `MiniClueNextKeyWithPostkeys` - next key label with postkeys in clue window.
---- * `MiniClueSeparator` - separator in clue window.
---- * `MiniClueTitle` - window title.
+--- - `MiniClueBorder` - window border.
+--- - `MiniClueDescGroup` - group description in clue window.
+--- - `MiniClueDescSingle` - single target description in clue window.
+--- - `MiniClueNextKey` - next key label in clue window.
+--- - `MiniClueNextKeyWithPostkeys` - next key label with postkeys in clue window.
+--- - `MiniClueSeparator` - separator in clue window.
+--- - `MiniClueTitle` - window title.
 ---
---- To change any highlight group, modify it directly with |:highlight|.
+--- To change any highlight group, set it directly with |nvim_set_hl()|.
 ---
 --- # Disabling ~
 ---
@@ -143,10 +138,9 @@
 --- of different scenarios and customization intentions, writing exact rules
 --- for disabling module's functionality is left to user. See
 --- |mini.nvim-disabling-recipes| for common recipes.
+---@tag MiniClue
 
---- # Key query process ~
----
---- ## General info ~
+--- # General info ~
 ---
 --- This module implements custom key query process imitating a usual built-in
 --- mechanism of user pressing keys in order to execute a mapping. General idea
@@ -168,7 +162,7 @@
 --- mode but works in all other main modes: Visual, Insert, Operator-pending
 --- (with caveats; no foolproof guarantees), Command-line, Terminal.
 ---
---- ## Lifecycle ~
+--- # Lifecycle ~
 ---
 --- - Key query process starts when user types a trigger: certain keys in certain
 ---   mode. Those keys are put into key query as a single user input. All possible
@@ -210,7 +204,7 @@
 ---
 ---         - Otherwise wait for the new user key press.
 ---
---- ## Clue window ~
+--- # Clue window ~
 ---
 --- After initiating key query process and after each key press, a timer is
 --- started to show a clue window: floating window with information about
@@ -239,38 +233,36 @@
 ---   miniclue.setup({
 ---     triggers = {
 ---       -- Leader triggers
----       { mode = 'n', keys = '<Leader>' },
----       { mode = 'x', keys = '<Leader>' },
+---       { mode = { 'n', 'x' }, keys = '<Leader>' },
+---
+---       -- `[` and `]` keys
+---       { mode = 'n', keys = '[' },
+---       { mode = 'n', keys = ']' },
 ---
 ---       -- Built-in completion
 ---       { mode = 'i', keys = '<C-x>' },
 ---
 ---       -- `g` key
----       { mode = 'n', keys = 'g' },
----       { mode = 'x', keys = 'g' },
+---       { mode = { 'n', 'x' }, keys = 'g' },
 ---
 ---       -- Marks
----       { mode = 'n', keys = "'" },
----       { mode = 'n', keys = '`' },
----       { mode = 'x', keys = "'" },
----       { mode = 'x', keys = '`' },
+---       { mode = { 'n', 'x' }, keys = "'" },
+---       { mode = { 'n', 'x' }, keys = '`' },
 ---
 ---       -- Registers
----       { mode = 'n', keys = '"' },
----       { mode = 'x', keys = '"' },
----       { mode = 'i', keys = '<C-r>' },
----       { mode = 'c', keys = '<C-r>' },
+---       { mode = { 'n', 'x' }, keys = '"' },
+---       { mode = { 'i', 'c' }, keys = '<C-r>' },
 ---
 ---       -- Window commands
 ---       { mode = 'n', keys = '<C-w>' },
 ---
 ---       -- `z` key
----       { mode = 'n', keys = 'z' },
----       { mode = 'x', keys = 'z' },
+---       { mode = { 'n', 'x' }, keys = 'z' },
 ---     },
 ---
 ---     clues = {
 ---       -- Enhance this by adding descriptions for <Leader> mapping groups
+---       miniclue.gen_clues.square_brackets(),
 ---       miniclue.gen_clues.builtin_completion(),
 ---       miniclue.gen_clues.g(),
 ---       miniclue.gen_clues.marks(),
@@ -308,8 +300,7 @@
 ---   require('mini.clue').setup({
 ---     -- Register `<Leader>` as trigger
 ---     triggers = {
----       { mode = 'n', keys = '<Leader>' },
----       { mode = 'x', keys = '<Leader>' },
+---       { mode = { 'n', 'x' }, keys = '<Leader>' },
 ---     },
 ---
 ---     -- Add descriptions for mapping groups
@@ -350,8 +341,8 @@
 ---
 ---   au FileType special_ft lua MiniClue.ensure_buf_triggers()
 --- <
----                                                     *MiniClue-examples-submodes*
 --- # Submodes ~
+--- *MiniClue-examples-submodes*
 ---
 --- Submode is a state initiated after pressing certain key combination ("prefix")
 --- during which some keys are interpreted differently.
@@ -366,7 +357,8 @@
 ---   this submode, pressing its prefix will be automatically emulated (leading
 ---   back to being inside submode).
 ---
---- - Register submode prefix (or some of its starting part) as trigger.
+--- - Register submode prefix (or some of its starting part) as trigger. Do not
+---   register "overlapping" triggers, like `<Leader>` and `<Leader>m`.
 ---
 --- ## Submode examples ~
 ---
@@ -392,18 +384,17 @@
 ---
 ---   require('mini.clue').setup({
 ---     triggers = {
----       { mode = 'n', keys = '<Leader>m' },
----       { mode = 'x', keys = '<Leader>m' },
+---       -- This can also set up directly `<Leader>m` as a trigger, but make
+---       -- sure to not also use `<Leader>`, as they would "overlap"
+---       { mode = { 'n', 'x' }, keys = '<Leader>' },
 ---     },
 ---     clues = {
----       { mode = 'n', keys = '<Leader>mh', postkeys = '<Leader>m' },
----       { mode = 'n', keys = '<Leader>mj', postkeys = '<Leader>m' },
----       { mode = 'n', keys = '<Leader>mk', postkeys = '<Leader>m' },
----       { mode = 'n', keys = '<Leader>ml', postkeys = '<Leader>m' },
----       { mode = 'x', keys = '<Leader>mh', postkeys = '<Leader>m' },
----       { mode = 'x', keys = '<Leader>mj', postkeys = '<Leader>m' },
----       { mode = 'x', keys = '<Leader>mk', postkeys = '<Leader>m' },
----       { mode = 'x', keys = '<Leader>ml', postkeys = '<Leader>m' },
+---       { mode = 'n', keys = '<Leader>m', desc = '+Move' },
+---
+---       { mode = { 'n', 'x' }, keys = '<Leader>mh', postkeys = '<Leader>m' },
+---       { mode = { 'n', 'x' }, keys = '<Leader>mj', postkeys = '<Leader>m' },
+---       { mode = { 'n', 'x' }, keys = '<Leader>mk', postkeys = '<Leader>m' },
+---       { mode = { 'n', 'x' }, keys = '<Leader>ml', postkeys = '<Leader>m' },
 ---     },
 ---   })
 --- <
@@ -490,15 +481,6 @@ local H = {}
 ---                                  -- needs `triggers` field present
 --- <
 MiniClue.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.clue) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniClue = MiniClue
 
@@ -516,9 +498,7 @@ MiniClue.setup = function(config)
 end
 
 --stylua: ignore
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
 ---@text # General info ~
 ---
@@ -536,8 +516,9 @@ end
 --- - Callable (function) returning either of the previous two.
 ---
 --- A clue table is a table with the following fields:
---- - <mode> `(string)` - single character describing **single** mode short-name of
----   key combination as in `nvim_set_keymap()` ('n', 'x', 'i', 'o', 'c', etc.).
+--- - <mode> `(string|table)` - single character describing mode short-name of
+---   key combination as in `nvim_set_keymap()` ('n', 'x', 'i', 'o', 'c', etc.),
+---   or a array thereof.
 --- - <keys> `(string)` - key combination for which clue will be shown.
 ---   "Human-readable" key names as in |key-notation| (like "<Leader>", "<Space>",
 ---   "<Tab>", etc.) are allowed.
@@ -616,11 +597,12 @@ MiniClue.config = {
 }
 --minidoc_afterlines_end
 
---- Enable triggers in all listed buffers
+--- Enable triggers in all listed and some special buffers
 MiniClue.enable_all_triggers = function()
   for _, buf_id in ipairs(vim.api.nvim_list_bufs()) do
-    -- Map only inside valid listed buffers
-    if vim.fn.buflisted(buf_id) == 1 then H.map_buf_triggers(buf_id) end
+    -- Map only inside valid listed buffers and ones with special filetypes
+    local is_special = H.ft_to_enable[vim.bo[buf_id].filetype]
+    if vim.fn.buflisted(buf_id) == 1 or is_special then H.map_buf_triggers(buf_id) end
   end
 end
 
@@ -727,8 +709,7 @@ end
 ---
 --- Contains clues for the following triggers: >lua
 ---
----   { mode = 'n', keys = 'g' }
----   { mode = 'x', keys = 'g' }
+---   { mode = { 'n', 'x' }, keys = 'g' }
 --- <
 ---@return table Array of clues.
 MiniClue.gen_clues.g = function()
@@ -814,18 +795,76 @@ MiniClue.gen_clues.g = function()
   }
 end
 
+--- Generate clues for `[` and `]` keys
+---
+--- Contains clues for the following triggers: >lua
+---
+---   { mode = 'n', keys = '[' }
+---   { mode = 'n', keys = ']' }
+--- <
+---@return table Array of clues.
+MiniClue.gen_clues.square_brackets = function()
+  --stylua: ignore
+  return {
+    { mode = 'n', keys = '[<C-D>', desc = 'Go to first macro def with cursor word', },
+    { mode = 'n', keys = '[<C-I>', desc = 'Go to first match with cursor word', },
+    { mode = 'n', keys = '[%', desc = 'Go to previous unmatched group' },
+    { mode = 'n', keys = '[#', desc = 'Go to previous unmatched #if/#else/#ifdef' },
+    { mode = 'n', keys = "['", desc = 'Go to previous mark, first non-blank' },
+    { mode = 'n', keys = '[`', desc = 'Go to previous mark' },
+    { mode = 'n', keys = '[(', desc = "Go to previous unmatched '('" },
+    { mode = 'n', keys = '[/', desc = 'Go to previous C comment start' },
+    { mode = 'n', keys = '[*', desc = 'Go to previous C comment start' },
+    { mode = 'n', keys = '[I', desc = 'Show lines with cursor word', },
+    { mode = 'n', keys = '[D', desc = 'Show macro defs with cursor word' },
+    { mode = 'n', keys = '[p', desc = 'Paste with current indent' },
+    { mode = 'n', keys = '[P', desc = 'Paste with current indent' },
+    { mode = 'n', keys = '[[', desc = 'Go to previous section' },
+    { mode = 'n', keys = '[]', desc = 'Go to previous SECTION' },
+    { mode = 'n', keys = '[c', desc = 'Go to previous change' },
+    { mode = 'n', keys = '[d', desc = 'Show first macro def with cursor word' },
+    { mode = 'n', keys = '[f', desc = 'Edit file under cursor' },
+    { mode = 'n', keys = '[i', desc = 'Show first line with cursor word', },
+    { mode = 'n', keys = '[m', desc = 'Go to previous method start' },
+    { mode = 'n', keys = '[M', desc = 'Go to previous method end' },
+    { mode = 'n', keys = '[s', desc = 'Go to previous misspelled word' },
+    { mode = 'n', keys = '[z', desc = 'Go to current open fold start' },
+    { mode = 'n', keys = '[{', desc = "Go to previous unmatched '{'" },
+    { mode = 'n', keys = ']<C-D>', desc = 'Go to next macro def with cursor word', },
+    { mode = 'n', keys = ']<C-I>', desc = 'Go to next match with cursor word', },
+    { mode = 'n', keys = ']%', desc = 'Go to next unmatched group' },
+    { mode = 'n', keys = ']#', desc = 'Go to next unmatched #if/#else/#ifdef' },
+    { mode = 'n', keys = "]'", desc = "Go to next mark, first non-blank" },
+    { mode = 'n', keys = ']`', desc = 'Go to next mark' },
+    { mode = 'n', keys = '])', desc = "Go to next unmatched ')'" },
+    { mode = 'n', keys = ']/', desc = 'Go to next C comment end' },
+    { mode = 'n', keys = ']*', desc = 'Go to next C comment end' },
+    { mode = 'n', keys = ']D', desc = 'Show below macro defs with cursor word' },
+    { mode = 'n', keys = ']I', desc = 'Show below lines with cursor word', },
+    { mode = 'n', keys = ']P', desc = 'Paste with current indent' },
+    { mode = 'n', keys = '][', desc = 'Go to next SECTION' },
+    { mode = 'n', keys = ']]', desc = 'Go to next section' },
+    { mode = 'n', keys = ']c', desc = 'Go to next change' },
+    { mode = 'n', keys = ']d', desc = 'Show next macro def with cursor word' },
+    { mode = 'n', keys = ']f', desc = 'Edit file under cursor' },
+    { mode = 'n', keys = ']i', desc = 'Show next line with cursor word', },
+    { mode = 'n', keys = ']m', desc = 'Go to next method start' },
+    { mode = 'n', keys = ']M', desc = 'Go to next method end' },
+    { mode = 'n', keys = ']p', desc = 'Paste with current indent' },
+    { mode = 'n', keys = ']s', desc = 'Go to next misspelled word' },
+    { mode = 'n', keys = ']z', desc = 'Go to current open fold end' },
+    { mode = 'n', keys = ']}', desc = "Go to next unmatched '}'" },
+  }
+end
+
 --- Generate clues for marks
 ---
 --- Contains clues for the following triggers: >lua
 ---
----   { mode = 'n', keys = "'" }
----   { mode = 'n', keys = "g'" }
----   { mode = 'n', keys = '`' }
----   { mode = 'n', keys = 'g`' }
----   { mode = 'x', keys = "'" }
----   { mode = 'x', keys = "g'" }
----   { mode = 'x', keys = '`' }
----   { mode = 'x', keys = 'g`' }
+---   { mode = { 'n', 'x' }, keys = "'" }
+---   { mode = { 'n', 'x' }, keys = "g'" }
+---   { mode = { 'n', 'x' }, keys = '`' }
+---   { mode = { 'n', 'x' }, keys = 'g`' }
 --- <
 --- Note: if you use "g" as trigger (like to enable |MiniClue.gen_clues.g()|),
 --- don't add "g'" and "g`" as triggers: they already will be taken into account.
@@ -856,17 +895,11 @@ MiniClue.gen_clues.marks = function()
 
   --stylua: ignore
   return {
-    -- Normal mode
-    describe_marks('n', "'"),
-    describe_marks('n', "g'"),
-    describe_marks('n', "`"),
-    describe_marks('n', "g`"),
-
-    -- Visual mode
-    describe_marks('x', "'"),
-    describe_marks('x', "g'"),
-    describe_marks('x', "`"),
-    describe_marks('x', "g`"),
+    -- Normal and Visual mode
+    describe_marks({ 'n', 'x' }, "'"),
+    describe_marks({ 'n', 'x' }, "g'"),
+    describe_marks({ 'n', 'x' }, "`"),
+    describe_marks({ 'n', 'x' }, "g`"),
   }
 end
 
@@ -874,10 +907,8 @@ end
 ---
 --- Contains clues for the following triggers: >lua
 ---
----   { mode = 'n', keys = '"' }
----   { mode = 'x', keys = '"' }
----   { mode = 'i', keys = '<C-r>' }
----   { mode = 'c', keys = '<C-r>' }
+---   { mode = { 'n', 'x' }, keys = '"' }
+---   { mode = { 'i', 'c' }, keys = '<C-r>' }
 --- <
 ---@param opts table|nil Options. Possible keys:
 ---   - <show_contents> `(boolean)` - whether to show contents of all possible
@@ -916,11 +947,8 @@ MiniClue.gen_clues.registers = function(opts)
 
   --stylua: ignore
   return {
-    -- Normal mode
-    describe_registers('n', '"'),
-
-    -- Visual mode
-    describe_registers('x', '"'),
+    -- Normal and Visual mode
+    describe_registers({ 'n', 'x' }, '"'),
 
     -- Insert mode
     describe_registers('i', '<C-r>'),
@@ -1028,8 +1056,7 @@ end
 ---
 --- Contains clues for the following triggers: >lua
 ---
----   { mode = 'n', keys = 'z' }
----   { mode = 'x', keys = 'z' }
+---   { mode = { 'n', 'x' }, keys = 'z' }
 --- <
 ---@return table Array of clues.
 MiniClue.gen_clues.z = function()
@@ -1130,6 +1157,11 @@ H.keys = {
   ctrl_u = vim.api.nvim_replace_termcodes('<C-u>', true, true, true),
 }
 
+-- Special filetypes for which to enable triggers. These are common interactive
+-- not listed filetypes. NOTE: no 'minifiles' as `'` trigger conflicts with its
+-- local `'`. Plus it pollutes `g?` content.
+H.ft_to_enable = { help = true, git = true, ministarter = true }
+
 -- Timers
 H.timers = {
   getcharstr = vim.loop.new_timer(),
@@ -1165,21 +1197,21 @@ H.apply_config = function(config)
   MiniClue.enable_all_triggers()
 
   -- Tweak macro execution
-  local macro_keymap_opts = { nowait = true, desc = "Execute macro without 'mini.clue' triggers" }
-  local exec_macro = function(keys)
-    local register = H.getcharstr()
+  local exec_macro = function(key, register)
     if register == nil then return end
     MiniClue.disable_all_triggers()
-    vim.schedule(MiniClue.enable_all_triggers)
-    pcall(vim.api.nvim_feedkeys, vim.v.count1 .. '@' .. register, 'nx', false)
+    vim.schedule(function() MiniClue.enable_all_triggers() end)
+    -- NOTE: Use `t` flag for "Handle as if typed" for better integration with
+    -- other modules/plugins (like 'mini.jump').
+    pcall(vim.api.nvim_feedkeys, vim.v.count1 .. key .. register, 'nt', false)
   end
-  if vim.fn.maparg('@', 'n') == '' then vim.keymap.set('n', '@', exec_macro, macro_keymap_opts) end
 
-  local exec_latest_macro = function(keys)
-    MiniClue.disable_all_triggers()
-    vim.schedule(MiniClue.enable_all_triggers)
-    vim.api.nvim_feedkeys(vim.v.count1 .. 'Q', 'nx', false)
-  end
+  local macro_keymap_opts = { nowait = true, desc = "Execute macro without 'mini.clue' triggers" }
+
+  local exec_register_macro = function() exec_macro('@', H.getcharstr()) end
+  if vim.fn.maparg('@', 'n') == '' then vim.keymap.set('n', '@', exec_register_macro, macro_keymap_opts) end
+
+  local exec_latest_macro = function() exec_macro('Q', '') end
   if vim.fn.maparg('Q', 'n') == '' then vim.keymap.set('n', 'Q', exec_latest_macro, macro_keymap_opts) end
 end
 
@@ -1205,15 +1237,22 @@ H.create_autocommands = function()
   -- - Respect `LspAttach` as it is a common source of buffer-local mappings
   local events = { 'BufAdd', 'LspAttach' }
   au(events, '*', ensure_triggers, 'Ensure buffer-local trigger keymaps')
-  -- - Respect common interactive not listed filetypes. NOTE: no 'minifiles' as
-  --   `'` trigger conflicts with its local `'`. Plus it pollutes `g?` content.
-  local special_ft = { 'help', 'git' }
-  au('Filetype', special_ft, ensure_triggers, 'Ensure buffer-local trigger keymaps')
+  au('Filetype', vim.tbl_keys(H.ft_to_enable), ensure_triggers, 'Ensure buffer-local trigger keymaps')
 
-  -- Disable all triggers when recording macro as they interfere with what is
-  -- actually recorded
-  au('RecordingEnter', '*', MiniClue.disable_all_triggers, 'Disable all triggers')
-  au('RecordingLeave', '*', MiniClue.enable_all_triggers, 'Enable all triggers')
+  -- Disable all triggers (current and future) when recording macro as they
+  -- interfere with what is actually recorded
+  local cache_disable
+  local disable_all_plus = function()
+    MiniClue.disable_all_triggers()
+    cache_disable = vim.g.miniclue_disable
+    vim.g.miniclue_disable = true
+  end
+  local enable_all_plus = function()
+    vim.g.miniclue_disable = cache_disable
+    MiniClue.enable_all_triggers()
+  end
+  au('RecordingEnter', '*', disable_all_plus, 'Disable all triggers')
+  au('RecordingLeave', '*', enable_all_plus, 'Enable all triggers')
 
   au('VimResized', '*', H.window_update, 'Update window on resize')
   au('ColorScheme', '*', H.create_default_hl, 'Ensure colors')
@@ -1260,7 +1299,10 @@ H.map_buf_triggers = function(buf_id)
   if not H.is_valid_buf(buf_id) or H.is_disabled(buf_id) then return end
 
   for _, trigger in ipairs(H.get_config(nil, buf_id).triggers) do
-    H.map_trigger(buf_id, trigger)
+    local modes = type(trigger.mode) == 'table' and trigger.mode or { trigger.mode }
+    for _, mode in ipairs(modes) do
+      H.map_trigger(buf_id, { mode = mode, keys = trigger.keys })
+    end
   end
 end
 
@@ -1268,7 +1310,10 @@ H.unmap_buf_triggers = function(buf_id)
   if not H.is_valid_buf(buf_id) or H.is_disabled(buf_id) then return end
 
   for _, trigger in ipairs(H.get_config(nil, buf_id).triggers) do
-    H.unmap_trigger(buf_id, trigger)
+    local modes = type(trigger.mode) == 'table' and trigger.mode or { trigger.mode }
+    for _, mode in ipairs(modes) do
+      H.unmap_trigger(buf_id, { mode = mode, keys = trigger.keys })
+    end
   end
 end
 
@@ -1277,7 +1322,11 @@ H.map_trigger = function(buf_id, trigger)
 
   -- Compute mapping RHS
   trigger.keys = H.replace_termcodes(trigger.keys)
-  local keys_trans = H.keytrans(trigger.keys)
+  local lhs = H.keytrans(trigger.keys)
+
+  local is_ministarter_map = vim.bo[buf_id].filetype == 'ministarter'
+    and vim.api.nvim_buf_call(buf_id, function() return vim.fn.maparg(lhs, trigger.mode) ~= '' end)
+  if is_ministarter_map then return end
 
   local rhs = function()
     -- Don't act if for some reason entered the same trigger during state exec
@@ -1301,11 +1350,11 @@ H.map_trigger = function(buf_id, trigger)
 
   -- Use buffer-local mappings and `nowait` to make it a primary source of
   -- keymap execution
-  local desc = string.format('Query keys after "%s"', keys_trans)
+  local desc = string.format('Query keys after "%s"', lhs)
   local opts = { buffer = buf_id, nowait = true, desc = desc }
 
   -- Create mapping. Use translated variant to make it work with <F*> keys.
-  vim.keymap.set(trigger.mode, keys_trans, rhs, opts)
+  vim.keymap.set(trigger.mode, lhs, rhs, opts)
 end
 
 H.unmap_trigger = function(buf_id, trigger)
@@ -1614,13 +1663,17 @@ H.window_get_config = function()
   local max_height = vim.o.lines - vim.o.cmdheight - (has_tabline and 1 or 0) - (has_statusline and 1 or 0) - 2
   max_height = math.max(max_height, 1)
 
+  local keys = H.query_to_keys(H.state.query)
+  local query_clue = (H.state.clues[keys] or {}).desc or ''
+  local title = (#H.state.query <= 1 or query_clue == '') and H.keytrans(keys) or query_clue
+
   local buf_id = H.state.buf_id
   local cur_config_fields = {
     row = vim.o.lines - vim.o.cmdheight - (has_statusline and 1 or 0),
     col = vim.o.columns,
     height = math.min(vim.api.nvim_buf_line_count(buf_id), max_height),
-    title = ' ' .. H.keytrans(H.query_to_keys(H.state.query)) .. ' ',
-    border = (vim.fn.exists('+winborder') == 1 and vim.o.winborder ~= '') and vim.o.winborder or 'single',
+    title = ' ' .. title .. ' ',
+    border = (vim.fn.exists('+winborder') == 0 or vim.o.winborder == '') and 'single' or nil,
   }
   local user_config = H.expand_callable(H.get_config().window.config, buf_id) or {}
   local res = vim.tbl_deep_extend('force', H.default_win_config, cur_config_fields, user_config)
@@ -1639,9 +1692,8 @@ H.window_get_config = function()
   end
 
   -- Ensure proper config
+  res.width = math.min(math.max(res.width, 1), vim.o.columns - 2)
   if type(res.title) == 'string' then res.title = H.fit_to_width(res.title, res.width) end
-  if vim.fn.has('nvim-0.9') == 0 then res.title = nil end
-  res.width = math.min(math.max(res.width, 1), vim.o.columns)
 
   return res
 end
@@ -1705,7 +1757,8 @@ H.clues_get_all = function(mode)
 
   -- Order of clue precedence: config clues < buffer mappings < global mappings
   local config_clues = H.clues_normalize(H.get_config().clues) or {}
-  local mode_clues = vim.tbl_filter(function(x) return x.mode == mode end, config_clues)
+  local mode_filter = function(x) return type(x.mode) == 'table' and vim.tbl_contains(x.mode, mode) or x.mode == mode end
+  local mode_clues = vim.tbl_filter(mode_filter, config_clues)
   for _, clue in ipairs(mode_clues) do
     local lhsraw = H.replace_termcodes(clue.keys)
 
@@ -1874,11 +1927,13 @@ H.make_clues_with_register_contents = function(mode, prefix)
 end
 
 -- Predicates -----------------------------------------------------------------
-H.is_trigger = function(x) return type(x) == 'table' and type(x.mode) == 'string' and type(x.keys) == 'string' end
+H.is_trigger = function(x)
+  return type(x) == 'table' and (type(x.mode) == 'string' or type(x.mode) == 'table') and type(x.keys) == 'string'
+end
 
 H.is_clue = function(x)
   if type(x) ~= 'table' then return false end
-  local mandatory = type(x.mode) == 'string' and type(x.keys) == 'string'
+  local mandatory = (type(x.mode) == 'string' or type(x.mode) == 'table') and type(x.keys) == 'string'
   local extra = (x.desc == nil or type(x.desc) == 'string' or vim.is_callable(x.desc))
     and (x.postkeys == nil or type(x.postkeys) == 'string')
   return mandatory and extra

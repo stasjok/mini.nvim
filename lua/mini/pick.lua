@@ -1,10 +1,7 @@
 --- *mini.pick* Pick anything
---- *MiniPick*
 ---
 --- MIT License Copyright (c) 2023 Evgeni Chasnovski
----
---- ==============================================================================
----
+
 --- Features:
 ---
 --- - Single window general purpose interface for picking element from any array.
@@ -25,7 +22,8 @@
 ---
 --- - |:Pick| command to work with extensible |MiniPick.registry|.
 ---
---- - |vim.ui.select()| wrapper (see |MiniPick.ui_select()|).
+--- - |vim.ui.select()| implementation. To adjust, use |MiniPick.ui_select()|
+---   or save-restore `vim.ui.select` manually after calling |MiniPick.setup()|.
 ---
 --- - Rich and customizable built-in |MiniPick-actions| when picker is active:
 ---     - Manually change currently focused item.
@@ -51,8 +49,8 @@
 --- - Match caching to increase responsiveness on repeated prompts.
 ---
 --- Notes:
---- - Works on all supported versions but using Neovim>=0.9 is recommended.
----   Neovim>=0.10 will give more visual feedback in floating window footer.
+--- - Works on all supported versions but Neovim>=0.10 will give more visual
+---   feedback in floating window footer.
 ---
 --- - For more pickers see |MiniExtra.pickers|.
 ---
@@ -67,12 +65,11 @@
 ---
 --- Suggested dependencies (provide extra functionality, will work without them):
 ---
---- - Enabled |MiniIcons| module for icons near the items representing actual paths.
+--- - Enabled |mini.icons| module to show icons near the items for actual paths.
 ---   Falls back to 'nvim-tree/nvim-web-devicons' plugin or no icons will be used.
 ---
----                                                             *MiniPick-cli-tools*
---- - CLI tool(s) to power |MiniPick.builtin.files()|, |MiniPick.builtin.grep()|, and
----   |MiniPick.builtin.grep_live()| built-in pickers:
+--- - *MiniPick-cli-tools* CLI tool(s) to power |MiniPick.builtin.files()|,
+---   |MiniPick.builtin.grep()|, and |MiniPick.builtin.grep_live()| built-in pickers:
 ---     - `rg` (github.com/BurntSushi/ripgrep; enough for all three; recommended).
 ---     - `fd` (github.com/sharkdp/fd; for `files` only).
 ---     - `git` (github.com/git/git; enough for all three).
@@ -98,7 +95,7 @@
 ---
 --- # Comparisons ~
 ---
---- - 'nvim-telescope/telescope.nvim':
+--- - [nvim-telescope/telescope.nvim](https://github.com/nvim-telescope/telescope.nvim):
 ---     - The main inspiration for this module, so there is significant overlap.
 ---     - Has three (or two) window UI (prompt, matches, preview), while this
 ---       module combines everything in one window. It allows more straightforward
@@ -106,36 +103,35 @@
 ---     - Default match algorithm is somewhat slow, while this module should
 ---       match relatively lag-free for at least 100K+ items.
 ---     - Has many built-in pickers, while this module has handful at its core
----       relying on other 'mini.nvim' modules to provide more (see |MiniExtra|).
+---       relying on other 'mini.nvim' modules to provide more (see |mini.extra|).
 ---
---- - 'ibhagwan/fzf-lua':
+--- - [ibhagwan/fzf-lua](https://github.com/ibhagwan/fzf-lua):
 ---     - Mostly same comparison as with 'nvim-telescope/telescope.nvim'.
----     - Requires 'junegunn/fzf' installed to power fuzzy matching, while this
----       module provides built-in Lua matching.
+---     - Requires [junegunn/fzf](https://github.com/junegunn/fzf) installed to
+---       power fuzzy matching, while this module provides built-in Lua matching.
 ---
 --- # Highlight groups ~
 ---
---- * `MiniPickBorder` - window border.
---- * `MiniPickBorderBusy` - window border while picker is busy processing.
---- * `MiniPickBorderText` - non-prompt on border.
---- * `MiniPickCursor` - cursor during active picker (hidden by default).
---- * `MiniPickIconDirectory` - default icon for directory.
---- * `MiniPickIconFile` - default icon for file.
---- * `MiniPickHeader` - headers in info buffer and previews.
---- * `MiniPickMatchCurrent` - current matched item.
---- * `MiniPickMatchMarked` - marked matched items.
---- * `MiniPickMatchRanges` - ranges matching query elements.
---- * `MiniPickNormal` - basic foreground/background highlighting.
---- * `MiniPickPreviewLine` - target line in preview.
---- * `MiniPickPreviewRegion` - target region in preview.
---- * `MiniPickPrompt` - prompt.
---- * `MiniPickPromptCaret` - caret in prompt.
---- * `MiniPickPromptPrefix` - prefix of the prompt.
+--- - `MiniPickBorder` - window border.
+--- - `MiniPickBorderBusy` - window border while picker is busy processing.
+--- - `MiniPickBorderText` - non-prompt on border.
+--- - `MiniPickCursor` - cursor during active picker (hidden by default).
+--- - `MiniPickIconDirectory` - default icon for directory.
+--- - `MiniPickIconFile` - default icon for file.
+--- - `MiniPickHeader` - headers in info buffer and previews.
+--- - `MiniPickMatchCurrent` - current matched item.
+--- - `MiniPickMatchMarked` - marked matched items.
+--- - `MiniPickMatchRanges` - ranges matching query elements.
+--- - `MiniPickNormal` - basic foreground/background highlighting.
+--- - `MiniPickPreviewLine` - target line in preview.
+--- - `MiniPickPreviewRegion` - target region in preview.
+--- - `MiniPickPrompt` - prompt.
+--- - `MiniPickPromptCaret` - caret in prompt.
+--- - `MiniPickPromptPrefix` - prefix of the prompt.
 ---
---- To change any highlight group, modify it directly with |:highlight|.
+--- To change any highlight group, set it directly with |nvim_set_hl()|.
+---@tag MiniPick
 
---- Events ~
----
 --- To allow user customization and integration of external tools, certain |User|
 --- autocommand events are triggered under common circumstances:
 ---
@@ -144,12 +140,10 @@
 --- - `MiniPickStop` - just before picker is stopped.
 ---@tag MiniPick-events
 
---- # Overview ~
----
 --- General idea is to take array of objects, display them with interactive
 --- filter/sort/navigate/preview, and allow to choose one or more items.
 ---
---- ## How to start a picker ~
+--- # How to start a picker ~
 ---
 --- - Use |MiniPick.start()| with `opts.source` defining |MiniPick-source|.
 ---   Example: `MiniPick.start({ source = { items = vim.fn.readdir('.') } })`
@@ -160,15 +154,15 @@
 --- - Use |:Pick| command which uses customizable pickers from |MiniPick.registry|.
 ---   Example: `:Pick files tool='git'`
 ---
---- ## User interface ~
+--- # User interface ~
 ---
 --- UI consists from a single window capable of displaying three different views:
 --- - "Main" - where current query matches are shown.
 --- - "Preview" - preview of current item (toggle with `<Tab>`).
 --- - "Info" - general info about picker and its state (toggle with `<S-Tab>`).
 ---
---- Current prompt is displayed (in Neovim>=0.9) at the top left of the window
---- border with vertical line indicating caret (current input position).
+--- Current prompt is displayed at the top left of the window border with vertical
+--- line indicating caret (current input position).
 ---
 --- Bottom part of window border displays (in Neovim>=0.10) extra visual feedback:
 --- - Left part is a picker name.
@@ -180,7 +174,7 @@
 --- window border changes color to be `MiniPickBorderBusy` after `config.delay.busy`
 --- milliseconds of idle time.
 ---
---- ## Life cycle ~
+--- # Life cycle ~
 ---
 --- - Type characters to filter and sort matches. It uses |MiniPick.default_match()|
 ---   with `query` being an array of pressed characters.
@@ -203,7 +197,7 @@
 ---     - `<CR>` / `<M-CR>` chooses current/marked item(s).
 ---     - `<Esc>` / `<C-c>` stops picker.
 ---
---- ## Implementation details ~
+--- # Implementation details ~
 ---
 --- - Processing key typing is done via a dedicated key query process for more
 ---   control over their side effects. As a result, regular mappings don't work
@@ -216,7 +210,7 @@
 
 --- Source is defined as a `source` field inside one of (in increasing priority):
 --- - |MiniPick.config| - has global effect.
---- - |vim.b.minipick_config| - has buffer-local effect.
+--- - `vim.b.minipick_config` - has buffer-local effect.
 --- - `opts.source` in picker call - has effect for that particular call.
 ---
 --- Example of source to choose from |arglist|: >lua
@@ -226,8 +220,8 @@
 --- Note: this is mostly useful for writing pickers. Can safely skip if you
 --- want to just use provided pickers.
 ---
----                                                          *MiniPick-source.items*
 --- # Items ~
+--- *MiniPick-source.items*
 ---
 --- `source.items` defines items to choose from. It should be one of the following:
 --- - Array of objects which can have different types. Any type is allowed.
@@ -235,7 +229,7 @@
 --- - Callable returning any of the previous types. Will be called once on start
 ---   with source's `cwd` set as |current-directory|.
 ---
----                                                 *MiniPick-source.items-stritems*
+--- *MiniPick-source.items-stritems*
 --- Matching is done for items array based on the string representation of its
 --- elements (here called "stritems"). For single item it is computed as follows:
 --- - Callable is called once with output used in next steps.
@@ -250,7 +244,7 @@
 --- <
 --- Default value is `nil`, assuming it always be supplied by the caller.
 ---
----                                                   *MiniPick-source.items-common*
+--- *MiniPick-source.items-common*
 --- There are some recommendations for common item types in order for them to work
 --- out of the box with |MiniPick.default_show()|, |MiniPick.default_preview()|,
 --- |MiniPick.default_choose()|, |MiniPick.default_choose_marked()|:
@@ -291,15 +285,15 @@
 --- <
 --- Note: all table items will benefit from having `text` field for better matching.
 ---
----                                                           *MiniPick-source.name*
 --- # Name ~
+--- *MiniPick-source.name*
 ---
 --- `source.name` defines the name of the picker to be used for visual feedback.
 ---
 --- Default value is "<No name>".
 ---
----                                                            *MiniPick-source.cwd*
 --- # Current working directory ~
+--- *MiniPick-source.cwd*
 ---
 --- `source.cwd` is a string defining the current working directory in which
 --- picker operates. It should point to a valid actually present directory path.
@@ -312,8 +306,8 @@
 ---
 --- Default value is |current-directory|.
 ---
----                                                          *MiniPick-source.match*
 --- # Match ~
+--- *MiniPick-source.match*
 ---
 --- `source.match` is a callable defining how stritems
 --- (see |MiniPick-source.items-stritems|) are matched (filtered and sorted) based
@@ -359,8 +353,8 @@
 --- <
 --- Default value is |MiniPick.default_match()|.
 ---
----                                                           *MiniPick-source.show*
 --- # Show ~
+--- *MiniPick-source.show*
 ---
 --- `source.show` is a callable defining how matched items are shown in the window.
 ---
@@ -384,8 +378,8 @@
 --- <
 --- Default value is |MiniPick.default_show()|.
 ---
----                                                        *MiniPick-source.preview*
 --- # Preview ~
+--- *MiniPick-source.preview*
 ---
 --- `source.preview` is a callable defining how item preview is done.
 ---
@@ -394,7 +388,9 @@
 ---   of item previewing new scratch buffer is be created.
 --- - `item` - item to preview.
 ---
---- It should update buffer `buf_id` to visually represent `item`.
+--- It should update buffer `buf_id` to visually represent `item`. It can also
+--- directly set another buffer in picker's main window, but usually it is more
+--- robust to update given `buf_id` directly.
 ---
 --- Example: >lua
 ---
@@ -405,8 +401,8 @@
 --- <
 --- Default value is |MiniPick.default_preview()|.
 ---
----                                                         *MiniPick-source.choose*
 --- # Choose an item ~
+--- *MiniPick-source.choose*
 ---
 --- `source.choose` is a callable defining what to do when an item is chosen.
 ---
@@ -434,8 +430,8 @@
 --- <
 --- Default value is |MiniPick.default_choose()|.
 ---
----                                                  *MiniPick-source.choose_marked*
 --- # Choose marked items ~
+--- *MiniPick-source.choose_marked*
 ---
 --- `source.choose_marked` is a callable defining what to do when marked items
 --- (see |MiniPick-actions-mark|) are chosen. Serves as a companion to
@@ -467,16 +463,17 @@
 ---
 ---
 --- # Built-in ~
----                                                         *MiniPick-actions-caret*
+---
 --- ## Caret ~
+--- *MiniPick-actions-caret*
 ---
 --- User can add character not only at query end, but more generally at caret.
 ---
 --- - `mappings.caret_left` - move caret to left.
 --- - `mappings.caret_right` - move caret to right.
 ---
----                                                        *MiniPick-actions-choose*
 --- ## Choose ~
+--- *MiniPick-actions-choose*
 ---
 --- Choose is a fundamental action that actually implements the intent of
 --- calling a picker, i.e. pick an item.
@@ -489,8 +486,8 @@
 --- - `mappings.choose_marked` - choose marked items as is, i.e.
 ---   apply `source.choose_marked` at current marked items.
 ---
----                                                        *MiniPick-actions-delete*
 --- ## Delete ~
+--- *MiniPick-actions-delete*
 ---
 --- Delete actions are for deleting elements from query.
 ---
@@ -499,8 +496,8 @@
 --- - `mappings.delete_left` - delete everything to the left (like |i_CTRL-U|).
 --- - `mappings.delete_word` - delete word to the left (like |i_CTRL-W|).
 ---
----                                                          *MiniPick-actions-mark*
 --- ## Mark ~
+--- *MiniPick-actions-mark*
 ---
 --- Marking is an action of adding certain items to a separate list which then can
 --- be chosen with `mappings.choose_marked` (for example, sent to quickfix list).
@@ -515,8 +512,8 @@
 ---   with marking all matches several times and marked items from all queries
 ---   will be preserved.
 ---
----                                                          *MiniPick-actions-move*
 --- ## Move ~
+--- *MiniPick-actions-move*
 ---
 --- Move is a fundamental action of changing which item is current.
 ---
@@ -533,8 +530,8 @@
 ---     - `<Home>` moves to first matched.
 ---     - `<Up>` moves up.
 ---
----                                                         *MiniPick-actions-paste*
 --- ## Paste ~
+--- *MiniPick-actions-paste*
 ---
 --- Paste is an action to paste content of |registers| at caret.
 ---
@@ -546,8 +543,8 @@
 ---   <C-w> (as |c_CTRL-R_CTRL-W|), <C-a> (as |c_CTRL-R_CTRL-A|),
 ---   <C-l> (as |c_CTRL-R_CTRL-L|).
 ---
----                                                        *MiniPick-actions-refine*
 --- ## Refine ~
+--- *MiniPick-actions-refine*
 ---
 --- Refine is an action that primarily executes the following:
 --- - Takes certain items and makes them be all items (in order they are present).
@@ -555,17 +552,18 @@
 --- - Updates `source.match` to be the one from config.
 ---
 --- - `mappings.refine` - refine currently matched items.
---- - `mappings.refin_marked` - refine currently marked items.
+--- - `mappings.refine_marked` - refine currently marked items.
 ---
 --- This action is useful in at least two cases:
 --- - Perform consecutive "narrowing" queries. Example: to get items that contain
 ---   both "hello" and "world" exact matches (in no particular order) with default
 ---   matching, type "'hello" (notice "'" at the start) followed by `<C-Space>` and
 ---   another "'world".
---- - Reset `match` to default. Particularly useful in |MiniPick.builtin.grep_live()|.
+--- - Reset `match` to default. Particularly useful in |MiniPick.builtin.grep_live()|
+---   and |MiniExtra.pickers.lsp()| with "workspace_symbol_live" scope.
 ---
----                                                        *MiniPick-actions-scroll*
 --- ## Scroll ~
+--- *MiniPick-actions-scroll*
 ---
 --- Scroll is an action to either move current item focus further than to the
 --- neighbor item or adjust window view to see more information.
@@ -577,14 +575,14 @@
 --- - `mappings.scroll_up` - when matches are shown, go up by the amount of
 ---   visible matches. In preview and info view - scroll up as with |CTRL-B|.
 ---
----                                                          *MiniPick-actions-stop*
 --- ## Stop ~
+--- *MiniPick-actions-stop*
 ---
 --- `mappings.stop` stops the picker. <C-c> also always stops the picker.
 ---
 ---
----                                                        *MiniPick-actions-toggle*
 --- ## Toggle ~
+--- *MiniPick-actions-toggle*
 ---
 --- Toggle action is a way to change view: show if target is not shown, reset to
 --- main view otherwise.
@@ -596,8 +594,8 @@
 --- - Updating query in any way resets window view to show matches.
 --- - Moving current item focus keeps preview or info view with updated item.
 ---
----                                                        *MiniPick-actions-custom*
 --- # Custom ~
+--- *MiniPick-actions-custom*
 ---
 --- Along with built-in actions, users can define custom actions. This can be
 --- done by supplying custom elements to `mappings` table. The field defines action
@@ -618,15 +616,15 @@
 --- <
 ---@tag MiniPick-actions
 
---- Common configuration examples ~
+--- # Disable icons ~
 ---
---- - Disable icons in |MiniPick.builtin| pickers related to paths: >lua
+--- Disable icons in |MiniPick.builtin| pickers related to paths: >lua
 ---
 ---   local pick = require('mini.pick')
 ---   pick.setup({ source = { show = pick.default_show } })
 --- <
---- - Mappings to switch `toggle_{preview,info}` and `move_{up,down}`: >lua
----
+--- # Switch toggle and move keys ~
+--- >lua
 ---   require('mini.pick').setup({
 ---     mappings = {
 ---       toggle_info    = '<C-k>',
@@ -636,8 +634,8 @@
 ---     }
 ---   })
 --- <
---- - Different window styles: >lua
----
+--- # Different window styles ~
+--- >lua
 ---   -- Different border
 ---   { window = { config = { border = 'double' } } }
 ---
@@ -683,7 +681,9 @@ local H = {}
 
 --- Module setup
 ---
----                                                                          *:Pick*
+--- # :Pick ~
+--- *:Pick*
+---
 --- Calling this function creates a `:Pick` user command. It takes picker name
 --- from |MiniPick.registry| as mandatory first argument and executes it with
 --- following (expanded, |expandcmd()|) |<f-args>| combined in a single table.
@@ -694,6 +694,10 @@ local H = {}
 ---   :Pick files tool='git'
 ---   :Pick grep pattern='<cword>'
 --- <
+---
+--- It also sets custom |vim.ui.select()| implementation to use the module.
+--- See |MiniPick.ui_select()|.
+---
 ---@param config table|nil Module config table. See |MiniPick.config|.
 ---
 ---@usage >lua
@@ -702,15 +706,6 @@ local H = {}
 ---   require('mini.pick').setup({}) -- replace {} with your config table
 --- <
 MiniPick.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.pick) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniPick = MiniPick
 
@@ -735,12 +730,13 @@ MiniPick.setup = function(config)
     if not MiniPick.is_picker_active() then return paste_orig(...) end
     H.notify('Use `mappings.paste` (`<C-r>` by default) with "*" or "+" register.', 'HINT')
   end
+
+  -- Set custom implementation
+  vim.ui.select = MiniPick.ui_select
 end
 
 --stylua: ignore
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
 ---@text # Delays ~
 ---
@@ -994,7 +990,7 @@ end
 ---   |        |                        |
 ---   | ab c   | abc_, _abc, ab_c       |
 ---   | *ab c  | None (no " " in items) |
----
+--- <
 --- Having query `{ 'ab', 'c' }` is the same as "ab c" prompt.
 ---
 --- You can have a feel of how this works with this command: >lua
@@ -1040,13 +1036,13 @@ end
 ---
 --- Implements default value for |MiniPick-source.show|.
 ---
---- Uses the following highlight groups (see |MiniPick| for their description):
+--- Uses the following highlight groups (see |mini.pick| for their description):
 ---
---- * `MiniPickIconDirectory`
---- * `MiniPickIconFile`
---- * `MiniPickMatchCurrent`
---- * `MiniPickMatchMarked`
---- * `MiniPickMatchRanges`
+--- - `MiniPickIconDirectory`
+--- - `MiniPickIconFile`
+--- - `MiniPickMatchCurrent`
+--- - `MiniPickMatchMarked`
+--- - `MiniPickMatchRanges`
 ---
 ---@param buf_id number Identifier of target buffer.
 ---@param items table Array of items to show.
@@ -1127,10 +1123,10 @@ end
 ---
 --- Implements default value for |MiniPick-source.preview|.
 ---
---- Uses the following highlight groups (see |MiniPick| for their description):
+--- Uses the following highlight groups (see |mini.pick| for their description):
 ---
---- * `MiniPickPreviewLine`
---- * `MiniPickPreviewRegion`
+--- - `MiniPickPreviewLine`
+--- - `MiniPickPreviewRegion`
 ---
 ---@param buf_id number Identifier of target buffer.
 ---@param item any Item to preview.
@@ -1237,6 +1233,7 @@ end
 ---
 --- Function which can be used to directly override |vim.ui.select()| to use
 --- 'mini.pick' for any "select" type of tasks.
+--- Set automatically in |MiniPick.setup()|.
 ---
 --- Implements required by `vim.ui.select()` signature, with some differencies:
 --- - Allows `opts.preview_item` that returns an array of lines for item preview.
@@ -1246,13 +1243,17 @@ end
 --- - `on_choice` is called when target window is current.
 ---
 ---@usage >lua
----   vim.ui.select = MiniPick.ui_select
----
 ---   -- Customize with fourth argument inside a function wrapper
 ---   vim.ui.select = function(items, opts, on_choice)
 ---     local start_opts = { window = { config = { width = vim.o.columns } } }
 ---     return MiniPick.ui_select(items, opts, on_choice, start_opts)
 ---   end
+--- <
+--- To preserve original `vim.ui.select()`: >lua
+---
+---   local ui_select_orig = vim.ui.select
+---   require('mini.pick').setup()
+---   vim.ui.select = ui_select_orig
 --- <
 MiniPick.ui_select = function(items, opts, on_choice, start_opts)
   local format_item = opts.format_item or H.item_to_string
@@ -1325,6 +1326,8 @@ end
 ---
 --- To customize CLI tool search, either use tool's global configuration approach
 --- or directly |MiniPick.builtin.cli()| with specific command.
+--- Options 'ignorecase' and 'smartcase' are respected via forcing appropriate
+--- flags to CLI tool (i.e. overriding tool's global config).
 ---
 ---@param local_opts __pick_builtin_local_opts
 ---   Possible fields:
@@ -1362,6 +1365,8 @@ end
 --- `rg`, `git`. If none is present, error is thrown (for performance reasons).
 ---
 --- To customize search, use tool's global configuration approach.
+--- Options 'ignorecase' and 'smartcase' are respected via forcing appropriate
+--- flags to CLI tool (i.e. overriding tool's global config).
 ---
 ---@param local_opts __pick_builtin_local_opts
 ---   Possible fields:
@@ -1467,11 +1472,12 @@ MiniPick.builtin.help = function(local_opts, opts)
     return { char = char, func = f }
   end
 
+  local config_mappings = H.get_config().mappings
   --stylua: ignore
   local mappings = {
-    choose_in_split   = '', show_help_in_split   = map_custom('<C-s>', ''),
-    choose_in_vsplit  = '', show_help_in_vsplit  = map_custom('<C-v>', 'vertical '),
-    choose_in_tabpage = '', show_help_in_tabpage = map_custom('<C-t>', 'tab '),
+    choose_in_split   = '', show_help_in_split   = map_custom(config_mappings.choose_in_split, ''),
+    choose_in_vsplit  = '', show_help_in_vsplit  = map_custom(config_mappings.choose_in_vsplit, 'vertical '),
+    choose_in_tabpage = '', show_help_in_tabpage = map_custom(config_mappings.choose_in_tabpage, 'tab '),
   }
 
   local source = { items = tags, name = 'Help', choose = choose, preview = preview }
@@ -1693,8 +1699,8 @@ MiniPick.get_picker_query = function() return vim.deepcopy((H.pickers.active or 
 ---@seealso |MiniPick.get_picker_items()| and |MiniPick.get_picker_stritems()|
 MiniPick.set_picker_items = function(items, opts)
   if not H.islist(items) then H.error('`items` should be an array.') end
-  if not MiniPick.is_picker_active() then return end
   opts = vim.tbl_deep_extend('force', { do_match = true, querytick = nil }, opts or {})
+  if not MiniPick.is_picker_active() then return end
 
   -- Set items in async because computing lower `stritems` can block much time
   coroutine.wrap(H.picker_set_items)(H.pickers.active, items, opts)
@@ -1716,17 +1722,17 @@ end
 ---   - <postprocess> `(function)` - callable performing postprocessing of output.
 ---     Will be called with array of lines as input, should return array of items.
 ---     Default: removes trailing empty lines and uses rest as string items.
----   - <spawn_opts> `(table)` - `options` for |uv.spawn|, except `args` and `stdio` fields.
+---   - <spawn_opts> `(table)` - `options` for |uv.spawn()|, except `args` and `stdio`.
 ---     Note: relative `cwd` path is resolved against active picker's `cwd`.
 ---   - <set_items_opts> `(table)` - table forwarded to |MiniPick.set_picker_items()|.
 ---
 ---@seealso |MiniPick.get_picker_items()| and |MiniPick.get_picker_stritems()|
 MiniPick.set_picker_items_from_cli = function(command, opts)
-  if not MiniPick.is_picker_active() then return end
   local is_valid_command = H.is_array_of(command, 'string') and #command >= 1
   if not is_valid_command then H.error('`command` should be an array of strings.') end
   local default_opts = { postprocess = H.cli_postprocess, set_items_opts = {}, spawn_opts = {} }
   opts = vim.tbl_deep_extend('force', default_opts, opts or {})
+  if not MiniPick.is_picker_active() then return end
 
   local executable, args = command[1], vim.list_slice(command, 2, #command)
   local process, pid, stdout = nil, nil, vim.loop.new_pipe()
@@ -1773,10 +1779,11 @@ end
 ---
 ---@seealso |MiniPick.get_picker_matches()|
 MiniPick.set_picker_match_inds = function(match_inds, match_type)
-  if not MiniPick.is_picker_active() then return end
   if not H.is_array_of(match_inds, 'number') then H.error('`match_inds` should be an array of numbers.') end
   local set = H.picker_set_inds[match_type or 'all']
   if set == nil then H.error('`match_type` should be one of "all", "marked", "current"') end
+  if not MiniPick.is_picker_active() then return end
+
   set(H.pickers.active, match_inds)
   H.picker_update(H.pickers.active, false)
 end
@@ -1792,7 +1799,8 @@ MiniPick.set_picker_opts = function(opts)
   picker.opts = vim.tbl_deep_extend('force', picker.opts, opts or {})
   picker.action_keys = H.normalize_mappings(picker.opts.mappings)
   if cur_cwd ~= picker.opts.source.cwd then H.win_set_cwd(picker.windows.main, picker.opts.source.cwd) end
-  H.picker_update(picker, true, true)
+  local do_match = ((opts or {}).source or {}).match ~= nil
+  H.picker_update(picker, do_match, true)
 end
 
 --- Set target window for active picker
@@ -1801,8 +1809,8 @@ end
 ---
 ---@seealso |MiniPick.get_picker_state()|
 MiniPick.set_picker_target_window = function(win_id)
-  if not MiniPick.is_picker_active() then return end
   if not H.is_valid_win(win_id) then H.error('`win_id` is not a valid window identifier.') end
+  if not MiniPick.is_picker_active() then return end
   H.pickers.active.windows.target = win_id
 end
 
@@ -1812,8 +1820,8 @@ end
 ---
 ---@seealso |MiniPick.get_picker_query()|
 MiniPick.set_picker_query = function(query)
-  if not MiniPick.is_picker_active() then return end
   if not H.is_array_of(query, 'string') then H.error('`query` should be an array of strings.') end
+  if not MiniPick.is_picker_active() then return end
 
   H.pickers.active.query, H.pickers.active.caret = vim.deepcopy(query), #query + 1
   H.querytick = H.querytick + 1
@@ -2195,11 +2203,12 @@ H.picker_advance = function(picker)
   vim.schedule(function() vim.api.nvim_exec_autocmds('User', { pattern = 'MiniPickStart' }) end)
 
   local do_match, is_aborted = false, false
+  local lmap = H.get_lmap()
   for _ = 1, 1000000 do
     if H.cache.is_force_stop_advance then break end
     H.picker_update(picker, do_match)
 
-    local char = H.getcharstr(picker.opts.delay.async)
+    local char = H.getcharstr(picker.opts.delay.async, lmap)
     if H.cache.is_force_stop_advance then break end
 
     is_aborted = char == nil
@@ -2275,6 +2284,7 @@ H.picker_compute_win_config = function(win_config, is_for_open)
   local max_height = vim.o.lines - vim.o.cmdheight - (has_tabline and 1 or 0) - (has_statusline and 1 or 0)
   local max_width = vim.o.columns
 
+  local winborder = vim.fn.exists('+winborder') == 0 and '' or vim.o.winborder
   local default_config = {
     relative = 'editor',
     anchor = 'SW',
@@ -2282,7 +2292,7 @@ H.picker_compute_win_config = function(win_config, is_for_open)
     height = math.floor(0.618 * max_height),
     col = 0,
     row = max_height + (has_tabline and 1 or 0),
-    border = (vim.fn.exists('+winborder') == 1 and vim.o.winborder ~= '') and vim.o.winborder or 'single',
+    border = winborder == '' and 'single' or nil,
     style = 'minimal',
     noautocmd = is_for_open,
     -- Use high enough value to be on top of built-in windows (pmenu, etc.)
@@ -2291,10 +2301,13 @@ H.picker_compute_win_config = function(win_config, is_for_open)
   local config = vim.tbl_deep_extend('force', default_config, H.expand_callable(win_config) or {})
 
   -- Tweak config values to ensure they are proper
-  if config.border == 'none' then config.border = { '', ' ', '', '', '', ' ', '', '' } end
-  -- - Account for border
-  config.height = math.max(math.min(config.height, max_height - 2), 1)
-  config.width = math.max(math.min(config.width, max_width - 2), 1)
+  if (config.border or winborder) == 'none' then config.border = { '', ' ', '', '', '', ' ', '', '' } end
+  -- - Adjust dimensions accounting for actually present border parts
+  local bor, n = config.border, type(config.border) == 'table' and #config.border or 0
+  local height_offset = n == 0 and 2 or ((bor[1 % n + 1] == '' and 0 or 1) + (bor[5 % n + 1] == '' and 0 or 1))
+  local width_offset = n == 0 and 2 or ((bor[3 % n + 1] == '' and 0 or 1) + (bor[7 % n + 1] == '' and 0 or 1))
+  config.height = math.max(math.min(config.height, max_height - height_offset), 1)
+  config.width = math.max(math.min(config.width, max_width - width_offset), 1)
 
   return config
 end
@@ -2596,12 +2609,9 @@ H.picker_set_bordertext = function(picker)
   vim.wo[win_id].list = true
 end
 
--- - No border text functionality is available in Neovim<0.9
-if vim.fn.has('nvim-0.9') == 0 then H.picker_set_bordertext = function() end end
-
 H.picker_compute_footer = function(picker, win_id)
   local info = H.picker_get_general_info(picker)
-  local source_name = string.format(' %s ', info.source_name)
+  local source_name = string.format(' %s ', info.source_name):gsub('[%z%s]', ' ')
   local n_marked_text = info.n_marked == 0 and '' or (info.n_marked .. '/')
   local inds = string.format(' %s|%s|%s%s ', info.relative_current_ind, info.n_matched, n_marked_text, info.n_total)
   local win_width, source_width, inds_width =
@@ -2611,7 +2621,8 @@ H.picker_compute_footer = function(picker, win_id)
   local n_spaces_between = win_width - (source_width + inds_width)
   if n_spaces_between > 0 then
     local border_hl = picker.is_busy and 'MiniPickBorderBusy' or 'MiniPickBorder'
-    footer[2] = { H.win_get_bottom_border(win_id):rep(n_spaces_between), border_hl }
+    local part_id = picker.opts.options.content_from_bottom and 2 or 6
+    footer[2] = { H.win_get_bottom_border(win_id, part_id):rep(n_spaces_between), border_hl }
     footer[3] = { inds, 'MiniPickBorderText' }
   end
   return footer
@@ -2723,7 +2734,7 @@ H.actions = {
 
 H.picker_query_add = function(picker, char)
   -- Determine if it **is** proper single character
-  if vim.fn.strchars(char) > 1 or vim.fn.char2nr(char) <= 31 then return end
+  if not H.is_query_char(char) then return end
   table.insert(picker.query, picker.caret, char)
   picker.caret = picker.caret + 1
   H.querytick = H.querytick + 1
@@ -2733,6 +2744,8 @@ H.picker_query_add = function(picker, char)
   local should_reset = picker.items ~= nil and picker.caret <= #picker.query
   if should_reset then picker.match_inds = H.seq_along(picker.items) end
 end
+
+H.is_query_char = function(char) return vim.fn.strchars(char) == 1 and vim.fn.char2nr(char) > 31 end
 
 H.picker_query_delete = function(picker, n)
   local delete_to_left = n > 0
@@ -2854,7 +2867,7 @@ H.picker_get_current_item = function(picker)
 end
 
 H.picker_get_register_contents = function(picker)
-  local register = H.getcharstr(picker.opts.delay.async)
+  local register = H.getcharstr(picker.opts.delay.async, {})
   -- Mimic some "insert object under cursor" behavior of Command-line mode
   local expand_var = ({ ['\1'] = '<cWORD>', ['\6'] = '<cfile>', ['\23'] = '<cword>' })[register]
   if expand_var then
@@ -2947,7 +2960,7 @@ H.picker_show_preview = function(picker)
   vim.bo[buf_id].bufhidden = 'wipe'
   H.set_winbuf(win_id, buf_id)
   preview(buf_id, item)
-  picker.buffers.preview = buf_id
+  picker.buffers.preview = vim.api.nvim_win_get_buf(win_id)
   picker.view_state = 'preview'
 end
 
@@ -3391,14 +3404,15 @@ H.files_get_tool = function()
 end
 
 H.files_get_command = function(tool)
-  if tool == 'rg' then return { 'rg', '--files', '--no-follow', '--color=never' } end
-  if tool == 'fd' then return { 'fd', '--type=f', '--no-follow', '--color=never' } end
-  if tool == 'git' then return { 'git', 'ls-files', '--cached', '--others', '--exclude-standard' } end
+  if tool == 'rg' then return { 'rg', '--files', '--color=never' } end
+  if tool == 'fd' then return { 'fd', '--type=f', '--color=never' } end
+  if tool == 'git' then
+    return { 'git', '-c', 'core.quotepath=false', 'ls-files', '--cached', '--others', '--exclude-standard' }
+  end
   H.error([[Wrong 'tool' for `files` builtin.]])
 end
 
 H.files_fallback_items = function(cwd)
-  if vim.fn.has('nvim-0.9') == 0 then H.error('Tool "fallback" of `files` builtin needs Neovim>=0.9.') end
   local poke_picker = H.poke_picker_throttle()
   local f = function()
     local items = {}
@@ -3422,14 +3436,15 @@ end
 H.grep_get_command = function(tool, pattern, globs)
   if tool == 'rg' then
     local res = {
-      'rg', '--column', '--line-number', '--no-heading', '--field-match-separator', '\\x00', '--no-follow', '--color=never'
+      'rg', '--column', '--line-number', '--no-heading', '--field-match-separator', '\\x00', '--color=never'
     }
     for _, g in ipairs(globs) do
       table.insert(res, '--glob')
       -- NOTE: no `*` as default is important to not "override" ignoring files
       table.insert(res, g)
     end
-    vim.list_extend(res, { '--', pattern })
+    local case = vim.o.ignorecase and (vim.o.smartcase and 'smart-case' or 'ignore-case') or 'case-sensitive'
+    vim.list_extend(res, { '--' .. case,  '--', pattern })
     return res
   end
   if tool == 'git' then
@@ -3441,7 +3456,6 @@ H.grep_get_command = function(tool, pattern, globs)
 end
 
 H.grep_fallback_items = function(pattern, cwd)
-  if vim.fn.has('nvim-0.9') == 0 then H.error('Tool "fallback" of `grep` builtin needs Neovim>=0.9.') end
   local poke_picker = H.poke_picker_throttle()
   local f = function()
     local files, files_full = {}, {}
@@ -3475,7 +3489,9 @@ H.schedule_resume_is_active = vim.schedule_wrap(function(co) coroutine.resume(co
 
 H.poke_picker_throttle = function(querytick_ref)
   -- Allow calling this even if no picker is active
-  if not MiniPick.is_picker_active() then return function() return true end end
+  if not MiniPick.is_picker_active() then
+    return function() return true end
+  end
 
   local latest_time, dont_check_querytick = vim.loop.hrtime(), querytick_ref == nil
   local threshold = 1000000 * H.get_config().delay.async
@@ -3552,7 +3568,7 @@ H.set_cursor = function(win_id, lnum, col) pcall(vim.api.nvim_win_set_cursor, wi
 
 H.set_curwin = function(win_id)
   if not H.is_valid_win(win_id) then return end
-  -- Explicitly preserve cursor to fix Neovim<=0.9 after choosing position in
+  -- Explicitly preserve cursor to fix Neovim<0.10 after choosing position in
   -- already shown buffer
   local cursor = vim.api.nvim_win_get_cursor(win_id)
   vim.api.nvim_set_current_win(win_id)
@@ -3580,7 +3596,7 @@ H.redraw = function() vim.cmd('redraw') end
 
 H.redraw_scheduled = vim.schedule_wrap(H.redraw)
 
-H.getcharstr = function(delay_async)
+H.getcharstr = function(delay_async, lmap)
   -- Ensure that redraws still happen
   H.timers.getcharstr:start(0, delay_async, H.redraw_scheduled)
   H.cache.is_in_getcharstr = true
@@ -3593,7 +3609,8 @@ H.getcharstr = function(delay_async)
   if H.pickers.active ~= nil then main_win_id = H.pickers.active.windows.main end
   local is_bad_mouse_click = vim.v.mouse_winid ~= 0 and vim.v.mouse_winid ~= main_win_id
   if not ok or char == '' or char == '\3' or is_bad_mouse_click then return end
-  return char
+  -- Respect language mappings only if needed
+  return vim.o.iminsert == 0 and char or (lmap[char] or char)
 end
 
 H.tolower = (function()
@@ -3622,11 +3639,10 @@ H.fit_to_width = function(text, width)
   return t_width <= width and text or ('…' .. vim.fn.strcharpart(text, t_width - width + 1, width - 1))
 end
 
-H.win_get_bottom_border = function(win_id)
+H.win_get_bottom_border = function(win_id, border_part_id)
   local border = vim.api.nvim_win_get_config(win_id).border or {}
-  local res = border[6]
-  if type(res) == 'table' then res = res[1] end
-  return res or ' '
+  local res = border[border_part_id]
+  return (type(res) == 'table' and res[1] or res) or ' '
 end
 
 H.win_set_cwd = function(win_id, cwd)
@@ -3646,10 +3662,16 @@ H.seq_along = function(arr)
   return res
 end
 
+H.str_utfindex = function(s, i) return vim.str_utfindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_utfindex = function(s, i) return (vim.str_utfindex(s, i)) end end
+
+H.str_byteindex = function(s, i) return vim.str_byteindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_byteindex = function(s, i) return vim.str_byteindex(s, i) end end
+
 H.get_next_char_bytecol = function(line_str, col)
   if type(line_str) ~= 'string' then return col end
-  local utf_index = vim.str_utfindex(line_str, math.min(line_str:len(), col))
-  return vim.str_byteindex(line_str, utf_index)
+  local utf_index = H.str_utfindex(line_str, math.min(line_str:len(), col))
+  return H.str_byteindex(line_str, utf_index)
 end
 
 H.is_file_text = function(path)
@@ -3675,5 +3697,16 @@ end
 
 -- TODO: Remove after compatibility with Neovim=0.9 is dropped
 H.islist = vim.fn.has('nvim-0.10') == 1 and vim.islist or vim.tbl_islist
+
+H.get_lmap = function()
+  local lmap = {}
+  for _, map in ipairs(vim.fn.maplist()) do
+    -- NOTE: Account only for characters that resolve to proper query character
+    local is_query_lmap = map.mode == 'l' and H.is_query_char(map.rhs)
+    if is_query_lmap then lmap[map.lhs] = map.rhs end
+  end
+  return lmap
+end
+if vim.fn.has('nvim-0.10') == 0 then H.get_lmap = function() return {} end end
 
 return MiniPick

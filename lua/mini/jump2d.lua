@@ -1,10 +1,7 @@
 --- *mini.jump2d* Jump within visible lines
---- *MiniJump2d*
 ---
 --- MIT License Copyright (c) 2022 Evgeni Chasnovski
----
---- ==============================================================================
----
+
 --- Jump within visible lines via iterative label filtering.
 ---
 --- Features:
@@ -85,11 +82,11 @@
 ---
 ---   :lua MiniJump2d.start(MiniJump2d.builtin_opts.single_character)
 --- <
---- - See more examples in |MiniJump2d.start| and |MiniJump2d.builtin_opts|.
+--- - See more examples in |MiniJump2d.start()| and |MiniJump2d.builtin_opts|.
 ---
 --- # Comparisons ~
 ---
---- - 'phaazon/hop.nvim':
+--- - [phaazon/hop.nvim](https://github.com/phaazon/hop.nvim):
 ---     - Both are fast, customizable, and extensible (user can write their own
 ---       ways to define jump spots).
 ---     - 'hop.nvim' visualizes all steps at once. While this module can show
@@ -107,11 +104,11 @@
 ---       are put near cursor (by default) and highlighted differently. Final
 ---       order of sequences is based on distance to the cursor.
 ---     - 'mini.jump2d' has opinionated default algorithm of computing jump
----       spots. See |MiniJump2d.default_spotter|.
+---       spots. See |MiniJump2d.default_spotter()|.
 ---
 --- # Highlight groups ~
 ---
---- * `MiniJump2dSpot` - highlighting of jump spot's next step. By default it
+--- - `MiniJump2dSpot` - highlighting of jump spot's next step. By default it
 ---   uses label with highest contrast while not being too visually demanding:
 ---   white on black for dark 'background', black on white for light. If it
 ---   doesn't suit your liking, try couple of these alternatives (or choose
@@ -126,17 +123,17 @@
 ---     -- Red undercurl
 ---     vim.api.nvim_set_hl(0, 'MiniJump2dSpot', { sp = 'Red', undercurl = true })
 --- <
---- * `MiniJump2dSpotUnique` - highlighting of jump spot's next step if it has
+--- - `MiniJump2dSpotUnique` - highlighting of jump spot's next step if it has
 ---   unique label. By default links to `MiniJump2dSpot`.
 ---
---- * `MiniJump2dSpotAhead` - highlighting of jump spot's future steps. By default
+--- - `MiniJump2dSpotAhead` - highlighting of jump spot's future steps. By default
 ---   similar to `MiniJump2dSpot` but with less contrast and visibility.
 ---
---- * `MiniJump2dDim` - highlighting of lines with at least one jump spot.
+--- - `MiniJump2dDim` - highlighting of lines with at least one jump spot.
 ---   Make it non-bright in order for jump spot labels to be more visible.
 ---   By default linked to `Comment` highlight group.
 ---
---- To change any highlight group, modify it directly with |:highlight|.
+--- To change any highlight group, set it directly with |nvim_set_hl()|.
 ---
 --- # Disabling ~
 ---
@@ -145,6 +142,7 @@
 --- number of different scenarios and customization intentions, writing exact
 --- rules for disabling module's functionality is left to user. See
 --- |mini.nvim-disabling-recipes| for common recipes.
+---@tag MiniJump2d
 
 -- Module definition ==========================================================
 local MiniJump2d = {}
@@ -160,15 +158,6 @@ local H = {}
 ---   require('mini.jump2d').setup({}) -- replace {} with your config table
 --- <
 MiniJump2d.setup = function(config)
-  -- TODO: Remove after Neovim=0.8 support is dropped
-  if vim.fn.has('nvim-0.9') == 0 then
-    vim.notify(
-      '(mini.jump2d) Neovim<0.9 is soft deprecated (module works but not supported).'
-        .. ' It will be deprecated after next "mini.nvim" release (module might not work).'
-        .. ' Please update your Neovim version.'
-    )
-  end
-
   -- Export module
   _G.MiniJump2d = MiniJump2d
 
@@ -185,13 +174,9 @@ MiniJump2d.setup = function(config)
   H.create_default_hl()
 end
 
---- Module config
----
---- Default values:
+--- Defaults ~
 ---@eval return MiniDoc.afterlines_to_code(MiniDoc.current.eval_section)
----@text # Options ~
----
---- ## Spotter function ~
+---@text # Spotter function ~
 ---
 --- Actual computation of possible jump spots is done through spotter function.
 --- It should have the following arguments:
@@ -207,10 +192,10 @@ end
 --- strictly necessary) sorted increasingly.
 ---
 --- Note: spotter function is always called with `win_id` window being
---- "temporary current" (see |nvim_win_call|). This allows using builtin
+--- "temporary current" (see |nvim_win_call()|). This allows using builtin
 --- Vimscript functions that operate only inside current window.
 ---
---- ## View ~
+--- # View ~
 ---
 --- Option `view.n_steps_ahead` controls how many steps ahead to show along
 --- with the currently required label. Those future steps are shown with
@@ -222,19 +207,19 @@ end
 --- Option `view.dim` controls whether to dim lines with at least one jump spot.
 --- Dimming is done by applying "MiniJump2dDim" highlight group to the whole line.
 ---
---- ## Allowed lines ~
+--- # Allowed lines ~
 ---
 --- Option `allowed_lines` controls which lines will be used for computing
 --- possible jump spots:
 --- - If `blank` or `fold` is `true`, it is possible to jump to first column of blank
----   line (determined by |prevnonblank|) or first folded one (determined by
----   |foldclosed|) respectively. Otherwise they are skipped. These lines are
+---   line (determined by |prevnonblank()|) or first folded one (determined by
+---   |foldclosed()|) respectively. Otherwise they are skipped. These lines are
 ---   not processed by spotter function even if the option is `true`.
 --- - If `cursor_before`, (`cursor_at`, `cursor_after`) is `true`, lines before
 ---   (at, after) cursor line of all processed windows are forwarded to spotter
 ---   function. Otherwise, they don't. This allows control of jump "direction".
 ---
---- ## Hooks ~
+--- # Hooks ~
 ---
 --- Following hook functions can be used to further tweak jumping experience:
 --- - `before_start` - called without arguments first thing when jump starts.
@@ -244,8 +229,8 @@ end
 ---   post-adjustments (like move cursor to first non-whitespace character).
 MiniJump2d.config = {
   -- Function producing jump spots (byte indexed) for a particular line.
-  -- For more information see |MiniJump2d.start|.
-  -- If `nil` (default) - use |MiniJump2d.default_spotter|
+  -- For more information see |MiniJump2d.start()|.
+  -- If `nil` (default) - use |MiniJump2d.default_spotter()|
   spotter = nil,
 
   -- Characters used for labels of jump spots (in supplied order)
@@ -298,7 +283,7 @@ MiniJump2d.config = {
 ---
 --- Compute possible jump spots, visualize them and wait for iterative filtering.
 ---
---- First computation of possible jump spots ~
+--- # First computation of possible jump spots ~
 ---
 --- - Process allowed windows (current and/or not current; controlled by
 ---   `allowed_windows` option) by visible lines from top to bottom. For each
@@ -316,12 +301,12 @@ MiniJump2d.config = {
 ---   spot over another. Basically, it means "use all labels at each step of
 ---   iterative filtering as equally as possible".
 ---
---- Visualization ~
+--- # Visualization ~
 ---
 --- Current label for each possible jump spot is shown at that position
 --- overriding everything underneath it.
 ---
---- Iterative filtering ~
+--- # Iterative filtering ~
 ---
 --- Labels of possible jump spots are computed in order to use them as equally
 --- as possible.
@@ -343,12 +328,14 @@ MiniJump2d.config = {
 ---@param opts table|nil Configuration of jumping, overriding global and buffer
 ---   local values. Has the same structure as |MiniJump2d.config|
 ---   without <mappings> field. Extra allowed fields:
----     - <hl_group> - which highlight group to use for first step.
----       Default: "MiniJump2dSpot".
----     - <hl_group_ahead> - which highlight group to use for second step and later.
----       Default: "MiniJump2dSpotAhead".
----     - <hl_group_dim> - which highlight group to use dimming used lines.
----       Default: "MiniJump2dSpotDim".
+---   - <hl_group> - highlight group for first step.
+---     Default: `"MiniJump2dSpot"`.
+---   - <hl_group_ahead> - highlight group for second and later steps.
+---     Default: `"MiniJump2dSpotAhead"`.
+---   - <hl_group_dim> - highlight group for dimming used lines.
+---     Default: `"MiniJump2dDim"`.
+---   - <hl_group_unique> - highlight group for unique next step.
+---     Default: `"MiniJump2dSpotUnique"`.
 ---
 ---@usage >lua
 ---   -- Start default jumping
@@ -368,7 +355,7 @@ MiniJump2d.config = {
 ---     allowed_windows = { not_current = false },
 ---     hl_group = 'Search'
 ---   })
----<
+--- <
 ---@seealso |MiniJump2d.config|
 MiniJump2d.start = function(opts)
   if H.is_disabled() then return end
@@ -491,8 +478,8 @@ MiniJump2d.gen_spotter.pattern = function(pattern, side)
 
       -- Unify how spot is chosen in case of multibyte characters
       -- Use `+-1` to make sure that result is at start of multibyte character
-      local utf_index = vim.str_utfindex(line, spot) - 1
-      spot = vim.str_byteindex(line, utf_index) + 1
+      local utf_index = H.str_utfindex(line, spot) - 1
+      spot = H.str_byteindex(line, utf_index) + 1
 
       -- Add spot only if it referces new actually visible column
       if spot ~= res[#res] then table.insert(res, spot) end
@@ -558,7 +545,9 @@ end
 --- <
 MiniJump2d.gen_spotter.union = function(...)
   local spotters = { ... }
-  if #spotters == 0 then return function() return {} end end
+  if #spotters == 0 then
+    return function() return {} end
+  end
 
   local is_all_callable = true
   for _, x in ipairs(spotters) do
@@ -599,6 +588,7 @@ end
 --- - Make labeled jump spots easily distinguishable.
 ---
 --- Usually takes from 2 to 3 keystrokes to get to destination.
+---@tag MiniJump2d.default_spotter()
 MiniJump2d.default_spotter = (function()
   -- NOTE: not using `MiniJump2d.gen_spotter.union()` due to slightly better
   -- algorithmic complexity merging small arrays first.
@@ -823,10 +813,11 @@ end
 
 -- Jump spots -----------------------------------------------------------------
 H.spots_compute = function(opts)
-  local win_id_init = vim.api.nvim_get_current_win()
+  local win_id_init, allowed = vim.api.nvim_get_current_win(), opts.allowed_windows
   local win_id_arr = vim.tbl_filter(function(win_id)
-    if win_id == win_id_init then return opts.allowed_windows.current end
-    return opts.allowed_windows.not_current
+    if not vim.api.nvim_win_get_config(win_id).focusable then return false end
+    if win_id == win_id_init then return allowed.current end
+    return allowed.not_current
   end, H.tabpage_list_wins(0))
 
   local res = {}
@@ -1234,5 +1225,11 @@ H.merge_unique = function(tbl_1, tbl_2)
 
   return res
 end
+
+H.str_utfindex = function(s, i) return vim.str_utfindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_utfindex = function(s, i) return (vim.str_utfindex(s, i)) end end
+
+H.str_byteindex = function(s, i) return vim.str_byteindex(s, 'utf-32', i) end
+if vim.fn.has('nvim-0.11') == 0 then H.str_byteindex = function(s, i) return vim.str_byteindex(s, i) end end
 
 return MiniJump2d

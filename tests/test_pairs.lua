@@ -232,6 +232,12 @@ local validate_disable = function(var_type, key)
   child[var_type].minipairs_disable = nil
 end
 
+local validate_cmdline = function(line, pos)
+  eq(child.fn.mode(), 'c')
+  eq(child.fn.getcmdline(), line)
+  eq(child.fn.getcmdpos(), pos or line:len() + 1)
+end
+
 local apply_map = function(fun_name, args_string)
   -- If testing `MiniPairs.map_buf()`, apply it in current buffer
   local is_buf_local = fun_name == 'map_buf' or fun_name == 'unmap_buf'
@@ -679,6 +685,12 @@ T['Open action']['does not break undo sequence in Insert mode'] = function()
   eq(get_lines(), { '' })
 end
 
+T['Open action']['works with visible wildmenu'] = function()
+  apply_map('map', '"c", "<", { action = "open", pair = "<>" }')
+  type_keys(':', '<Tab>', '<')
+  validate_cmdline('!<>', 3)
+end
+
 T['Open action']['respects neighbor pattern'] = function()
   validate_slash('(')
   validate_slash('[')
@@ -689,6 +701,12 @@ T['Open action']['is correctly initiated in `config.mappings`'] = function()
   child.api.nvim_del_keymap('i', '(')
   reload_module({ mappings = { ['('] = { action = 'open', pair = '()', neigh_pattern = '..' } } })
   validate_no('neigh_disable', [[\]], '(')
+end
+
+T['Open action']['works with `nvim_feedkeys()`'] = function()
+  child.cmd('inoremap <C-j> <Cmd>call nvim_feedkeys("((", "", v:true)<CR>')
+  type_keys('i', '<C-j>')
+  eq(child.o.lazyredraw, false)
 end
 
 T['Open action']['respects `vim.{g,b}.minipairs_disable`'] = new_set({
@@ -763,6 +781,42 @@ T['Close action']['does not break undo sequence in Insert mode'] = function()
   type_keys('i', ')) ', '<Esc>')
   type_keys('u')
   eq(get_lines(), { '(())' })
+end
+
+T['Close action']['works with visible wildmenu'] = function()
+  apply_map('map', '"c", "(", { action = "open", pair = "()" }')
+  apply_map('map', '"c", ")", { action = "close", pair = "()" }')
+  child.lua('_G.AAA = 1')
+  type_keys(':', 'lua print(1 + ', '<Tab>')
+  validate_cmdline('lua print(1 + AAA)', 18)
+
+  type_keys(')')
+  validate_cmdline('lua print(1 + AAA)', 19)
+end
+
+T['Close action']['works with inline virtual text'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Inline virtual text is present in Neovim>=0.10') end
+
+  set_lines({ '()' })
+  local ns_id = child.api.nvim_create_namespace('Test')
+  child.api.nvim_buf_set_extmark(0, ns_id, 0, 1, { virt_text = { { 'Virt', 'String' } }, virt_text_pos = 'inline' })
+
+  local validate = function(virtualedit)
+    child.o.virtualedit = virtualedit
+    set_cursor(1, 0)
+
+    type_keys('a', ')')
+    eq(child.fn.getcurpos(), { 0, 1, 3, 0, 7 })
+    -- Should have no side effects
+    eq(child.o.virtualedit, virtualedit)
+
+    type_keys('<Esc>')
+  end
+
+  validate('all')
+  validate('none')
+  validate('block')
+  validate('onemore')
 end
 
 local validate_slash_close = function(key, pair)
@@ -867,6 +921,41 @@ T['Closeopen action']['does not break undo sequence in Insert mode'] = function(
   type_keys('i', '"" ', '<Esc>')
   type_keys('u')
   eq(get_lines(), { '""""' })
+end
+
+T['Closeopen action']['works with visible wildmenu'] = function()
+  apply_map('map', '"c", "`", { action = "closeopen", pair = "``" }')
+  child.lua('_G.AAA = 1')
+  type_keys(':', 'lua print`1 + ', '<Tab>')
+  validate_cmdline('lua print`1 + AAA`', 18)
+
+  type_keys('`')
+  validate_cmdline('lua print`1 + AAA`', 19)
+end
+
+T['Closeopen action']['works with inline virtual text'] = function()
+  if child.fn.has('nvim-0.10') == 0 then MiniTest.skip('Inline virtual text is present in Neovim>=0.10') end
+
+  set_lines({ '""' })
+  local ns_id = child.api.nvim_create_namespace('Test')
+  child.api.nvim_buf_set_extmark(0, ns_id, 0, 1, { virt_text = { { 'Virt', 'String' } }, virt_text_pos = 'inline' })
+
+  local validate = function(virtualedit)
+    child.o.virtualedit = virtualedit
+    set_cursor(1, 0)
+
+    type_keys('a', '"')
+    eq(child.fn.getcurpos(), { 0, 1, 3, 0, 7 })
+    -- Should have no side effects
+    eq(child.o.virtualedit, virtualedit)
+
+    type_keys('<Esc>')
+  end
+
+  validate('all')
+  validate('none')
+  validate('block')
+  validate('onemore')
 end
 
 T['Closeopen action']['respects neighbor pattern'] = function()
@@ -1114,6 +1203,13 @@ T['<CR> action']['works as normal if nothing is registered'] = function()
   type_keys('<CR>')
   eq(get_lines(), { '(', ')' })
   eq(get_cursor(), { 2, 0 })
+end
+
+T['<CR> action']['works with `feedkeys()`'] = function()
+  child.cmd('inoremap <C-j> <Cmd>call nvim_feedkeys("(\\r(\\r", "", v:true)<CR>')
+  type_keys('i', '<C-j>')
+  eq(child.o.eventignore, '')
+  eq(child.o.lazyredraw, false)
 end
 
 T['<CR> action']['respects `vim.{g,b}.minipairs_disable`'] = new_set({

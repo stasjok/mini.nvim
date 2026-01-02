@@ -1,8 +1,4 @@
-<img src="https://github.com/echasnovski/media/blob/main/mini.nvim/logo/logo_ai.png" style="width: 100%">
-
-<!-- badges: start -->
-[![GitHub license](https://badgen.net/github/license/echasnovski/mini.nvim)](https://github.com/echasnovski/mini.nvim/blob/main/LICENSE)
-<!-- badges: end -->
+<p align="center"> <img src="https://github.com/nvim-mini/assets/blob/main/logo-2/logo-ai_readme.png?raw=true" alt="mini.ai" style="max-width:100%;border:solid 2px"/> </p>
 
 ### Extend and create `a`/`i` textobjects
 
@@ -10,22 +6,28 @@
 - Supports dot-repeat, `v:count`, different search methods, consecutive application, and customization via Lua patterns or functions.
 - Has builtins for brackets, quotes, function call, argument, tag, user prompt, and any punctuation/digit/whitespace character.
 
-See more details in [Features](#features) and [help file](../doc/mini-ai.txt).
+See more details in [Features](#features) and [Documentation](../doc/mini-ai.txt).
 
 ---
 
-⦿ This is a part of [mini.nvim](https://github.com/echasnovski/mini.nvim) library. Please use [this link](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) if you want to mention this module.
+> [!NOTE]
+> This was previously hosted at a personal `echasnovski` GitHub account. It was transferred to a dedicated organization to improve long term project stability. See more details [here](https://github.com/nvim-mini/mini.nvim/discussions/1970).
+
+⦿ This is a part of [mini.nvim](https://nvim-mini.org/mini.nvim) library. Please use [this link](https://nvim-mini.org/mini.nvim/readmes/mini-ai) if you want to mention this module.
 
 ⦿ All contributions (issues, pull requests, discussions, etc.) are done inside of 'mini.nvim'.
 
-⦿ See the repository page to learn about common design principles and configuration recipes.
+⦿ See [whole library documentation](https://nvim-mini.org/mini.nvim/doc/mini-nvim) to learn about general design principles, disable/configuration recipes, and more.
+
+⦿ See [MiniMax](https://nvim-mini.org/MiniMax) for a full config example that uses this module.
 
 ---
 
-If you want to help this project grow but don't know where to start, check out [contributing guides of 'mini.nvim'](https://github.com/echasnovski/mini.nvim/blob/main/CONTRIBUTING.md) or leave a Github star for 'mini.nvim' project and/or any its standalone Git repositories.
+If you want to help this project grow but don't know where to start, check out [contributing guides of 'mini.nvim'](https://nvim-mini.org/mini.nvim/CONTRIBUTING) or leave a Github star for 'mini.nvim' project and/or any its standalone Git repositories.
 
 ## Demo
 
+<!-- Demo source: https://github.com/nvim-mini/assets/blob/main/demo/demo-ai.mp4 -->
 https://user-images.githubusercontent.com/24854248/181909691-b6f6b677-c37f-468f-85db-8eb8b1e1314e.mp4
 
 ## Features
@@ -33,10 +35,10 @@ https://user-images.githubusercontent.com/24854248/181909691-b6f6b677-c37f-468f-
 - Customizable creation of `a`/`i` textobjects using Lua patterns and functions. Supports:
     - Dot-repeat.
     - `v:count`.
-    - Different search methods (see help for `MiniAi.config`).
+    - Different search methods (see `:h MiniAi.config`).
     - Consecutive application (update selection without leaving Visual mode).
     - Aliases for multiple textobjects.
-- Comprehensive builtin textobjects (see more in help for `MiniAi-textobject-builtin`):
+- Comprehensive builtin textobjects (see more at `:h MiniAi-builtin-textobjects`):
     - Balanced brackets (with and without whitespace) plus alias.
     - Balanced quotes plus alias.
     - Function call.
@@ -61,91 +63,66 @@ There are two branches to install from:
 Here are code snippets for some common installation methods (use only one):
 
 <details>
-<summary>With <a href="https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-deps.md">mini.deps</a></summary>
-<table>
-    <thead>
-        <tr>
-            <th>Github repo</th>
-            <th>Branch</th> <th>Code snippet</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td rowspan=2>'mini.nvim' library</td> <td>Main</td> <td rowspan=2><i>Follow recommended 'mini.deps' installation</i></td>
-        </tr>
-        <tr>
-            <td>Stable</td>
-        </tr>
-        <tr>
-            <td rowspan=2>Standalone plugin</td> <td>Main</td> <td><code>add('echasnovski/mini.ai')</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>add({ source = 'echasnovski/mini.ai', checkout = 'stable' })</code></td>
-        </tr>
-    </tbody>
-</table>
+<summary>With <a href="https://nvim-mini.org/mini.nvim/readmes/mini-deps">mini.deps</a></summary>
+
+- 'mini.nvim' library:
+
+    | Branch | Code snippet                                  |
+    |--------|-----------------------------------------------|
+    | Main   | *Follow recommended ‘mini.deps’ installation* |
+    | Stable | *Follow recommended ‘mini.deps’ installation* |
+
+- Standalone plugin:
+
+    | Branch | Code snippet                                                 |
+    |--------|--------------------------------------------------------------|
+    | Main   | `add(‘nvim-mini/mini.ai’)`                                   |
+    | Stable | `add({ source = ‘nvim-mini/mini.ai’, checkout = ‘stable’ })` |
+
 </details>
 
 <details>
 <summary>With <a href="https://github.com/folke/lazy.nvim">folke/lazy.nvim</a></summary>
-<table>
-    <thead>
-        <tr>
-            <th>Github repo</th>
-            <th>Branch</th> <th>Code snippet</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td rowspan=2>'mini.nvim' library</td>
-            <td>Main</td> <td><code>{ 'echasnovski/mini.nvim', version = false },</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>{ 'echasnovski/mini.nvim', version = '*' },</code></td>
-        </tr>
-        <tr>
-            <td rowspan=2>Standalone plugin</td>
-            <td>Main</td> <td><code>{ 'echasnovski/mini.ai', version = false },</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>{ 'echasnovski/mini.ai', version = '*' },</code></td>
-        </tr>
-    </tbody>
-</table>
+
+- 'mini.nvim' library:
+
+    | Branch | Code snippet                                  |
+    |--------|-----------------------------------------------|
+    | Main   | `{ 'nvim-mini/mini.nvim', version = false },` |
+    | Stable | `{ 'nvim-mini/mini.nvim', version = '*' },`   |
+
+- Standalone plugin:
+
+    | Branch | Code snippet                                |
+    |--------|---------------------------------------------|
+    | Main   | `{ 'nvim-mini/mini.ai', version = false },` |
+    | Stable | `{ 'nvim-mini/mini.ai', version = '*' },`   |
+
 </details>
 
 <details>
 <summary>With <a href="https://github.com/junegunn/vim-plug">junegunn/vim-plug</a></summary>
-<table>
-    <thead>
-        <tr>
-            <th>Github repo</th>
-            <th>Branch</th> <th>Code snippet</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td rowspan=2>'mini.nvim' library</td>
-            <td>Main</td> <td><code>Plug 'echasnovski/mini.nvim'</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>Plug 'echasnovski/mini.nvim', { 'branch': 'stable' }</code></td>
-        </tr>
-        <tr>
-            <td rowspan=2>Standalone plugin</td> <td>Main</td> <td><code>Plug 'echasnovski/mini.ai'</code></td>
-        </tr>
-        <tr>
-            <td>Stable</td> <td><code>Plug 'echasnovski/mini.ai', { 'branch': 'stable' }</code></td>
-        </tr>
-    </tbody>
-</table>
-</details>
 
-<br>
+- 'mini.nvim' library:
+
+    | Branch | Code snippet                                         |
+    |--------|------------------------------------------------------|
+    | Main   | `Plug 'nvim-mini/mini.nvim'`                         |
+    | Stable | `Plug 'nvim-mini/mini.nvim', { 'branch': 'stable' }` |
+
+- Standalone plugin:
+
+    | Branch | Code snippet                                       |
+    |--------|----------------------------------------------------|
+    | Main   | `Plug 'nvim-mini/mini.ai'`                         |
+    | Stable | `Plug 'nvim-mini/mini.ai', { 'branch': 'stable' }` |
+
+</details>
 
 **Important**: don't forget to call `require('mini.ai').setup()` to enable its functionality.
 
 **Note**: if you are on Windows, there might be problems with too long file paths (like `error: unable to create file <some file name>: Filename too long`). Try doing one of the following:
+
 - Enable corresponding git global config value: `git config --system core.longpaths true`. Then try to reinstall.
 - Install plugin in other place with shorter path.
 
@@ -165,6 +142,8 @@ Here are code snippets for some common installation methods (use only one):
     inside = 'i',
 
     -- Next/last variants
+    -- NOTE: These override built-in LSP selection mappings on Neovim>=0.12
+    -- Map LSP selection manually to use it (see `:h MiniAi.config`)
     around_next = 'an',
     inside_next = 'in',
     around_last = 'al',

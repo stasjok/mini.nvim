@@ -15,7 +15,7 @@ You can make contributions in the following ways:
     - **Documentation related**. For example, fix typo/wording in 'README.md', code comments or annotations (which are used to generate Neovim documentation; see later section). Feel free to make these without creating a GitHub issue.
     - **Add plugin integration to 'mini.base16' and 'mini.hues' modules**.
 - **Add explicit support to other colorschemes**. Every 'mini.nvim' module supports any colorscheme right out of the box. This is done by making most highlight groups be linked to a semantically similar builtin highlight group. Other groups are hard-coded based on personal preference. However, these choices might be out of tune with a particular colorscheme. Updating as many colorschemes as possible to have explicit 'mini.nvim' support is highly appreciated. For your convenience, there is a list of all highlight groups in later section of this file.
-- **Participate in [discussions](https://github.com/echasnovski/mini.nvim/discussions)**.
+- **Participate in [discussions](https://github.com/nvim-mini/mini.nvim/discussions)**.
 
 All well-intentioned, polite, and respectful contributions are always welcome! Thanks for reading this!
 
@@ -109,6 +109,7 @@ If your contribution updates code, please make sure that it doesn't break existi
 This plugin uses 'mini.test' to manage its tests. For a more hands-on introduction, see [TESTING.md](TESTING.md).
 
 **Notes**:
+
 - If new functionality relies on an external dependency (`git` CLI tool, LSP server, etc.), use mocking (writing Lua code which emulates dependency usage as close as reasonably possible). For examples, take a look at tests for 'mini.pick', 'mini.completion', and 'mini.statusline'.
 - There is a certain number of tests that are flaky (i.e. will sometimes report an error due to other reasons than actual functionality being broke). It is usually the ones which test time related functionality (i.e. that certain action was done after specific amount of delay).
 
@@ -123,9 +124,9 @@ This plugin uses 'mini.test' to manage its tests. For a more hands-on introducti
 
 ## Formatting
 
-This project uses [StyLua](https://github.com/JohnnyMorganz/StyLua) version 0.19.0 for formatting Lua code. Before making changes to code, please:
+This project uses [StyLua](https://github.com/JohnnyMorganz/StyLua) version 2.1.0 for formatting Lua code. Before making changes to code, please:
 
-- [Install StyLua](https://github.com/JohnnyMorganz/StyLua#installation). NOTE: use `v0.19.0`.
+- [Install StyLua](https://github.com/JohnnyMorganz/StyLua#installation). NOTE: use `v2.1.0`.
 - Format with it. Currently there are two ways to do this:
     - Manually run `stylua .` from the root directory of this project.
     - Install [`pre-commit`](https://pre-commit.com/#install) and enable it with `pre-commit install` (from the root directory). This will auto-format relevant code before making commits.
@@ -147,8 +148,17 @@ Here is a list of all highlight groups defined inside 'mini.nvim' modules. See d
     - `MiniClueSeparator`
     - `MiniClueTitle`
 
+- 'mini.cmdline':
+    - `MiniCmdlinePeekBorder`
+    - `MiniCmdlinePeekLineNr`
+    - `MiniCmdlinePeekNormal`
+    - `MiniCmdlinePeekSep`
+    - `MiniCmdlinePeekSign`
+    - `MiniCmdlinePeekTitle`
+
 - 'mini.completion':
     - `MiniCompletionActiveParameter`
+    - `MiniCompletionDeprecated`
     - `MiniCompletionInfoBorderOutdated`
 
 - 'mini.cursorword':

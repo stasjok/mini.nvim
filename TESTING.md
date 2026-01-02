@@ -2,7 +2,7 @@
 
 Writing tests for Neovim Lua plugin is hard. Writing good tests for Neovim Lua plugin is even harder. The 'mini.test' module is designed to make it reasonably easier while still allowing lots of flexibility. It deliberately favors a more verbose and program-like style of writing tests, opposite to "human readable, DSL like" approach of [nvim-lua/plenary.nvim](https://github.com/nvim-lua/plenary.nvim) ("busted-style testing" from [Olivine-Labs/busted](https://github.com/Olivine-Labs/busted)). Although the latter is also possible.
 
-This file is intended as a hands-on introduction to 'mini.test' with examples. For more details, see 'mini.test' section of [help file](doc/mini.txt) and tests of this plugin's modules.
+This file is intended as a hands-on introduction to 'mini.test' with examples. For more details, see [its documentation](doc/mini-test.txt) and tests of this plugin's modules.
 
 General approach of writing test files:
 
@@ -150,6 +150,7 @@ To write tests, you'll need these files:
 Mandatory:
 
 - **Your Lua plugin in 'lua' directory**. Here we will be testing 'hello_lines' plugin.
+
 - **Test files**. By default they should be Lua files located in 'tests/' directory and named with 'test_' prefix. For example, we will write everything in 'test_hello_lines.lua'. It is usually a good idea to follow this template (will be assumed for the rest of this file):
 
     <details><summary>Template for test files</summary>
@@ -165,13 +166,13 @@ Mandatory:
     return T
     ```
 
-    </details><br>
+    </details>
 
 - **'mini.nvim' dependency**. It is needed to use its 'mini.test' module. Proposed way to store it is in 'deps/mini.nvim' directory. Create it with `git`:
 
     ```bash
     mkdir -p deps
-    git clone --filter=blob:none https://github.com/echasnovski/mini.nvim deps/mini.nvim
+    git clone --filter=blob:none https://github.com/nvim-mini/mini.nvim deps/mini.nvim
     ```
 
 - **Manual Neovim startup file** (a.k.a 'init.lua') with proposed path 'scripts/minimal_init.lua'. It will be used to ensure that Neovim processes can recognize your tested plugin and 'mini.nvim' dependency. Proposed minimal content:
@@ -193,7 +194,7 @@ Mandatory:
     end
     ```
 
-    </details><br>
+    </details>
 
 Recommended:
 
@@ -213,10 +214,10 @@ Recommended:
     # Download 'mini.nvim' to use its 'mini.test' testing module
     deps/mini.nvim:
     	@mkdir -p deps
-    	git clone --filter=blob:none https://github.com/echasnovski/mini.nvim $@
+    	git clone --filter=blob:none https://github.com/nvim-mini/mini.nvim $@
     ```
 
-    </details><br>
+    </details>
 
 - **'mini.test' script** at 'scripts/minitest.lua'. Use it to customize what is tested (which files, etc.) and how. Usually not needed, but otherwise should have some variant of a call to `MiniTest.run()`.
 
@@ -226,7 +227,6 @@ The 'mini.test' module out of the box supports two major ways of running tests:
 
 - **Interactive**. All test files will be run directly inside current Neovim session. This proved to be very useful for debugging while writing tests. To run tests, simply execute `:lua MiniTest.run()` / `:lua MiniTest.run_file()` / `:lua MiniTest.run_at_location()` (assuming, you already have 'mini.test' set up with `require('mini.test').setup()`). With default configuration this will result into floating window with information about results of test execution. Press `q` to close it. **Note**: Be careful though, as it might affect your current setup. To avoid this, [use child processes](#using-child-process) inside tests.
 - **Headless** (from shell). Start headless Neovim process with proper startup file and execute `lua MiniTest.run()`. Assuming full file organization from previous section, this can be achieved with `make test`. This will show information about results of test execution directly in shell.
-
 
 ## Basics
 
@@ -893,8 +893,8 @@ return T
 
 One of the main difficulties in testing Neovim plugins is verifying that something is actually displayed in the way you intend. Like general highlighting, statusline, tabline, sign column, extmarks, etc. Testing screen state with screenshots makes this a lot easier. There is a `child.get_screenshot()` method which basically calls `screenstring()` (`:h screenstring()`) and `screenattr()` (`:h screenattr()`) for every visible cell (row from 1 to 'lines' option, column from 1 to 'columns' option). It then returns screenshot with two layers:
 
-- <text> - "2d array" (row-column) of single characters displayed at particular cells.
-- <attr> - "2d array" (row-column) of symbols representing how text is displayed (basically, "coded" appearance/highlighting). They should be used only in relation to each other: same/different symbols for two cells mean same/different visual appearance. Note: there will be false positives if there are more than 94 different attribute values. To make output more portable and visually useful, outputs of `screenattr()` are coded with single character symbols.
+- `text` - "2d array" (row-column) of single characters displayed at particular cells.
+- `attr` - "2d array" (row-column) of symbols representing how text is displayed (basically, "coded" appearance/highlighting). They should be used only in relation to each other: same/different symbols for two cells mean same/different visual appearance. Note: there will be false positives if there are more than 94 different attribute values. To make output more portable and visually useful, outputs of `screenattr()` are coded with single character symbols.
 
 Couple of caveats:
 
@@ -993,3 +993,19 @@ local set_lines = function(lines) child.api.nvim_buf_set_lines(0, 0, -1, true, l
 - When working with automatically named screenshots, beware of the following caveats:
     - Some systems are case insensitive (like usually Windows and MacOS). So having two different file names which are the same ignoring case will introduce problems for users to properly install plugin.
     - Some system setups have restrictions on full path length (like 260 bytes on some Git+Windows combinations) or file name length (like 255 bytes on ext4 Windows partitions and 143 bytes on eCryptfs Linux partitions). Restriction on full path is hard to accommodate for (apart from limiting file name size to some reasonable number), but trying to not have file names longer than 143 bytes (by having shorter test case names) should be reasonable.
+
+- To make reading strings that contain Lua code easier (for `child.lua` and `child.lua_get`), you can add the following tree-sitter capture to your personal configuration. Put it in the file 'after/queries/lua/injections.scm'. Don't forget to add `; extends` at the beginning of the file (see `:h treesitter-query-modeline-extends`):
+
+    ```query
+    ; extends
+    (function_call
+      name: (dot_index_expression
+        table: (identifier) @_table
+        field: (identifier) @_field)
+      arguments: (arguments
+        (string
+          content: (string_content) @injection.content))
+      (#eq? @_table child)
+      (#any-of? @_field lua lua_get)
+      (#set! injection.language "lua"))
+    ```
