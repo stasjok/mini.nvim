@@ -894,10 +894,19 @@ T['Autocorrect']['respects mappings'] = function()
   eq(ok, false)
   eq(err, 'E492: Not an editor command: ehco')
 
-  -- Should work if Command-line mode is only entered
-  child.cmd('nnoremap <C-y> :ehco')
-  type_keys('<C-y>', '<CR>')
-  eq(child.fn.histget('cmd', -1), 'echo')
+  -- Should act if text increases latest word by a single character
+  child.cmd('cnoremap <C-x> w')
+  type_keys(':', 'XX', '<C-x>')
+  validate_cmdline('XXw')
+  type_keys(' ')
+  validate_cmdline('bw ')
+  type_keys('<Esc>')
+
+  -- Should act if text finishes the last word
+  child.cmd('cnoremap <C-y> <Space>')
+  type_keys(':', 'XX', '<C-y>')
+  validate_cmdline('ex ')
+  type_keys('<Esc>')
 end
 
 T['Autocorrect']['respects abbreviations'] = function()
@@ -924,26 +933,6 @@ T['Autocorrect']['respects abbreviations'] = function()
   eq(child.lua_get('_G.log'), {})
 end
 
-T['Autocorrect']['can act after mappings appended text'] = function()
-  -- Should act if text increases latest word
-  child.cmd('cnoremap <C-x> www')
-  type_keys(':', 'XX', '<C-x>')
-  validate_cmdline('XXwww')
-  type_keys(' ')
-  validate_cmdline('below ')
-  type_keys('<Esc>')
-
-  -- Should act if text finishes the last word.
-  child.cmd('cnoremap <C-y> www<Space>')
-  type_keys(':', 'XX', '<C-y>')
-  -- Whole new text from the mapping is treated as "separator text" and is not
-  -- included into autocorrected word. It might be good to have the new text
-  -- also be part of the word to correct (`XXwww` here instead of `XX`), but it
-  -- seems too complex to implement (if reasonably possible even).
-  validate_cmdline('exwww ')
-  type_keys('<Esc>')
-end
-
 T['Autocorrect']['ignores editing previous text'] = function()
   type_keys(':', 'set ', '<Left>')
   type_keys('<BS>')
@@ -958,6 +947,14 @@ T['Autocorrect']['ignores editing previous text'] = function()
   MiniTest.skip('Make it work or declare out of scope. Problematic because complpat and pos_prev are not relevant')
   type_keys(':', 'rot', '<Home>', 's', '<End>', ' ')
   validate_cmdline('sort ')
+end
+
+T['Autocorrect']['ignores navigating through history'] = function()
+  child.cmd('command Icommand echo "Hello"')
+  type_keys(':', 'Icommand ', '<Esc>')
+  -- Should not autocorrect `I` to `i` (as it happens in case of `:I<Space>`)
+  type_keys(':', 'I', '<Up>')
+  validate_cmdline('Icommand ')
 end
 
 T['Autocorrect']['correctly computes word to autocorrect'] = function()
@@ -1065,7 +1062,7 @@ end
 
 T['Autocorrect']['works just before final <CR>'] = function()
   local validate = function(bad_word, ref_word)
-    type_keys(':', bad_word, '<CR>')
+    type_every_key(':', bad_word, '<CR>')
     eq(child.fn.histget('cmd', -1), ref_word)
     eq(child.fn.mode(), 'n')
   end
@@ -1101,19 +1098,19 @@ T['Autocorrect']['uses correct state before final <CR>'] = function()
   ]])
 
   -- Changing `type` just before `<CR>`
-  type_keys(':', 'cnoremap <C-x> www', '<CR>')
-  type_keys(':', 'cn', '<Up>')
-  validate_cmdline('cnoremap \24 www')
+  type_every_key(':', 'cnoremap <LT>C-x> www', '<CR>')
+  type_every_key(':', 'cnoremap <LT>C-x> ww', '<Up>')
+  validate_cmdline('cnoremap <C-x> www')
   child.lua('_G.log = {}')
   type_keys('<CR>')
-  local ref_word = child.fn.has('nvim-0.11') == 1 and '\24 www' or 'www'
+  local ref_word = child.fn.has('nvim-0.11') == 1 and '<C-x> www' or 'www'
   eq(child.lua_get('_G.log'), { { word = ref_word, type = 'mapping' } })
 
   -- Should include `!` in the word (when using `vim.fn.getcmdcomplpat()`)
   if child.fn.has('nvim-0.11') == 0 then return end
   child.cmd('split')
   child.lua('_G.log = {}')
-  type_keys(':', 'q!', '<CR>')
+  type_every_key(':', 'q!', '<CR>')
   eq(child.lua_get('_G.log'), { { word = 'q!', type = '' } })
 end
 
