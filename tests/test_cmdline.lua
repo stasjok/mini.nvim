@@ -16,6 +16,36 @@ local type_keys = function(...) return child.type_keys(...) end
 local sleep = function(ms) helpers.sleep(ms, child) end
 --stylua: ignore end
 
+-- Create a helper for mock-typing every key separately because state tracking
+-- can depend on emulating one-by-one key presses (mostly for autocorrect).
+local tbl_flatten = vim.fn.has('nvim-0.10') == 1 and function(x) return vim.iter(x):flatten(math.huge):totable() end
+  or vim.tbl_flatten
+
+local slice_keys = function(keys)
+  local res, cur_key = {}, ''
+  for i = 1, vim.fn.strchars(keys) do
+    cur_key = cur_key .. vim.fn.strcharpart(keys, i - 1, 1)
+    if cur_key:sub(1, 1) ~= '<' or cur_key:sub(-1) == '>' then
+      table.insert(res, cur_key)
+      cur_key = ''
+    end
+  end
+  return res
+end
+
+local type_every_key = function(...)
+  local wait, keys = nil, tbl_flatten({ ... })
+  if type(keys[1]) == 'number' then
+    wait, keys = keys[1], vim.list_slice(keys, 2)
+  end
+  local args = slice_keys(table.concat(keys, ''))
+  if wait ~= nil then table.insert(args, 1, wait) end
+
+  -- Always type keys one-by-one as this is needed to mock actual typing.
+  -- Otherwise state tracking is not emulated properly
+  child.type_keys(unpack(args))
+end
+
 local test_dir = 'tests/dir-cmdline'
 
 -- Common test wrappers
@@ -482,7 +512,7 @@ T['Autocomplete']['works in different command types'] = function()
 
   local validate = function(keys)
     eq(child.fn.mode(), 'n')
-    type_keys(keys)
+    type_every_key(keys)
     if child.fn.has('nvim-0.12') == 1 then
       child.expect_screenshot()
     else
@@ -626,7 +656,7 @@ T['Autocorrect'] = new_set({
 
 T['Autocorrect']['works for commands'] = function()
   local validate = function(bad_word, ref_word)
-    type_keys(':', bad_word, ' ')
+    type_every_key(':', bad_word, ' ')
     validate_cmdline(ref_word .. ' ')
     type_keys('<Esc>')
   end
@@ -687,39 +717,36 @@ end
 T['Autocorrect']['works for options'] = function()
   local validate_option = function(input, ref)
     -- In progress
-    type_keys(':', input, ' ')
+    type_every_key(':', input, ' ')
     validate_cmdline(ref .. ' ')
     type_keys('<Esc>')
 
     -- Final
-    type_keys(':', input, '<CR>')
+    type_every_key(':', input, '<CR>')
     eq(child.fn.histget('cmd', -1), ref)
   end
 
-  -- NOTE: Need to emulate `n-o-...` and `i-n-v-...` as separate keys as these
-  -- case detection relies on user interactively typing keys
   validate_option('set expndtb', 'set expandtab')
-  validate_option({ 'set ', 'n', 'o', 'expndtb' }, 'set noexpandtab')
-  validate_option({ 'set ', 'i', 'n', 'v', 'expndtb' }, 'set invexpandtab')
+  validate_option('set noexpndtb', 'set noexpandtab')
+  validate_option('set invexpndtb', 'set invexpandtab')
   validate_option('set ET', 'set et')
-  validate_option({ 'set ', 'n', 'o', 'ET' }, 'set noet')
-  validate_option({ 'set ', 'i', 'n', 'v', 'ET' }, 'set invet')
+  validate_option('set noET', 'set noet')
+  validate_option('set invET', 'set invet')
 
   validate_option('setlocal expndtb', 'setlocal expandtab')
 
   -- Should work multiple times
-  type_keys(':', 'set ET', ' ', 'inorecase', ' ', 'nowrp', ' ', 'invmgic', ' ')
+  type_every_key(':set ET inorecase nowrp invmgic ')
   validate_cmdline('set et ignorecase nowrap invmagic ')
   type_keys('<Esc>')
 
   -- Correction when option is followed by not space
   local validate_option_char = function(char)
-    -- Similarly to `n-o-...` case, need to emulate key before tested character
-    type_keys(':', 'set lstchar', 's', char)
+    type_every_key(':', 'set lstchars', char)
     validate_cmdline('set listchars' .. char)
     type_keys('<Esc>')
 
-    type_keys(':', 'set LC', 'S', char)
+    type_every_key(':', 'set LCS', char)
     validate_cmdline('set lcs' .. char)
     type_keys('<Esc>')
   end
@@ -735,12 +762,12 @@ end
 
 T['Autocorrect']['works for other types'] = function()
   local validate_inprogress = function(input, ref)
-    type_keys(':', input, ' ')
+    type_every_key(':', input, ' ')
     validate_cmdline(ref .. ' ')
     type_keys('<Esc>')
   end
   local validate_final = function(input, ref)
-    type_keys(':', input, '<CR>')
+    type_every_key(':', input, '<CR>')
     eq(child.fn.histget('cmd', -1), ref)
   end
 
@@ -805,7 +832,7 @@ T['Autocorrect']['works for other types'] = function()
   -- Neovim<0.11 has wrong `complpat` computation in this case
   if child.fn.has('nvim-0.11') == 1 then
     -- - No in-progress check since `:mapclear` expects single argument
-    validate_final({ 'mapclear ', '<', 'bfr', '>' }, 'mapclear <buffer>')
+    validate_final('mapclear <LT>bfr>', 'mapclear <buffer>')
   end
 
   -- messages
@@ -833,31 +860,31 @@ T['Autocorrect']['works for other types'] = function()
 end
 
 T['Autocorrect']['works multiple times'] = function()
-  type_keys(':', 'srot', ' ')
+  type_every_key(':', 'srot', ' ')
   validate_cmdline('sort ')
 
   -- After delete
-  type_keys('<C-u>', 'abvoelfet', ' ')
+  type_every_key('<C-u>', 'abvoelfet', ' ')
   validate_cmdline('aboveleft ')
 
   -- After another typed autocorrection
-  type_keys('noutocmd', ' ')
+  type_every_key('noutocmd', ' ')
   validate_cmdline('aboveleft noautocmd ')
 
-  type_keys('sort', ' ')
+  type_every_key('sort', ' ')
   validate_cmdline('aboveleft noautocmd sort ')
 end
 
 T['Autocorrect']['works only in `:` command type'] = function()
   local validate = function(keys, ref)
     eq(child.fn.mode(), 'n')
-    type_keys(keys)
+    type_every_key(keys)
     validate_cmdline(ref)
     type_keys('<Esc>', '<Esc>')
   end
-  validate({ '/', 'srot', ' ' }, 'srot ')
-  validate({ '?', 'srot', ' ' }, 'srot ')
-  validate({ 'i', '<C-r>=', 'srot ' }, 'srot ')
+  validate('/srot ', 'srot ')
+  validate('?srot ', 'srot ')
+  validate('i<C-r>=srot ', 'srot ')
 end
 
 T['Autocorrect']['respects mappings'] = function()
