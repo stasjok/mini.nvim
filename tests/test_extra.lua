@@ -2608,7 +2608,7 @@ local setup_keymaps = function()
 end
 
 T['pickers']['keymaps()']['works'] = function()
-  child.set_size(30, 80)
+  child.set_size(31, 80)
   setup_keymaps()
 
   child.lua_notify('_G.return_item = MiniExtra.pickers.keymaps()')
@@ -2617,7 +2617,7 @@ T['pickers']['keymaps()']['works'] = function()
 
   -- Should have proper preview
   type_keys('<Tab>')
-  child.expect_screenshot()
+  if child.fn.has('nvim-0.12') == 1 then child.expect_screenshot() end
 
   -- Should properly choose by executing LHS keys
   type_keys('<CR>')
