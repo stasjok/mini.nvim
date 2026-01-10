@@ -3188,6 +3188,16 @@ T['pickers']['manpages()'] = new_set({
 
       -- Mock `vim.system` for preview
       child.cmd('luafile tests/mock-system/vim-system.lua')
+
+      -- Mock `vim.fn.executable` for a robust testing
+      child.lua([[
+        _G.has_col = false
+        local executable_orig = vim.fn.executable
+        vim.fn.executable = function(expr)
+          if expr == 'col' then return _G.has_col and 1 or 0 end
+          return executable_orig(expr)
+        end
+      ]])
     end,
   },
 })
@@ -3216,12 +3226,15 @@ T['pickers']['manpages()']['works'] = function()
   child.set_size(20, 70)
   mock_man_list()
 
+  child.fn.setenv('PATH', '/home,/home/user')
+  child.fn.setenv('MANPATH', '/home,/home/manpage')
   child.lua_notify('_G.return_item = MiniExtra.pickers.manpages()')
   validate_picker_name('Manpages')
   child.expect_screenshot()
 
-  local cwd, env = child.fn.getcwd(), { 'MANWIDTH=999' }
-  eq(get_spawn_log(), { { executable = 'man', options = { args = { '-k', '.' }, cwd = cwd, env = env } } })
+  local cwd = child.fn.getcwd()
+  local spawn_env = { 'MANWIDTH=999', 'PATH=/home,/home/user', 'MANPATH=/home,/home/manpage' }
+  eq(get_spawn_log(), { { executable = 'man', options = { args = { '-k', '.' }, cwd = cwd, env = spawn_env } } })
   clear_spawn_log()
   clear_process_log()
 
@@ -3256,7 +3269,7 @@ T['pickers']['manpages()']['works'] = function()
 
   local validate_preview = function(ref_cmd)
     local ref_log = {
-      { 'vim.system', { cmd = ref_cmd, opts = { env = { MANWIDTH = preview_width } } } },
+      { 'vim.system', { cmd = ref_cmd, opts = { env = { MANWIDTH = preview_width, MANPAGER = 'cat' } } } },
       { 'wait', {} },
     }
     eq(child.lua_get('_G.system_log'), ref_log)
@@ -3298,6 +3311,14 @@ T['pickers']['manpages()']['works'] = function()
   child.expect_screenshot()
   validate_buf_name(0, 'man://amd64_iopl(2)')
 
+  local target_win_width = child.api.nvim_win_get_width(0)
+  local ref_env = { MANPAGER = 'cat', MANWIDTH = target_win_width }
+  local choose_log = {
+    { 'vim.system', { cmd = { 'man', '2', 'amd64_iopl' }, opts = { env = ref_env } } },
+    { 'wait', {} },
+  }
+  eq(child.lua_get('_G.system_log'), choose_log)
+
   -- Should return chosen value
   eq(child.lua_get('_G.return_item'), 'amd64_iopl(2/amd64)')
 
@@ -3315,6 +3336,32 @@ T['pickers']['manpages()']['can choose in split'] = function()
   child.lua([[_G.system_queue = { { stdout = 'st (1) - Full page' } }]])
   type_keys('<C-v>')
   child.expect_screenshot()
+end
+
+T['pickers']['manpages()']['can choose proper manpager'] = function()
+  child.lua('_G.has_col = true')
+  mock_man_list()
+  pick_manpages()
+
+  child.lua([[_G.system_queue = {
+    { stdout = 'st (1) - Full page' },
+    { stdout = 'st (1) - Full page' },
+  }]])
+  local preview_win_id = child.lua_get('MiniPick.get_picker_state().windows.main')
+  local preview_width = child.api.nvim_win_get_width(preview_win_id)
+
+  type_keys('<Tab>')
+  local ref_env = { MANWIDTH = preview_width, MANPAGER = 'col -bx' }
+  local ref_log = {
+    { 'vim.system', { cmd = { 'man', '1', 'st' }, opts = { env = ref_env } } },
+    { 'wait', {} },
+  }
+  eq(child.lua_get('_G.system_log'), ref_log)
+  child.lua('_G.system_log = {}')
+
+  type_keys('<CR>')
+  ref_log[1][2].opts.env.MANWIDTH = child.api.nvim_win_get_width(0)
+  eq(child.lua_get('_G.system_log'), ref_log)
 end
 
 T['pickers']['manpages()']['respects `opts`'] = function()
