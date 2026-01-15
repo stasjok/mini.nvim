@@ -137,11 +137,13 @@
 --- recipes.
 ---@tag MiniTest
 
+---@diagnostic disable: unnecessary-if
+
 -- Module definition ==========================================================
 local MiniTest = {}
 local H = {}
 
-do
+if false then
   --- MiniTest config.
   ---@class MiniTest.config
   ---@field collect? MiniTest.config.collect Options for collection of test cases.
@@ -238,7 +240,7 @@ MiniTest.config = {
 --minidoc_afterlines_end
 --stylua: ignore end
 
-do
+if false then
   --- Table with information about current state of test execution
   ---@class MiniTest.current
   --- Array with all cases being currently executed. Basically,
@@ -262,7 +264,7 @@ end
 ---   to customize execution output (like adding custom notes, etc).
 MiniTest.current = { all_cases = nil, case = nil } --[[@as MiniTest.current]]
 
-do
+if false then
   --- `new_set()` options.
   ---@class MiniTest.new_set.opts
   --- A table with elements that will be called without arguments at predefined stages of test execution.
@@ -368,7 +370,7 @@ MiniTest.new_set = function(opts, tbl)
   return setmetatable(tbl, metatbl)
 end
 
-do
+if false then
   --- Test case
   ---@class MiniTest.case
   ---@field args any[] Array of arguments with which `test` will be called.
@@ -724,7 +726,7 @@ MiniTest.execute = function(cases, opts)
   vim.schedule(function() H.cache.is_executing = false end)
 end
 
-do
+if false then
   --- Stop options
   ---@class MiniTest.stop.opts
   ---@field close_all_child_neovim? boolean Whether to close all child neovim processes. Default: true.
@@ -874,7 +876,7 @@ function MiniTest.expect.assertion(value, message)
   H.error_expect('an assertion', context)
 end
 
-do
+if false then
   --- `expect.reference_screenshot()` options
   ---@class MiniTest.expect.reference_screenshot.opts
   --- Whether to forcefully create reference screenshot.
