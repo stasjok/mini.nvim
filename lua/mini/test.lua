@@ -1370,6 +1370,7 @@ MiniTest.new_child_neovim = function()
   end
 
   -- Wrappers for common `vim.xxx` objects (will get executed inside child)
+  child.api = vim.api
   child.api = setmetatable({}, {
     __index = function(_, key)
       ensure_running()
@@ -1379,6 +1380,7 @@ MiniTest.new_child_neovim = function()
 
   -- Variant of `api` functions called with `vim.rpcnotify`. Useful for making
   -- blocking requests (like `getcharstr()`).
+  child.api_notify = vim.api
   child.api_notify = setmetatable({}, {
     __index = function(_, key)
       ensure_running()
